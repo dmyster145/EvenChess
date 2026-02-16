@@ -626,7 +626,22 @@ function handleDoubleTap(state: GameState): GameState {
     case 'academySelect':
       return { ...state, phase: 'modeSelect', menuSelectedIndex: 2 };
 
-    case 'coordinateDrill':
+    case 'coordinateDrill': {
+      const academy = state.academyState;
+      if (!academy || academy.drillType !== 'coordinate') {
+        return { ...state, phase: 'academySelect', academyState: undefined, menuSelectedIndex: 0 };
+      }
+      // On row selection: double-tap → back to column selection
+      if (academy.navAxis === 'rank') {
+        return {
+          ...state,
+          academyState: { ...academy, navAxis: 'file' },
+        };
+      }
+      // On column selection: double-tap → open academy menu
+      return { ...state, phase: 'academySelect', academyState: undefined, menuSelectedIndex: 0 };
+    }
+
     case 'tacticsDrill':
     case 'mateDrill':
     case 'knightPathDrill':

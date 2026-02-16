@@ -36,6 +36,7 @@ import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoar
 import type { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
 import { MENU_OPTIONS } from './state/constants';
 import { STARTING_FEN } from './academy/pgn';
+import { moveCursorAxis } from './academy/drills';
 import { getFileIndex, getRankIndex } from './chess/square-utils';
 
 async function sendImages(hub: EvenHubBridge, images: ImageRawDataUpdate[]): Promise<void> {
@@ -336,6 +337,37 @@ export async function initApp(): Promise<void> {
     prevImages: ImageRawDataUpdate[];
   } = { nextKey: '', nextImages: [], prevKey: '', prevImages: [] };
 
+  function drillCacheKey(file: number, rank: number): string {
+    return `${file},${rank}`;
+  }
+  const drillCache: {
+    nextKey: string;
+    nextImages: ImageRawDataUpdate[];
+    prevKey: string;
+    prevImages: ImageRawDataUpdate[];
+  } = { nextKey: '', nextImages: [], prevKey: '', prevImages: [] };
+
+  function scheduleDrillCacheRefill(state: GameState): void {
+    const academy = state.academyState;
+    if (state.phase !== 'coordinateDrill' || !academy) return;
+    const f = academy.cursorFile;
+    const r = academy.cursorRank;
+    const axis = academy.navAxis;
+    const nextPos = moveCursorAxis(f, r, axis, 'down');
+    const prevPos = moveCursorAxis(f, r, axis, 'up');
+    const run = (): void => {
+      drillCache.nextKey = drillCacheKey(nextPos.file, nextPos.rank);
+      drillCache.prevKey = drillCacheKey(prevPos.file, prevPos.rank);
+      drillCache.nextImages = boardRenderer.renderDrillBoard(nextPos.file, nextPos.rank);
+      drillCache.prevImages = boardRenderer.renderDrillBoard(prevPos.file, prevPos.rank);
+    };
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(run, { timeout: 80 });
+    } else {
+      setTimeout(run, 0);
+    }
+  }
+
   /** When both halves are sent, put the half containing the selection first so it appears sooner. */
   function orderImagesSelectionFirst(images: ImageRawDataUpdate[], state: GameState): ImageRawDataUpdate[] {
     if (images.length !== 2) return images;
@@ -491,10 +523,19 @@ export async function initApp(): Promise<void> {
           ? (async () => {
               let dirtyImages: ImageRawDataUpdate[];
               if (isCoordDrill && state.academyState) {
-                dirtyImages = boardRenderer.renderDrillBoard(
-                  state.academyState.cursorFile,
-                  state.academyState.cursorRank
-                );
+                const cf = state.academyState.cursorFile;
+                const cr = state.academyState.cursorRank;
+                const key = drillCacheKey(cf, cr);
+                const useNext = drillCache.nextKey === key && drillCache.nextImages.length > 0;
+                const usePrev = drillCache.prevKey === key && drillCache.prevImages.length > 0;
+                if (useNext) {
+                  dirtyImages = drillCache.nextImages;
+                } else if (usePrev) {
+                  dirtyImages = drillCache.prevImages;
+                } else {
+                  dirtyImages = boardRenderer.renderDrillBoard(cf, cr);
+                }
+                if (!useNext && !usePrev) scheduleDrillCacheRefill(state);
               } else if (isKnightDrill && state.academyState?.knightPath) {
                 const kp = state.academyState.knightPath;
                 const knightFile = getFileIndex(kp.currentSquare);

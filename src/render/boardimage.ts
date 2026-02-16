@@ -107,6 +107,7 @@ export class BoardRenderer {
   private currentHighlightKeys = new Set<string>();
   private cachedTopBmp: Uint8Array = initBmpBuffer();
   private cachedBottomBmp: Uint8Array = initBmpBuffer();
+  private drillBasePixels: Uint8Array | null = null;
 
   /** Returns only the image halves that changed (highlight-based dirty tracking). */
   render(state: GameState, chess: ChessService): ImageRawDataUpdate[] {
@@ -327,17 +328,14 @@ export class BoardRenderer {
     }
   }
 
-  /** Render empty board for drill mode (no pieces, no labels). */
-  renderDrillBoard(cursorFile: number, cursorRank: number): ImageRawDataUpdate[] {
-    const pixels = this.workPixels;
+  /** Fill a pixel buffer with the empty coordinate-drill grid (no highlight). */
+  private fillDrillBase(pixels: Uint8Array): void {
     pixels.fill(0);
-
     for (let y = GRID_Y; y < GRID_Y + GRID_SIZE; y++) {
       for (let x = GRID_X; x < GRID_X + GRID_SIZE; x++) {
         setPixel(pixels, x, y, 1);
       }
     }
-
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
@@ -345,20 +343,35 @@ export class BoardRenderer {
         }
       }
     }
-
     drawBorder(pixels);
+  }
 
-    // Convert rank index to display coords (rank 1 at bottom = display row 7)
+  /** Render empty board for drill mode (no pieces, no labels). Uses cached base; always returns both halves for full board updates. */
+  renderDrillBoard(cursorFile: number, cursorRank: number): ImageRawDataUpdate[] {
+    if (!this.drillBasePixels) {
+      this.drillBasePixels = new Uint8Array(BUF_W * BUF_H);
+      this.fillDrillBase(this.drillBasePixels);
+    }
+
+    this.workPixels.set(this.drillBasePixels);
     const displayRank = 7 - cursorRank;
-    highlightCell(pixels, cursorFile, displayRank, 'selected');
+    highlightCell(this.workPixels, cursorFile, displayRank, 'selected');
 
-    encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-    encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
+    // Always return both halves for the coordinate drill so the device never shows a half-stale board
+    // (one panel with old highlight, one with new). Cache and live updates both send full board.
+    const topDirty = true;
+    const bottomDirty = true;
 
-    return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
-    ];
+    const dirty: ImageRawDataUpdate[] = [];
+    if (topDirty) {
+      encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT));
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
+    }
+    if (bottomDirty) {
+      encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(BUF_W * IMAGE_HEIGHT));
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
+    }
+    return dirty;
   }
 
   renderKnightPathBoard(

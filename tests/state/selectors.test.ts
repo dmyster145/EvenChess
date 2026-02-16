@@ -657,6 +657,43 @@ describe('selectors', () => {
       const text = getCoordinateDrillDisplayText(state);
       expect(text).toContain('3/5');
     });
+
+    it('shows current column letter when selecting file', () => {
+      const state = createTestState({
+        phase: 'coordinateDrill',
+        academyState: {
+          drillType: 'coordinate',
+          targetSquare: 'e4',
+          score: { correct: 0, total: 0 },
+          cursorFile: 1, // B
+          cursorRank: 3,
+          navAxis: 'file',
+          feedback: 'none',
+        },
+      });
+      const text = getCoordinateDrillDisplayText(state);
+      expect(text).toContain('Column:');
+      expect(text).toContain('B'); // current file letter
+    });
+
+    it('shows current column letter when selecting rank', () => {
+      const state = createTestState({
+        phase: 'coordinateDrill',
+        academyState: {
+          drillType: 'coordinate',
+          targetSquare: 'e4',
+          score: { correct: 0, total: 0 },
+          cursorFile: 4, // E
+          cursorRank: 2,
+          navAxis: 'rank',
+          feedback: 'none',
+        },
+      });
+      const text = getCoordinateDrillDisplayText(state);
+      expect(text).toContain('Column:');
+      expect(text).toContain('E'); // fixed column shown when selecting row
+      expect(text).toContain('Row:'); // row has scroll arrows
+    });
   });
 
   describe('getKnightPathDisplayText', () => {

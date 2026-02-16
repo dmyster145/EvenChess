@@ -25,6 +25,8 @@ import { fileRankToSquare, getFileLetter, getRankNumber } from '../academy/drill
 const SEPARATOR_LINE = '────────';
 const ARROW_LEFT = '◀';
 const ARROW_RIGHT = '▶';
+const ARROW_UP = '▲';
+const ARROW_DOWN = '▼';
 const ARROW_UPDOWN = '▲▼';
 
 export function getSelectedPiece(state: GameState): PieceEntry | null {
@@ -373,12 +375,12 @@ export function getCoordinateDrillDisplayText(state: GameState): string {
 
   // Show feedback if answer was submitted
   if (academy.feedback === 'correct') {
-    lines.push('✓ CORRECT!');
+    lines.push('+ CORRECT!');
     lines.push('');
     lines.push('Tap: next square');
   } else if (academy.feedback === 'incorrect') {
     const yourGuess = fileRankToSquare(academy.cursorFile, academy.cursorRank).toUpperCase();
-    lines.push(`✗ WRONG (${yourGuess})`);
+    lines.push(`X WRONG (${yourGuess})`);
     lines.push('');
     lines.push('Tap: try again');
   } else {
@@ -387,13 +389,13 @@ export function getCoordinateDrillDisplayText(state: GameState): string {
     const rank = getRankNumber(academy.cursorRank);
     
     if (academy.navAxis === 'file') {
-      // Selecting column (file)
-      lines.push(`Column: ${ARROW_LEFT}  ${ARROW_RIGHT}`);
+      // Selecting column (file) — show current file letter so user sees selection
+      lines.push(`Column: ${ARROW_LEFT} ${file} ${ARROW_RIGHT}`);
       lines.push(`   Row: ${rank}`);
     } else {
-      // Selecting row (rank)
+      // Selecting row (rank) — up/down arrows match vertical scroll direction
       lines.push(`Column: ${file}`);
-      lines.push(`   Row: ${ARROW_LEFT}  ${ARROW_RIGHT}`);
+      lines.push(`   Row: ${ARROW_UP}  ${ARROW_DOWN}`);
     }
   }
 
@@ -412,13 +414,13 @@ export function getKnightPathDisplayText(state: GameState): string {
 
   if (academy.feedback === 'correct') {
     lines.push('');
-    lines.push('✓ OPTIMAL!');
+    lines.push('+ OPTIMAL!');
     lines.push(`Moves: ${kp.movesTaken}/${kp.optimalMoves}`);
     lines.push('');
     lines.push('Tap: next puzzle');
   } else if (academy.feedback === 'incorrect') {
     lines.push('');
-    lines.push('✗ TOO MANY MOVES');
+    lines.push('X TOO MANY MOVES');
     lines.push(`Moves: ${kp.movesTaken}/${kp.optimalMoves}`);
     lines.push('');
     lines.push('Tap: try again');

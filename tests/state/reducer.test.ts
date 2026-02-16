@@ -809,7 +809,25 @@ describe('reducer', () => {
   });
 
   describe('drill exit', () => {
-    it('double-tap exits drill to academy select', () => {
+    it('double-tap on row selection returns to column selection', () => {
+      const state = createTestState({
+        phase: 'coordinateDrill',
+        academyState: {
+          drillType: 'coordinate',
+          targetSquare: 'e4',
+          score: { correct: 0, total: 0 },
+          cursorFile: 4,
+          cursorRank: 3,
+          navAxis: 'rank',
+          feedback: 'none',
+        },
+      });
+      const next = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(next.phase).toBe('coordinateDrill');
+      expect(next.academyState?.navAxis).toBe('file');
+    });
+
+    it('double-tap on column selection exits drill to academy select', () => {
       const state = createTestState({
         phase: 'coordinateDrill',
         academyState: {
@@ -822,9 +840,7 @@ describe('reducer', () => {
           feedback: 'none',
         },
       });
-      
       const next = reduce(state, { type: 'DOUBLE_TAP' });
-      
       expect(next.phase).toBe('academySelect');
       expect(next.academyState).toBeUndefined();
     });
