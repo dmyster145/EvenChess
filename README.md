@@ -6,11 +6,11 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
 ## Screenshots
 
-| Play — piece selection | Menu | Mode select |
+| Play — piece selection | Menu | Academy — drill selection |
 |------------------------|------|-------------|
 | ![Piece selection and board](assets/screenshot.png) | ![Main menu](assets/screenshot-menu.png) | ![Select mode](assets/screenshot-mode-select.png) |
 
-| Bullet Blitz — timed game | Academy — drill selection |
+| Bullet Blitz — timed game | Mode select |
 |---------------------------|----------------------------|
 | ![Academy drills](assets/screenshot-academy.png) | ![Bullet with timers and log](assets/screenshot-bullet.png) |
 
