@@ -10,7 +10,7 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE).
 |------------------------|------|-------------|
 | ![Piece selection and board](assets/screenshot.png) | ![Main menu](assets/screenshot-menu.png) | ![Select mode](assets/screenshot-mode-select.png) |
 
-| Academy — drill selection | Bullet Blitz — timed game |
+| Bullet Blitz — timed game | Academy — drill selection |
 |---------------------------|----------------------------|
 | ![Academy drills](assets/screenshot-academy.png) | ![Bullet with timers and log](assets/screenshot-bullet.png) |
 
