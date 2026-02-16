@@ -29,6 +29,7 @@ export type UIPhase =
   | 'idle'
   | 'pieceSelect'
   | 'destSelect'
+  | 'promotionSelect'
   | 'confirm'
   | 'menu'
   | 'viewLog'
@@ -110,9 +111,17 @@ export interface GameState {
   phase: UIPhase;
   selectedPieceId: PieceId | null;
   selectedMoveIndex: number;
+  /** When in promotionSelect: the move we are choosing promotion for. */
+  pendingPromotionMove: { from: string; to: string } | null;
+  /** When in promotionSelect: 0=Queen, 1=Rook, 2=Bishop, 3=Knight. */
+  selectedPromotionIndex: number;
   mode: GameMode;
   history: string[];
   lastMove: string | null;
+  /** Square the last move went to (player or engine). */
+  lastMoveToSquare: string | null;
+  /** Square the player's last move went to; this piece is selected first when entering pieceSelect. */
+  playerLastMoveToSquare: string | null;
   engineThinking: boolean;
   inCheck: boolean;
   gameOver: string | null;
@@ -174,9 +183,13 @@ export function buildInitialState(chess: ChessService): GameState {
     phase: 'idle',
     selectedPieceId: null,
     selectedMoveIndex: 0,
+    pendingPromotionMove: null,
+    selectedPromotionIndex: 0,
     mode: 'play',
     history: [],
     lastMove: null,
+    lastMoveToSquare: null,
+    playerLastMoveToSquare: null,
     engineThinking: false,
     inCheck: chess.isInCheck(),
     gameOver: null,

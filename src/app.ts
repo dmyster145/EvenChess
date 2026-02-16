@@ -18,15 +18,17 @@ import { Chess } from 'chess.js';
 import { createStore } from './state/store';
 import { buildInitialState } from './state/contracts';
 import type { GameState, MenuOption } from './state/contracts';
-import { mapEvenHubEvent, extendTapCooldown } from './input/actions';
+import { mapEvenHubEvent, extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from './input/actions';
 import {
   composeStartupPage,
   CONTAINER_ID_TEXT,
   CONTAINER_NAME_TEXT,
+  CONTAINER_ID_IMAGE_TOP,
+  CONTAINER_ID_IMAGE_BOTTOM,
 } from './render/composer';
-import { BoardRenderer } from './render/boardimage';
+import { BoardRenderer, rankHalf } from './render/boardimage';
+import { getCombinedDisplayText, getSelectedPiece, getSelectedMove } from './state/selectors';
 import { renderBrandingImage, renderBlankBrandingImage, renderCheckBrandingImage } from './render/branding';
-import { getCombinedDisplayText } from './state/selectors';
 import { EvenHubBridge } from './evenhub/bridge';
 import { TurnLoop } from './engine/turnloop';
 import { PROFILES } from './engine/profiles';
@@ -98,27 +100,27 @@ export async function initApp(): Promise<void> {
   const initialProfile = initialState.difficulty === 'serious' ? PROFILES.SERIOUS : PROFILES.CASUAL;
   const turnLoop = new TurnLoop(chess, store, initialProfile);
 
+  // Delay (ms) after createStartUpPage before first image update; overlap with board render.
+  const CONTAINER_READY_MS = 50;
+
   try {
-    await hub.init();
-    await turnLoop.init();
+    await Promise.all([hub.init(), turnLoop.init()]);
 
     const startupPage = composeStartupPage(store.getState());
     await hub.setupPage(startupPage);
 
-    // Brief delay ensures containers are ready on glasses before sending images
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const state = store.getState();
+    const containerReady = new Promise<void>((r) => setTimeout(r, CONTAINER_READY_MS));
+    const boardPromise = boardRenderer.renderPngAsync(state, chess, 0);
 
-    const brandingImage = renderBrandingImage();
-    await hub.updateBoardImage(brandingImage);
-
-    const initialImages = boardRenderer.renderFull(store.getState(), chess);
+    await containerReady;
+    let initialImages = await boardPromise;
+    if (initialImages.length === 0) {
+      initialImages = boardRenderer.renderFull(state, chess);
+    }
     console.log('[EvenChess] Sending initial board images:', initialImages.length);
     await sendImages(hub, initialImages);
-
-    // Re-send after brief delay for simulator reliability
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const retryImages = boardRenderer.renderFull(store.getState(), chess);
-    await sendImages(hub, retryImages);
+    await hub.updateBoardImage(renderBrandingImage());
   } catch (err) {
     console.error('[EvenChess] Initialization failed:', err);
   }
@@ -130,7 +132,8 @@ export async function initApp(): Promise<void> {
     }
   });
 
-  // Debounced (4ms): rapid state changes coalesce into single SDK update
+  // Debounced: rapid state changes coalesce into single SDK update. 0ms = next tick (snappier).
+  const DISPLAY_DEBOUNCE_MS = 0;
   let latestState = store.getState();
 
   storeUnsubscribe = store.subscribe((state, prevState) => {
@@ -168,10 +171,13 @@ export async function initApp(): Promise<void> {
 
     // Extend tap cooldown for menu/destSelect to prevent accidental inputs
     if (state.phase === 'menu' && prevState.phase !== 'menu') {
-      extendTapCooldown(800);
+      extendTapCooldown(TAP_COOLDOWN_MENU_MS);
     }
     if (state.phase === 'destSelect' && prevState.phase !== 'destSelect') {
-      extendTapCooldown(400);
+      extendTapCooldown(TAP_COOLDOWN_DESTSELECT_MS);
+    }
+    if (state.phase === 'promotionSelect' && prevState.phase !== 'promotionSelect') {
+      extendTapCooldown(TAP_COOLDOWN_DESTSELECT_MS);
     }
 
     // Toggle branding visibility for viewLog (hide to make room for text)
@@ -206,10 +212,25 @@ export async function initApp(): Promise<void> {
 
     // Schedule debounced display update
     if (pendingUpdateTimeout === null) {
+      // #region agent log
+      const changeSummary: string[] = [];
+      if (state.phase !== prevState.phase) changeSummary.push('phase');
+      if (state.fen !== prevState.fen) changeSummary.push('fen');
+      if (state.selectedPieceId !== prevState.selectedPieceId) changeSummary.push('selectedPieceId');
+      if (state.selectedMoveIndex !== prevState.selectedMoveIndex) changeSummary.push('selectedMoveIndex');
+      if (state.menuSelectedIndex !== prevState.menuSelectedIndex) changeSummary.push('menuSelectedIndex');
+      if (state.history.length !== prevState.history.length) changeSummary.push('history');
+      if (state.engineThinking !== prevState.engineThinking) changeSummary.push('engineThinking');
+      if (state.gameOver !== prevState.gameOver) changeSummary.push('gameOver');
+      if ((state.timers?.whiteMs ?? 0) !== (prevState.timers?.whiteMs ?? 0) || (state.timers?.blackMs ?? 0) !== (prevState.timers?.blackMs ?? 0)) changeSummary.push('timers');
+      if (state.academyState?.cursorFile !== prevState.academyState?.cursorFile || state.academyState?.cursorRank !== prevState.academyState?.cursorRank) changeSummary.push('academyCursor');
+      const trigger = changeSummary.length === 0 ? 'none' : changeSummary.includes('phase') || changeSummary.includes('selectedPieceId') || changeSummary.includes('selectedMoveIndex') || changeSummary.includes('menuSelectedIndex') ? 'input' : 'internal';
+      fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flush_scheduled',message:'Display flush scheduled',data:{stage:'flush_scheduled',delayMs:DISPLAY_DEBOUNCE_MS,changeSummary,trigger},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
+      // #endregion
       pendingUpdateTimeout = setTimeout(() => {
         pendingUpdateTimeout = null;
         void flushDisplayUpdate();
-      }, 4);
+      }, DISPLAY_DEBOUNCE_MS);
     }
   });
 
@@ -300,6 +321,83 @@ export async function initApp(): Promise<void> {
   let flushInProgress = false;
   let pendingFlushState: GameState | null = null;
 
+  /** Speculative cache: pre-rendered next/prev selection for instant scroll. */
+  function boardCacheKey(s: GameState): string {
+    return `${s.phase}:${s.fen}:${s.selectedPieceId}:${s.selectedMoveIndex}:${s.selectedPromotionIndex}`;
+  }
+  const boardCache: {
+    nextKey: string;
+    nextImages: ImageRawDataUpdate[];
+    prevKey: string;
+    prevImages: ImageRawDataUpdate[];
+  } = { nextKey: '', nextImages: [], prevKey: '', prevImages: [] };
+
+  /** When both halves are sent, put the half containing the selection first so it appears sooner. */
+  function orderImagesSelectionFirst(images: ImageRawDataUpdate[], state: GameState): ImageRawDataUpdate[] {
+    if (images.length !== 2) return images;
+    const piece = getSelectedPiece(state);
+    const move = getSelectedMove(state);
+    const square =
+      (state.phase === 'promotionSelect' && state.pendingPromotionMove
+        ? state.pendingPromotionMove.to
+        : state.phase === 'destSelect'
+          ? move?.to
+          : piece?.square) ?? 'e4';
+    const displayRank = 8 - parseInt(square[1] ?? '1', 10);
+    const half = rankHalf(displayRank);
+    const topId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_TOP);
+    const bottomId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
+    if (!topId || !bottomId) return images;
+    return half === 'top' ? [topId, bottomId] : [bottomId, topId];
+  }
+
+  /** Menu / markers toggle: always send top half then bottom so both halves update in display order. */
+  function orderImagesTopFirst(images: ImageRawDataUpdate[]): ImageRawDataUpdate[] {
+    if (images.length !== 2) return images;
+    const top = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_TOP);
+    const bottom = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
+    if (!top || !bottom) return images;
+    return [top, bottom];
+  }
+
+  function scheduleBoardCacheRefill(state: GameState): void {
+    if (state.phase !== 'pieceSelect' && state.phase !== 'destSelect') return;
+    const pieces = state.pieces;
+    if (pieces.length === 0) return;
+    const run = async (): Promise<void> => {
+      let nextState: GameState;
+      let prevState: GameState;
+      if (state.phase === 'pieceSelect') {
+        const len = pieces.length;
+        const idx = Math.max(0, pieces.findIndex((p) => p.id === state.selectedPieceId));
+        const nextId = pieces[(idx + 1) % len]?.id ?? state.selectedPieceId;
+        const prevId = pieces[(idx - 1 + len) % len]?.id ?? state.selectedPieceId;
+        nextState = { ...state, selectedPieceId: nextId, selectedMoveIndex: 0 };
+        prevState = { ...state, selectedPieceId: prevId, selectedMoveIndex: 0 };
+      } else {
+        const piece = pieces.find((p) => p.id === state.selectedPieceId);
+        const moves = piece?.moves ?? [];
+        const len = moves.length;
+        if (len === 0) return;
+        nextState = { ...state, selectedMoveIndex: (state.selectedMoveIndex + 1) % len };
+        prevState = { ...state, selectedMoveIndex: (state.selectedMoveIndex - 1 + len) % len };
+      }
+      boardCache.nextKey = boardCacheKey(nextState);
+      boardCache.prevKey = boardCacheKey(prevState);
+      const [nextImages, prevImages] = await Promise.all([
+        boardRenderer.renderPngAsync(nextState, chess, 0),
+        boardRenderer.renderPngAsync(prevState, chess, 2),
+      ]);
+      boardCache.nextImages = nextImages.length > 0 ? nextImages : boardRenderer.render(nextState, chess);
+      boardCache.prevImages = prevImages.length > 0 ? prevImages : boardRenderer.render(prevState, chess);
+    };
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(run, { timeout: 80 });
+    } else {
+      setTimeout(run, 0);
+    }
+  }
+
   async function flushDisplayUpdate(): Promise<void> {
     // Mutex: BLE sends can be slow on glasses, prevent concurrent flushes
     if (flushInProgress) {
@@ -307,6 +405,12 @@ export async function initApp(): Promise<void> {
       return;
     }
     flushInProgress = true;
+    const flushStartTime = Date.now();
+    let imageCount = 0;
+    let textChanged = false;
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flushDisplayUpdate',message:'Flush started',data:{stage:'flush_start'},timestamp:flushStartTime,hypothesisId:'perf'})}).catch(()=>{});
+    // #endregion
 
     try {
       const state = latestState;
@@ -318,8 +422,11 @@ export async function initApp(): Promise<void> {
         state.fen !== prev.fen ||
         state.engineThinking !== prev.engineThinking ||
         state.gameOver !== prev.gameOver ||
+        state.showBoardMarkers !== prev.showBoardMarkers ||
         state.selectedPieceId !== prev.selectedPieceId ||
         state.selectedMoveIndex !== prev.selectedMoveIndex ||
+        state.selectedPromotionIndex !== prev.selectedPromotionIndex ||
+        state.pendingPromotionMove !== prev.pendingPromotionMove ||
         state.menuSelectedIndex !== prev.menuSelectedIndex ||
         state.selectedTimeControlIndex !== prev.selectedTimeControlIndex ||
         state.timers?.whiteMs !== prev.timers?.whiteMs ||
@@ -333,7 +440,12 @@ export async function initApp(): Promise<void> {
         state.academyState?.pgnStudy?.currentMoveIndex !== prev.academyState?.pgnStudy?.currentMoveIndex ||
         state.academyState?.pgnStudy?.gameName !== prev.academyState?.pgnStudy?.gameName;
 
-      if (!displayChanged) return;
+      if (!displayChanged) {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flushDisplayUpdate',message:'Flush skipped',data:{stage:'flush_skipped',reason:'display_unchanged',durationMs:Date.now()-flushStartTime},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
+        // #endregion
+        return;
+      }
 
       const isCoordDrill = state.phase === 'coordinateDrill';
       const isKnightDrill = state.phase === 'knightPathDrill';
@@ -356,6 +468,7 @@ export async function initApp(): Promise<void> {
       );
       const boardMayHaveChanged =
         state.fen !== prev.fen ||
+        state.showBoardMarkers !== prev.showBoardMarkers ||
         state.selectedPieceId !== prev.selectedPieceId ||
         state.selectedMoveIndex !== prev.selectedMoveIndex ||
         state.phase !== prev.phase ||
@@ -365,52 +478,75 @@ export async function initApp(): Promise<void> {
       let textPromise: Promise<boolean> | undefined;
       if (text !== lastSentText) {
         lastSentText = text;
+        textChanged = true;
         textPromise = hub.updateText(CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT, text);
       }
 
       try {
-        if (boardMayHaveChanged) {
-          let dirtyImages: ImageRawDataUpdate[];
-          if (isCoordDrill && state.academyState) {
-            dirtyImages = boardRenderer.renderDrillBoard(
-              state.academyState.cursorFile,
-              state.academyState.cursorRank
-            );
-          } else if (isKnightDrill && state.academyState?.knightPath) {
-            const kp = state.academyState.knightPath;
-            const knightFile = getFileIndex(kp.currentSquare);
-            const knightRank = getRankIndex(kp.currentSquare);
-            const targetFile = getFileIndex(kp.targetSquare);
-            const targetRank = getRankIndex(kp.targetSquare);
-            dirtyImages = boardRenderer.renderKnightPathBoard(
-              knightFile,
-              knightRank,
-              targetFile,
-              targetRank,
-              state.academyState.cursorFile,
-              state.academyState.cursorRank
-            );
-          } else if (isTacticsDrill && state.academyState?.tacticsPuzzle) {
-            dirtyImages = boardRenderer.renderFromFen(state.academyState.tacticsPuzzle.fen);
-          } else if (isPgnStudy && state.academyState?.pgnStudy) {
-            const pgn = state.academyState.pgnStudy;
-            const pgnFen = getPgnPositionFen(chess, pgn.moves.slice(0, pgn.currentMoveIndex));
-            dirtyImages = boardRenderer.renderFromFen(pgnFen);
-          } else if (wasDrillMode && !isDrillMode) {
-            dirtyImages = boardRenderer.renderFull(state, chess);
-          } else {
-            dirtyImages = boardRenderer.render(state, chess);
-          }
-          await sendImages(hub, dirtyImages);
-        }
+        const imagePromise = boardMayHaveChanged
+          ? (async () => {
+              let dirtyImages: ImageRawDataUpdate[];
+              if (isCoordDrill && state.academyState) {
+                dirtyImages = boardRenderer.renderDrillBoard(
+                  state.academyState.cursorFile,
+                  state.academyState.cursorRank
+                );
+              } else if (isKnightDrill && state.academyState?.knightPath) {
+                const kp = state.academyState.knightPath;
+                const knightFile = getFileIndex(kp.currentSquare);
+                const knightRank = getRankIndex(kp.currentSquare);
+                const targetFile = getFileIndex(kp.targetSquare);
+                const targetRank = getRankIndex(kp.targetSquare);
+                dirtyImages = boardRenderer.renderKnightPathBoard(
+                  knightFile,
+                  knightRank,
+                  targetFile,
+                  targetRank,
+                  state.academyState.cursorFile,
+                  state.academyState.cursorRank
+                );
+              } else if (isTacticsDrill && state.academyState?.tacticsPuzzle) {
+                dirtyImages = boardRenderer.renderFromFen(state.academyState.tacticsPuzzle.fen);
+              } else if (isPgnStudy && state.academyState?.pgnStudy) {
+                const pgn = state.academyState.pgnStudy;
+                const pgnFen = getPgnPositionFen(chess, pgn.moves.slice(0, pgn.currentMoveIndex));
+                dirtyImages = boardRenderer.renderFromFen(pgnFen);
+              } else if (wasDrillMode && !isDrillMode) {
+                dirtyImages = boardRenderer.renderFull(state, chess);
+              } else {
+                const key = boardCacheKey(state);
+                const useNext = boardCache.nextKey === key && boardCache.nextImages.length > 0;
+                const usePrev = boardCache.prevKey === key && boardCache.prevImages.length > 0;
+                if (useNext || usePrev) {
+                  dirtyImages = useNext ? boardCache.nextImages : boardCache.prevImages;
+                  boardRenderer.setStateForCache(state);
+                } else {
+                  dirtyImages = await boardRenderer.renderPngAsync(state, chess);
+                  if (dirtyImages.length === 0) dirtyImages = boardRenderer.render(state, chess);
+                }
+                if (state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect') {
+                  dirtyImages = orderImagesSelectionFirst(dirtyImages, state);
+                } else {
+                  dirtyImages = orderImagesTopFirst(dirtyImages);
+                }
+                scheduleBoardCacheRefill(state);
+              }
+              imageCount = dirtyImages.length;
+              return sendImages(hub, dirtyImages);
+            })()
+          : Promise.resolve();
 
-        if (textPromise) await textPromise;
+        await Promise.all([imagePromise, textPromise ?? Promise.resolve()]);
       } catch (err) {
         console.error('[EvenChess] Display update failed:', err);
       }
     } finally {
+      const durationMs = Date.now() - flushStartTime;
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flushDisplayUpdate',message:'Flush completed',data:{stage:'flush_end',durationMs,imageCount,textChanged},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
+      // #endregion
       flushInProgress = false;
-      
+
       if (pendingFlushState) {
         const pending = pendingFlushState;
         pendingFlushState = null;

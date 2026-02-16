@@ -48,6 +48,9 @@ export function getCarouselItems(state: GameState): string[] {
       return piece.moves.map((m) => expandMoveName(m.san));
     }
 
+    case 'promotionSelect':
+      return ['Queen', 'Rook', 'Bishop', 'Knight'];
+
     default:
       return [];
   }
@@ -128,6 +131,9 @@ export function getCarouselSelectedIndex(state: GameState): number {
     case 'destSelect':
       return state.selectedMoveIndex;
 
+    case 'promotionSelect':
+      return state.selectedPromotionIndex;
+
     default:
       return 0;
   }
@@ -201,6 +207,12 @@ export function getCarouselDisplayText(state: GameState): string {
       const current = items[index] ?? items[0];
       const prefix = piece ? `${piece.label}: ` : '';
       return `${prefix}< ${current} >  (${index + 1}/${items.length})`;
+    }
+
+    case 'promotionSelect': {
+      if (items.length === 0) return 'No options';
+      const current = items[index] ?? items[0];
+      return `< ${current} >  (${index + 1}/${items.length})`;
     }
 
     case 'idle':
@@ -614,9 +626,24 @@ export function getCombinedDisplayText(state: GameState): string {
       }
       break;
     }
+
+    case 'promotionSelect': {
+      lines.push('');
+      if (items.length > 0) {
+        const current = items[index] ?? items[0];
+        const innerContent = `${current} (${index + 1}/${items.length})`;
+        const selectionLine = `${ARROW_LEFT} ${innerContent} ${ARROW_RIGHT}`;
+        const label = 'Select promotion:';
+        const visualWidth = selectionLine.length + 2;
+        const padding = Math.max(0, Math.floor((visualWidth - label.length) / 2) + 3);
+        lines.push(' '.repeat(padding) + label);
+        lines.push(selectionLine);
+      }
+      break;
+    }
   }
 
-  if (state.phase !== 'pieceSelect' && state.phase !== 'destSelect') {
+  if (state.phase !== 'pieceSelect' && state.phase !== 'destSelect' && state.phase !== 'promotionSelect') {
     lines.push('');
     lines.push(SEPARATOR_LINE);
     lines.push('Menu: Double tap');

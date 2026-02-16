@@ -105,7 +105,23 @@ export class ChessService {
       const id = ChessService.pieceId(piece.color, piece.type, square);
       const label = `${PIECE_LABEL[piece.type]} ${square.toUpperCase()}`;
 
-      const carouselMoves: CarouselMove[] = pieceMoves.map((m) => ({
+      // Prioritize: captures first, then moves towards opponent's side, then by destination (rank, file), then promotion Q,R,B,N
+      const sortedMoves = [...pieceMoves].sort((a, b) => {
+        const captureA = !!a.captured;
+        const captureB = !!b.captured;
+        if (captureA !== captureB) return captureA ? -1 : 1; // captures first
+        const toRankA = parseInt(a.to[1]!, 10);
+        const toRankB = parseInt(b.to[1]!, 10);
+        const progressA = piece.color === 'w' ? toRankA : 9 - toRankA;
+        const progressB = piece.color === 'w' ? toRankB : 9 - toRankB;
+        if (progressA !== progressB) return progressB - progressA; // higher progress (towards opponent) first
+        if (toRankA !== toRankB) return toRankA - toRankB;
+        if (a.to !== b.to) return a.to.charCodeAt(0) - b.to.charCodeAt(0);
+        const promoOrder: Record<string, number> = { q: 0, r: 1, b: 2, n: 3 };
+        return (promoOrder[a.promotion ?? ''] ?? 4) - (promoOrder[b.promotion ?? ''] ?? 4);
+      });
+
+      const carouselMoves: CarouselMove[] = sortedMoves.map((m) => ({
         uci: `${m.from}${m.to}${m.promotion ?? ''}`,
         san: m.san,
         from: m.from,
@@ -123,7 +139,7 @@ export class ChessService {
       });
     }
 
-    // Sort by rank (1→8), then file (a→h)
+    // Piece order for swipe carousel: rank 1→8, then file a→h (a1, b1, …, h1, a2, …)
     entries.sort((a, b) => {
       const fileA = a.square.charCodeAt(0);
       const fileB = b.square.charCodeAt(0);

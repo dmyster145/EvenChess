@@ -24,6 +24,8 @@ import {
   DRILL_OPTIONS,
   DRILL_OPTION_COUNT,
   GESTURE_DISAMBIGUATION_MS,
+  PROMOTION_OPTION_COUNT,
+  PROMOTION_PIECE_KEYS,
 } from './constants';
 import { generateRandomSquare, moveCursorAxis, fileRankToSquare, getDefaultCursorPosition } from '../academy/drills';
 import { generateKnightPuzzle, getKnightMoves, isValidKnightMove, getSquareIndices } from '../academy/knight';
@@ -67,8 +69,12 @@ export function reduce(state: GameState, action: Action): GameState {
         phase: 'idle',
         selectedPieceId: null,
         selectedMoveIndex: 0,
+        pendingPromotionMove: null,
+        selectedPromotionIndex: 0,
         history: [],
         lastMove: null,
+        lastMoveToSquare: null,
+        playerLastMoveToSquare: null,
         engineThinking: false,
         gameOver: null,
         pendingMove: null,
@@ -111,6 +117,9 @@ export function reduce(state: GameState, action: Action): GameState {
         history: action.history,
         turn: action.turn,
         phase: 'idle',
+        lastMove: null,
+        lastMoveToSquare: null,
+        playerLastMoveToSquare: null,
         hasUnsavedChanges: false,
         menuSelectedIndex: 0,
         previousPhase: null,
@@ -162,15 +171,34 @@ export function reduce(state: GameState, action: Action): GameState {
 }
 
 
+/** Initial piece when entering pieceSelect: player's last-moved piece if any, else bottom-left (first in list). */
+function initialPieceForPieceSelect(state: GameState): PieceEntry | null {
+  if (state.pieces.length === 0) return null;
+  if (state.playerLastMoveToSquare) {
+    const found = state.pieces.find((p) => p.square === state.playerLastMoveToSquare);
+    if (found) return found;
+  }
+  return state.pieces[0] ?? null;
+}
+
+/**
+ * Scroll (swipe) handling during gameplay:
+ * - SCROLL_BOTTOM_EVENT → direction 'down' → next item (clockwise: +1 in spatial order).
+ * - SCROLL_TOP_EVENT → direction 'up' → previous item (counter-clockwise: -1).
+ * - pieceSelect: order = state.pieces (rank 1→8, file a→h). Start at bottom-left or latest-moved piece.
+ * - destSelect: order = piece.moves (destination squares rank then file).
+ */
 function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
   switch (state.phase) {
     case 'idle':
       if (state.pieces.length === 0) return state;
+      const initial = initialPieceForPieceSelect(state);
+      if (!initial) return state;
       const startTimer = state.mode === 'bullet' && state.timers && !state.timerActive;
       return {
         ...state,
         phase: 'pieceSelect',
-        selectedPieceId: state.pieces[0]?.id ?? null,
+        selectedPieceId: initial.id,
         selectedMoveIndex: 0,
         phaseEnteredAt: Date.now(),
         ...(startTimer && { timerActive: true, lastTickTime: Date.now() }),
@@ -194,6 +222,14 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       if (len === 0) return state;
       const next = direction === 'down' ? (state.selectedMoveIndex + 1) % len : (state.selectedMoveIndex - 1 + len) % len;
       return { ...state, selectedMoveIndex: next };
+    }
+
+    case 'promotionSelect': {
+      const next =
+        direction === 'down'
+          ? (state.selectedPromotionIndex + 1) % PROMOTION_OPTION_COUNT
+          : (state.selectedPromotionIndex - 1 + PROMOTION_OPTION_COUNT) % PROMOTION_OPTION_COUNT;
+      return { ...state, selectedPromotionIndex: next };
     }
 
     case 'menu': {
@@ -347,14 +383,17 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
 
 function handleTap(state: GameState, _selectedIndex: number, _selectedName: string): GameState {
   switch (state.phase) {
-    case 'idle':
+    case 'idle': {
       if (state.pieces.length === 0) return state;
+      const initial = initialPieceForPieceSelect(state);
+      if (!initial) return state;
       return {
         ...state,
         phase: 'pieceSelect',
-        selectedPieceId: state.pieces[0]?.id ?? null,
+        selectedPieceId: initial.id,
         selectedMoveIndex: 0,
       };
+    }
 
     case 'pieceSelect': {
       const piece = selectedPieceEntry(state) ?? state.pieces[0];
@@ -374,14 +413,55 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
       const move = piece.moves[state.selectedMoveIndex];
       if (!move) return state;
 
+      // Promotion move: go to promotionSelect so user picks piece (Queen/Rook/Bishop/Knight)
+      if (move.promotion) {
+        return {
+          ...state,
+          phase: 'promotionSelect',
+          pendingPromotionMove: { from: move.from, to: move.to },
+          selectedPromotionIndex: 0,
+        };
+      }
+
       const newHistory = [...state.history, move.san].slice(-MAX_HISTORY_LENGTH);
       return {
         ...state,
         phase: 'idle',
         lastMove: move.san,
+        lastMoveToSquare: move.to,
+        playerLastMoveToSquare: move.to,
         history: newHistory,
         selectedPieceId: null,
         selectedMoveIndex: 0,
+        pendingMove: move,
+        hasUnsavedChanges: true,
+      };
+    }
+
+    case 'promotionSelect': {
+      const pm = state.pendingPromotionMove;
+      if (!pm) return state;
+      const promotion = PROMOTION_PIECE_KEYS[state.selectedPromotionIndex];
+      if (!promotion) return state;
+      const move = {
+        from: pm.from,
+        to: pm.to,
+        uci: `${pm.from}${pm.to}${promotion}`,
+        san: `${pm.to}=${promotion.toUpperCase()}`,
+        promotion,
+      };
+      const newHistory = [...state.history, move.san].slice(-MAX_HISTORY_LENGTH);
+      return {
+        ...state,
+        phase: 'idle',
+        lastMove: move.san,
+        lastMoveToSquare: move.to,
+        playerLastMoveToSquare: move.to,
+        history: newHistory,
+        selectedPieceId: null,
+        selectedMoveIndex: 0,
+        pendingPromotionMove: null,
+        selectedPromotionIndex: 0,
         pendingMove: move,
         hasUnsavedChanges: true,
       };
@@ -511,6 +591,9 @@ function handleDoubleTap(state: GameState): GameState {
     case 'destSelect':
       return { ...state, phase: 'pieceSelect', selectedMoveIndex: 0 };
 
+    case 'promotionSelect':
+      return { ...state, phase: 'destSelect', pendingPromotionMove: null };
+
     case 'confirm':
       return { ...state, phase: 'destSelect' };
 
@@ -558,6 +641,7 @@ function handleEngineMove(
   action: Extract<Action, { type: 'ENGINE_MOVE' }>,
 ): GameState {
   const newHistory = [...state.history, action.san].slice(-MAX_HISTORY_LENGTH);
+  const lastMoveToSquare = action.uci.length >= 4 ? action.uci.slice(2, 4) : null;
   return {
     ...state,
     phase: 'idle',
@@ -566,6 +650,7 @@ function handleEngineMove(
     pieces: action.pieces,
     inCheck: action.inCheck,
     lastMove: action.san,
+    lastMoveToSquare,
     history: newHistory,
     engineThinking: false,
     selectedPieceId: null,

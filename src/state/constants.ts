@@ -36,6 +36,11 @@ export const TIME_CONTROLS = [
 ] as const;
 export const TIME_CONTROL_COUNT = TIME_CONTROLS.length;
 
+/** Promotion piece keys (chess.js): q, r, b, n. Order: Queen first. */
+export const PROMOTION_PIECE_KEYS: readonly string[] = ['q', 'r', 'b', 'n'];
+export const PROMOTION_PIECE_LABELS: readonly string[] = ['Queen', 'Rook', 'Bishop', 'Knight'];
+export const PROMOTION_OPTION_COUNT = PROMOTION_PIECE_KEYS.length;
+
 export const DRILL_OPTIONS: DrillType[] = ['coordinate', 'tactics', 'mate', 'knightPath', 'pgn'];
 export const DRILL_LABELS: readonly string[] = [
   'Coordinates',

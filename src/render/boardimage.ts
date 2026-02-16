@@ -27,6 +27,7 @@ import {
   getBmpFileSize,
 } from './bmp-constants';
 import { squareToDisplayCoords } from '../chess/square-utils';
+import { encodePixelsToPng } from './png-encode';
 
 const BUF_W = IMAGE_WIDTH;
 const BUF_H = IMAGE_HEIGHT * 2;
@@ -97,22 +98,15 @@ function encodeBmpPixels(bmpBuffer: Uint8Array, pixels: Uint8Array): void {
   }
 }
 
-function copyToNumberArray(src: Uint8Array, dst: number[]): void {
-  for (let i = 0; i < src.length; i++) {
-    dst[i] = src[i]!;
-  }
-}
-
 export class BoardRenderer {
   private basePixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private workPixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private lastFen = '';
   private lastShowBoardMarkers = true;
   private prevHighlightKeys = new Set<string>();
+  private currentHighlightKeys = new Set<string>();
   private cachedTopBmp: Uint8Array = initBmpBuffer();
   private cachedBottomBmp: Uint8Array = initBmpBuffer();
-  private topImageData: number[] = new Array(BMP_FILE_SIZE).fill(0);
-  private bottomImageData: number[] = new Array(BMP_FILE_SIZE).fill(0);
 
   /** Returns only the image halves that changed (highlight-based dirty tracking). */
   render(state: GameState, chess: ChessService): ImageRawDataUpdate[] {
@@ -128,66 +122,172 @@ export class BoardRenderer {
     }
 
     const highlights = getHighlights(state);
-    const currentKeys = new Set(highlights.map((h) => hlKey(h.file, h.rank, h.style)));
+    this.currentHighlightKeys.clear();
+    for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
 
     // Fast path: highlight-only changes use dirty tracking
     if (!fenChanged && !markersChanged) {
       let topDirty = false;
       let bottomDirty = false;
 
-      const allKeys = new Set([...this.prevHighlightKeys, ...currentKeys]);
+      const allKeys = new Set([...this.prevHighlightKeys, ...this.currentHighlightKeys]);
       for (const key of allKeys) {
-        if (this.prevHighlightKeys.has(key) !== currentKeys.has(key)) {
+        if (this.prevHighlightKeys.has(key) !== this.currentHighlightKeys.has(key)) {
           const rank = parseInt(key.split(',')[1]!, 10);
           if (rankToHalf(rank) === 'top') topDirty = true;
           else bottomDirty = true;
         }
       }
 
-      this.prevHighlightKeys = currentKeys;
-
       if (!topDirty && !bottomDirty) return [];
 
-      this.workPixels.set(this.basePixels);
-      for (const hl of highlights) highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+      // Refresh each dirty half from base + current highlights so we never encode stale highlights
+      // (e.g. after using cached images, workPixels was never updated).
+      if (topDirty) {
+        this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(0, BUF_W * IMAGE_HEIGHT));
+        for (const hl of highlights) {
+          if (rankToHalf(hl.rank) === 'top') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+        }
+      }
+      if (bottomDirty) {
+        this.workPixels.subarray(BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(BUF_W * IMAGE_HEIGHT));
+        for (const hl of highlights) {
+          if (rankToHalf(hl.rank) === 'bottom') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+        }
+      }
+      const tmp = this.prevHighlightKeys;
+      this.prevHighlightKeys = this.currentHighlightKeys;
+      this.currentHighlightKeys = tmp;
 
       const dirty: ImageRawDataUpdate[] = [];
       if (topDirty) {
         encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-        copyToNumberArray(this.cachedTopBmp, this.topImageData);
-        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.topImageData }));
+        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
       }
       if (bottomDirty) {
         encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(BUF_W * IMAGE_HEIGHT));
-        copyToNumberArray(this.cachedBottomBmp, this.bottomImageData);
-        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.bottomImageData }));
+        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
       }
       return dirty;
     }
 
     // FEN changed: encode both halves (piece moved)
-    this.prevHighlightKeys = currentKeys;
+    const tmp = this.prevHighlightKeys;
+    this.prevHighlightKeys = this.currentHighlightKeys;
+    this.currentHighlightKeys = tmp;
     this.workPixels.set(this.basePixels);
     for (const hl of highlights) highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
 
     encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT));
     encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(BUF_W * IMAGE_HEIGHT));
 
-    copyToNumberArray(this.cachedTopBmp, this.topImageData);
-    copyToNumberArray(this.cachedBottomBmp, this.bottomImageData);
-
     return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.bottomImageData }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.topImageData }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
     ];
   }
 
   renderFull(state: GameState, chess: ChessService): ImageRawDataUpdate[] {
     this.cachedTopBmp = initBmpBuffer();
     this.cachedBottomBmp = initBmpBuffer();
-    this.prevHighlightKeys = new Set();
+    this.prevHighlightKeys.clear();
+    this.currentHighlightKeys.clear();
     this.lastFen = '';
     return this.render(state, chess);
+  }
+
+  /**
+   * Sync internal highlight state to a state we displayed via cache.
+   * Call after sending cached images so the next render() has correct dirty detection.
+   */
+  setStateForCache(state: GameState): void {
+    const highlights = getHighlights(state);
+    this.currentHighlightKeys.clear();
+    for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
+    const tmp = this.prevHighlightKeys;
+    this.prevHighlightKeys = this.currentHighlightKeys;
+    this.currentHighlightKeys = tmp;
+  }
+
+  /**
+   * Same as render() but encodes dirty halves as PNG for smaller BLE payload.
+   * Returns [] in non-browser or if canvas fails (caller can fall back to render()).
+   * slotBase 0 = main flush (uses canvas slots 0,1); slotBase 2 = refill (uses 2,3) for parallel next+prev.
+   */
+  async renderPngAsync(state: GameState, chess: ChessService, slotBase: 0 | 2 = 0): Promise<ImageRawDataUpdate[]> {
+    const fen = state.fen;
+    const showBoardMarkers = state.showBoardMarkers;
+    const fenChanged = fen !== this.lastFen;
+    const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
+
+    if (fenChanged || markersChanged) {
+      this.rebuildBase(chess, showBoardMarkers);
+      this.lastFen = fen;
+      this.lastShowBoardMarkers = showBoardMarkers;
+    }
+
+    const highlights = getHighlights(state);
+    this.currentHighlightKeys.clear();
+    for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
+
+    if (!fenChanged && !markersChanged) {
+      let topDirty = false;
+      let bottomDirty = false;
+      const allKeys = new Set([...this.prevHighlightKeys, ...this.currentHighlightKeys]);
+      for (const key of allKeys) {
+        if (this.prevHighlightKeys.has(key) !== this.currentHighlightKeys.has(key)) {
+          const rank = parseInt(key.split(',')[1]!, 10);
+          if (rankToHalf(rank) === 'top') topDirty = true;
+          else bottomDirty = true;
+        }
+      }
+      if (!topDirty && !bottomDirty) return [];
+
+      // Refresh each dirty half from base + current highlights so we never encode stale highlights.
+      if (topDirty) {
+        this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(0, BUF_W * IMAGE_HEIGHT));
+        for (const hl of highlights) {
+          if (rankToHalf(hl.rank) === 'top') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+        }
+      }
+      if (bottomDirty) {
+        this.workPixels.subarray(BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(BUF_W * IMAGE_HEIGHT));
+        for (const hl of highlights) {
+          if (rankToHalf(hl.rank) === 'bottom') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+        }
+      }
+      const tmp = this.prevHighlightKeys;
+      this.prevHighlightKeys = this.currentHighlightKeys;
+      this.currentHighlightKeys = tmp;
+
+      const topPixels = this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT);
+      const bottomPixels = this.workPixels.subarray(BUF_W * IMAGE_HEIGHT);
+      const [topPng, bottomPng] = await Promise.all([
+        topDirty ? encodePixelsToPng(topPixels, IMAGE_WIDTH, IMAGE_HEIGHT, slotBase) : Promise.resolve(new Uint8Array(0)),
+        bottomDirty ? encodePixelsToPng(bottomPixels, IMAGE_WIDTH, IMAGE_HEIGHT, slotBase + 1) : Promise.resolve(new Uint8Array(0)),
+      ]);
+      const dirty: ImageRawDataUpdate[] = [];
+      if (topDirty && topPng.length > 0) dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: topPng.slice() }));
+      if (bottomDirty && bottomPng.length > 0) dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: bottomPng.slice() }));
+      if (dirty.length === 0) return this.render(state, chess);
+      return dirty;
+    }
+
+    const tmpKeys = this.prevHighlightKeys;
+    this.prevHighlightKeys = this.currentHighlightKeys;
+    this.currentHighlightKeys = tmpKeys;
+    this.workPixels.set(this.basePixels);
+    for (const hl of highlights) highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+
+    const [topPng, bottomPng] = await Promise.all([
+      encodePixelsToPng(this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase),
+      encodePixelsToPng(this.workPixels.subarray(BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase + 1),
+    ]);
+    if (topPng.length === 0 || bottomPng.length === 0) return this.render(state, chess);
+    return [
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: topPng.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: bottomPng.slice() }),
+    ];
   }
 
   private rebuildBase(chess: ChessService, showBoardMarkers: boolean = true): void {
@@ -255,12 +355,9 @@ export class BoardRenderer {
     encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
     encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
 
-    copyToNumberArray(this.cachedTopBmp, this.topImageData);
-    copyToNumberArray(this.cachedBottomBmp, this.bottomImageData);
-
     return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.bottomImageData }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.topImageData }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
     ];
   }
 
@@ -306,12 +403,9 @@ export class BoardRenderer {
     encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
     encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
 
-    copyToNumberArray(this.cachedTopBmp, this.topImageData);
-    copyToNumberArray(this.cachedBottomBmp, this.bottomImageData);
-
     return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.bottomImageData }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.topImageData }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
     ];
   }
 
@@ -361,12 +455,9 @@ export class BoardRenderer {
     encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
     encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
 
-    copyToNumberArray(this.cachedTopBmp, this.topImageData);
-    copyToNumberArray(this.cachedBottomBmp, this.bottomImageData);
-
     return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.bottomImageData }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.topImageData }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
     ];
   }
 }
@@ -414,6 +505,15 @@ function getHighlights(state: GameState): Highlight[] {
       const move = getSelectedMove(state);
       if (move) {
         highlights.push({ ...squareToCoords(move.to), style: 'destination' });
+      }
+      break;
+    }
+
+    case 'promotionSelect': {
+      const pm = state.pendingPromotionMove;
+      if (pm) {
+        highlights.push({ ...squareToCoords(pm.from), style: 'selected' });
+        highlights.push({ ...squareToCoords(pm.to), style: 'destination' });
       }
       break;
     }
