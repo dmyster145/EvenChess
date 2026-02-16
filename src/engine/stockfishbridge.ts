@@ -6,21 +6,25 @@
 import { Chess } from 'chess.js';
 import type { EngineProfile } from '../state/contracts';
 
+const MULTIPV_COUNT = 5;
+
 export class StockfishBridge {
   private worker: Worker | null = null;
   private ready = false;
   private workerFailed = false;
   private pendingResolve: ((bestmove: string) => void) | null = null;
+  private pendingAddVariety = false;
+  private topMovesByMultipv: Record<number, string> = {};
   private boundOnBestMove = this.onBestMove.bind(this);
   private fallbackChess: Chess | null = null;
 
   async init(): Promise<void> {
+    const workerUrl = '/stockfish/stockfish.wasm.js';
     try {
-      this.worker = new Worker(
-        new URL('./stockfish-worker.js', import.meta.url),
-        { type: 'classic' },
-      );
-
+      if (typeof WebAssembly !== 'object') {
+        throw new Error('WebAssembly not supported');
+      }
+      this.worker = new Worker(workerUrl, { type: 'classic' });
       await this.waitForReady();
       this.ready = true;
       console.log('[StockfishBridge] Engine ready (WASM).');
@@ -36,6 +40,9 @@ export class StockfishBridge {
       return this.fallbackMove(fen, profile);
     }
 
+    this.topMovesByMultipv = {};
+    this.pendingAddVariety = profile.addVariety;
+
     const workerMove = await new Promise<string | null>((resolve) => {
       const timeout = setTimeout(() => {
         this.pendingResolve = null;
@@ -47,6 +54,11 @@ export class StockfishBridge {
         resolve(bestmove || null);
       };
 
+      if (profile.addVariety) {
+        this.send(`setoption name MultiPV value ${MULTIPV_COUNT}`);
+      } else {
+        this.send('setoption name MultiPV value 1');
+      }
       this.send(`setoption name Skill Level value ${profile.skillLevel}`);
       this.send(`position fen ${fen}`);
       this.send(`go depth ${profile.depth} movetime ${profile.movetime}`);
@@ -57,7 +69,11 @@ export class StockfishBridge {
     }
 
     this.workerFailed = true;
-    console.log('[StockfishBridge] Worker non-functional, switching to fallback permanently.');
+    console.warn(
+      '[StockfishBridge] Engine returned no valid move (placeholder or missing Stockfish WASM). ' +
+      'Using random moves; difficulty (Easy/Casual/Serious) has no effect. ' +
+      'See stockfish-worker.js or Stockfish WASM docs to enable real engine strength.'
+    );
     return this.fallbackMove(fen, profile);
   }
 
@@ -108,12 +124,39 @@ export class StockfishBridge {
 
   private onBestMove(event: MessageEvent): void {
     const line = String(event.data);
+
+    if (line.startsWith('info ')) {
+      if (this.pendingAddVariety && line.includes(' multipv ') && line.includes(' pv ')) {
+        const multipvMatch = line.match(/ multipv (\d+) /);
+        const pvIdx = line.indexOf(' pv ');
+        if (multipvMatch && multipvMatch[1] != null && pvIdx !== -1) {
+          const multipvNum = parseInt(multipvMatch[1], 10);
+          const afterPv = line.slice(pvIdx + 4);
+          const firstMove = afterPv.split(/\s/)[0]?.trim() ?? '';
+          if (firstMove && firstMove !== '0000' && firstMove !== '(none)') {
+            this.topMovesByMultipv[multipvNum] = firstMove;
+          }
+        }
+      }
+      return;
+    }
+
     if (line.startsWith('bestmove')) {
       const parts = line.split(' ');
       const move = parts[1] ?? null;
       const isValidMove = move && move !== '0000' && move !== '(none)';
       if (this.pendingResolve) {
-        this.pendingResolve(isValidMove ? move : '');
+        if (this.pendingAddVariety) {
+          const collected = Object.values(this.topMovesByMultipv);
+          if (collected.length > 1) {
+            const randomMove = collected[Math.floor(Math.random() * collected.length)]!;
+            this.pendingResolve(randomMove);
+          } else {
+            this.pendingResolve(isValidMove ? move : '');
+          }
+        } else {
+          this.pendingResolve(isValidMove ? move : '');
+        }
         this.pendingResolve = null;
       }
     }

@@ -199,6 +199,14 @@ describe('persistence', () => {
       expect(loadDifficulty()).toBe('serious');
     });
 
+    it('returns saved difficulty for easy', () => {
+      localStorageMock.setItem('evenchess-settings', JSON.stringify({
+        difficulty: 'easy',
+      }));
+
+      expect(loadDifficulty()).toBe('easy');
+    });
+
     it('returns casual when difficulty not in settings', () => {
       localStorageMock.setItem('evenchess-settings', JSON.stringify({
         showBoardMarkers: true,

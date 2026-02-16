@@ -2,14 +2,22 @@
  * Engine profiles — Stockfish parameter presets.
  */
 
-import type { EngineProfile } from '../state/contracts';
+import type { EngineProfile, DifficultyLevel } from '../state/contracts';
+
+export const EASY: EngineProfile = {
+  name: 'Easy',
+  skillLevel: 3,
+  depth: 6,
+  movetime: 600,
+  addVariety: true,
+};
 
 export const CASUAL: EngineProfile = {
   name: 'Casual',
   skillLevel: 5,
   depth: 8,
   movetime: 1000,
-  addVariety: true,
+  addVariety: false,
 };
 
 export const SERIOUS: EngineProfile = {
@@ -20,7 +28,8 @@ export const SERIOUS: EngineProfile = {
   addVariety: false,
 };
 
-export const PROFILES = {
-  CASUAL,
-  SERIOUS,
-} as const;
+export const PROFILE_BY_DIFFICULTY: Record<DifficultyLevel, EngineProfile> = {
+  easy: EASY,
+  casual: CASUAL,
+  serious: SERIOUS,
+};

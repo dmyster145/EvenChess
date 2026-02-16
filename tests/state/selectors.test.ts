@@ -487,9 +487,10 @@ describe('selectors', () => {
       expect(text).toContain('DIFFICULTY');
     });
 
-    it('shows Casual and Serious options', () => {
+    it('shows Easy, Casual, and Serious options', () => {
       const state = createTestState({ phase: 'difficultySelect' });
       const text = getDifficultyDisplayText(state);
+      expect(text).toContain('Easy');
       expect(text).toContain('Casual');
       expect(text).toContain('Serious');
     });

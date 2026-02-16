@@ -369,7 +369,7 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'menu', difficulty: 'serious' });
       const next = reduce(state, { type: 'MENU_SELECT', option: 'difficulty' });
       expect(next.phase).toBe('difficultySelect');
-      expect(next.menuSelectedIndex).toBe(1); // 'serious' = index 1
+      expect(next.menuSelectedIndex).toBe(2); // 'serious' = index 2 (easy=0, casual=1, serious=2)
     });
 
     it('navigates to resetConfirm on reset option', () => {
@@ -457,8 +457,9 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 0 });
       const next = reduce(state, { type: 'SCROLL', direction: 'down' });
       expect(next.menuSelectedIndex).toBe(1);
-      
-      const wrapped = reduce(next, { type: 'SCROLL', direction: 'down' });
+      const next2 = reduce(next, { type: 'SCROLL', direction: 'down' });
+      expect(next2.menuSelectedIndex).toBe(2);
+      const wrapped = reduce(next2, { type: 'SCROLL', direction: 'down' });
       expect(wrapped.menuSelectedIndex).toBe(0);
     });
 
@@ -474,7 +475,7 @@ describe('reducer', () => {
 
   describe('difficulty and board markers tap', () => {
     it('tap selects difficulty and returns to menu', () => {
-      const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 1 });
+      const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 2 }); // index 2 = Serious
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
       expect(next.difficulty).toBe('serious');
       expect(next.phase).toBe('menu');

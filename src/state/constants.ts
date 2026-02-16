@@ -51,14 +51,9 @@ export const DRILL_LABELS: readonly string[] = [
 ];
 export const DRILL_OPTION_COUNT = DRILL_OPTIONS.length;
 
-export const DIFFICULTY_OPTIONS: DifficultyLevel[] = ['casual', 'serious'];
-export const DIFFICULTY_LABELS: readonly string[] = ['Casual', 'Serious'];
+export const DIFFICULTY_OPTIONS: DifficultyLevel[] = ['easy', 'casual', 'serious'];
+export const DIFFICULTY_LABELS: readonly string[] = ['Easy', 'Casual', 'Serious'];
 export const DIFFICULTY_OPTION_COUNT = DIFFICULTY_OPTIONS.length;
-
-export const DIFFICULTY_INDEX = {
-  CASUAL: 0,
-  SERIOUS: 1,
-} as const;
 
 /** SDK text container limit is 2000 chars; 40 move pairs stays well under */
 export const MAX_MOVES_DISPLAY = 40;

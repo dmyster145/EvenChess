@@ -31,7 +31,7 @@ import { getCombinedDisplayText, getSelectedPiece, getSelectedMove } from './sta
 import { renderBrandingImage, renderBlankBrandingImage, renderCheckBrandingImage } from './render/branding';
 import { EvenHubBridge } from './evenhub/bridge';
 import { TurnLoop } from './engine/turnloop';
-import { PROFILES } from './engine/profiles';
+import { PROFILE_BY_DIFFICULTY } from './engine/profiles';
 import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoardMarkers, loadBoardMarkers } from './storage/persistence';
 import type { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
 import { MENU_OPTIONS } from './state/constants';
@@ -85,6 +85,7 @@ export async function initApp(): Promise<void> {
         fen: savedGame.fen,
         history: savedGame.history,
         turn: savedGame.turn,
+        difficulty: savedGame.difficulty,
         pieces: chess.getPiecesWithMoves(),
         inCheck: chess.isInCheck(),
         hasUnsavedChanges: false,
@@ -97,7 +98,7 @@ export async function initApp(): Promise<void> {
   const store = createStore(initialState);
   const hub = new EvenHubBridge();
   const boardRenderer = new BoardRenderer();
-  const initialProfile = initialState.difficulty === 'serious' ? PROFILES.SERIOUS : PROFILES.CASUAL;
+  const initialProfile = PROFILE_BY_DIFFICULTY[initialState.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
   const turnLoop = new TurnLoop(chess, store, initialProfile);
 
   // Delay (ms) after createStartUpPage before first image update; overlap with board render.
@@ -158,9 +159,12 @@ export async function initApp(): Promise<void> {
     }
 
     if (state.difficulty !== prevState.difficulty) {
-      const profile = state.difficulty === 'serious' ? PROFILES.SERIOUS : PROFILES.CASUAL;
+      const profile = PROFILE_BY_DIFFICULTY[state.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
       turnLoop.setProfile(profile);
       saveDifficulty(state.difficulty);
+      if (state.history.length > 0) {
+        saveGame(state.fen, state.history, state.turn, state.difficulty);
+      }
       console.log('[EvenChess] Difficulty changed to:', state.difficulty);
     }
 

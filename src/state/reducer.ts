@@ -730,12 +730,14 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
       return { ...state, phase: 'viewLog', logScrollOffset: initialOffset };
     }
 
-    case 'difficulty':
+    case 'difficulty': {
+      const idx = DIFFICULTY_OPTIONS.indexOf(state.difficulty);
       return {
         ...state,
         phase: 'difficultySelect',
-        menuSelectedIndex: state.difficulty === 'casual' ? 0 : 1,
+        menuSelectedIndex: idx >= 0 ? idx : 0,
       };
+    }
 
     case 'reset':
       return {

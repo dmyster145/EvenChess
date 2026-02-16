@@ -94,7 +94,7 @@ export interface AcademyState {
   pgnStudy?: PgnStudyState;
 }
 
-export type DifficultyLevel = 'casual' | 'serious';
+export type DifficultyLevel = 'easy' | 'casual' | 'serious';
 
 export interface EngineProfile {
   name: string;

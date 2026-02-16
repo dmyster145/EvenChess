@@ -10,11 +10,13 @@
     "preview": "vite preview",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "node scripts/copy-stockfish.cjs"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.7",
-    "chess.js": "^1.4.0"
+    "chess.js": "^1.4.0",
+    "stockfish.js": "^10.0.2"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

@@ -7,6 +7,7 @@
 import type { GameState, PieceEntry, CarouselMove } from './contracts';
 import {
   MENU_LABELS,
+  DIFFICULTY_OPTIONS,
   DIFFICULTY_LABELS,
   BOARD_MARKERS_LABELS,
   MAX_MOVES_DISPLAY,
@@ -239,8 +240,7 @@ export function getDifficultyDisplayText(state: GameState): string {
 
   DIFFICULTY_LABELS.forEach((label, i) => {
     const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
-    const current = (i === 0 && state.difficulty === 'casual') ||
-                    (i === 1 && state.difficulty === 'serious') ? ' *' : '';
+    const current = DIFFICULTY_OPTIONS[i] === state.difficulty ? ' *' : '';
     lines.push(`${prefix}${label}${current}`);
   });
 
