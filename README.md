@@ -8,11 +8,11 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
 | Play — piece selection | Menu | Academy — drill selection |
 |------------------------|------|-------------|
-| ![Piece selection and board](assets/screenshot.png) | ![Main menu](assets/screenshot-menu.png) | ![Select mode](assets/screenshot-mode-select.png) |
+| ![Piece selection and board](assets/screenshot.png) | ![Main menu](assets/screenshot-menu.png) | ![Academy — drill selection](assets/screenshot-academy.png) |
 
 | Bullet Blitz — timed game | Mode select |
 |---------------------------|----------------------------|
-| ![Academy drills](assets/screenshot-academy.png) | ![Bullet with timers and log](assets/screenshot-bullet.png) |
+| ![Bullet with timers and log](assets/screenshot-bullet.png) | ![Select mode](assets/screenshot-mode-select.png) |
 
 ## Quick links
 
