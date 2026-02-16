@@ -576,9 +576,9 @@ describe('selectors', () => {
       const text = getBulletSetupDisplayText(state);
       expect(text).toContain('1+0');
       expect(text).toContain('3+0');
-      expect(text).toContain('3+2');
+      expect(text).toContain('3+5');
       expect(text).toContain('5+0');
-      expect(text).toContain('5+3');
+      expect(text).toContain('5+5');
     });
   });
 

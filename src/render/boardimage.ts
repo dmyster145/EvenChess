@@ -732,5 +732,3 @@ function squareToCoords(square: string): { file: number; rank: number } {
   const { file, displayRank } = squareToDisplayCoords(square);
   return { file, rank: displayRank };
 }
-
-}

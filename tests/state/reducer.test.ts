@@ -456,19 +456,19 @@ describe('reducer', () => {
       const next = reduce(state, { type: 'START_BULLET_GAME', timeControlIndex: 0 });
       
       expect(next.phase).toBe('idle');
-      expect(next.timerActive).toBe(true);
       expect(next.timers).toBeDefined();
       expect(next.timers!.whiteMs).toBe(TIME_CONTROLS[0].initialMs);
       expect(next.timers!.blackMs).toBe(TIME_CONTROLS[0].initialMs);
       expect(next.timers!.incrementMs).toBe(TIME_CONTROLS[0].incrementMs);
+      expect(next.timerActive).toBe(false);
     });
 
-    it('uses 3+2 time control by default', () => {
+    it('uses 3+5 time control when index 3', () => {
       const state = createTestState({ phase: 'bulletSetup' });
-      const next = reduce(state, { type: 'START_BULLET_GAME', timeControlIndex: 2 });
+      const next = reduce(state, { type: 'START_BULLET_GAME', timeControlIndex: 3 });
       
       expect(next.timers!.whiteMs).toBe(180000); // 3 minutes
-      expect(next.timers!.incrementMs).toBe(2000); // 2 seconds
+      expect(next.timers!.incrementMs).toBe(5000); // 5 seconds
     });
   });
 
@@ -483,7 +483,8 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 2 });
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
       expect(next.phase).toBe('idle');
-      expect(next.timerActive).toBe(true);
+      expect(next.timers).toBeDefined();
+      expect(next.timerActive).toBe(false);
     });
   });
 
