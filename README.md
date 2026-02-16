@@ -4,6 +4,8 @@ Chess for **Even Realities G2** smart glasses. Play vs Stockfish, race the clock
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
+![EvenChess on G2 — piece selection and board](assets/screenshot.png)
+
 ## Quick links
 
 - **In-app help:** When you open the app URL on your phone, you get the full instructions page (see [index.html](index.html)). It covers getting started, game modes, controls, menu options, academy drills, and tips. The same content is built from this repo.
