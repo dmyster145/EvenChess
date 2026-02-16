@@ -61,6 +61,7 @@ describe('isMenuPhase', () => {
     'idle',
     'pieceSelect',
     'destSelect',
+    'promotionSelect',
     'confirm',
     'boardMarkersSelect',
   ];

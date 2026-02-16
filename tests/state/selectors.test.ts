@@ -56,9 +56,13 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     phase: 'idle',
     selectedPieceId: null,
     selectedMoveIndex: 0,
+    pendingPromotionMove: null,
+    selectedPromotionIndex: 0,
     mode: 'play',
     history: [],
     lastMove: null,
+    lastMoveToSquare: null,
+    playerLastMoveToSquare: null,
     engineThinking: false,
     inCheck: false,
     gameOver: null,
@@ -127,6 +131,11 @@ describe('selectors', () => {
       });
       expect(getCarouselItems(state)).toEqual(['Queen D3', 'Queen H5']);
     });
+
+    it('returns promotion piece names for promotionSelect', () => {
+      const state = createTestState({ phase: 'promotionSelect' });
+      expect(getCarouselItems(state)).toEqual(['Queen', 'Rook', 'Bishop', 'Knight']);
+    });
   });
 
   describe('getCarouselSelectedIndex', () => {
@@ -141,6 +150,14 @@ describe('selectors', () => {
         selectedPieceId: 'w-n-f3',
       });
       expect(getCarouselSelectedIndex(state)).toBe(1);
+    });
+
+    it('returns selectedPromotionIndex for promotionSelect', () => {
+      const state = createTestState({
+        phase: 'promotionSelect',
+        selectedPromotionIndex: 2,
+      });
+      expect(getCarouselSelectedIndex(state)).toBe(2);
     });
   });
 

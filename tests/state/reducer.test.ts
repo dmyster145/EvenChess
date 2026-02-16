@@ -36,9 +36,13 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     phase: 'idle',
     selectedPieceId: null,
     selectedMoveIndex: 0,
+    pendingPromotionMove: null,
+    selectedPromotionIndex: 0,
     mode: 'play',
     history: [],
     lastMove: null,
+    lastMoveToSquare: null,
+    playerLastMoveToSquare: null,
     engineThinking: false,
     inCheck: false,
     gameOver: null,
@@ -66,6 +70,17 @@ describe('reducer', () => {
       expect(next.selectedPieceId).toBe('w-n-g1');
     });
 
+    it('enters pieceSelect with playerLastMoveToSquare piece when set', () => {
+      const piecesWithE4: PieceEntry[] = [
+        { id: 'w-n-g1', label: 'Ng1', color: 'w', type: 'n', square: 'g1', moves: [{ uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' }] },
+        { id: 'w-p-e4', label: 'Pe4', color: 'w', type: 'p', square: 'e4', moves: [{ uci: 'e4e5', san: 'e5', from: 'e4', to: 'e5' }] },
+      ];
+      const state = createTestState({ playerLastMoveToSquare: 'e4', pieces: piecesWithE4 });
+      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      expect(next.phase).toBe('pieceSelect');
+      expect(next.selectedPieceId).toBe('w-p-e4'); // piece on e4 (last moved to) is selected first
+    });
+
     it('cycles pieces in pieceSelect', () => {
       const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' });
       const next = reduce(state, { type: 'SCROLL', direction: 'down' });
@@ -90,6 +105,21 @@ describe('reducer', () => {
       // Should wrap around at the end (2 moves for knight: f3, h3)
       const wrapped = reduce(next, { type: 'SCROLL', direction: 'down' });
       expect(wrapped.selectedMoveIndex).toBe(0); // Wraps back to first move
+    });
+
+    it('cycles promotion options in promotionSelect', () => {
+      const state = createTestState({
+        phase: 'promotionSelect',
+        pendingPromotionMove: { from: 'e7', to: 'e8' },
+        selectedPromotionIndex: 0,
+      });
+      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      expect(next.selectedPromotionIndex).toBe(1);
+      const wrapped = reduce(
+        createTestState({ phase: 'promotionSelect', pendingPromotionMove: { from: 'e7', to: 'e8' }, selectedPromotionIndex: 3 }),
+        { type: 'SCROLL', direction: 'down' }
+      );
+      expect(wrapped.selectedPromotionIndex).toBe(0);
     });
   });
 
@@ -129,6 +159,46 @@ describe('reducer', () => {
       expect(next.pendingMove!.uci).toBe('g1h3');
       expect(next.history).toContain('Nh3');
     });
+
+    it('enters promotionSelect when tapping a promotion move in destSelect', () => {
+      const pieces: PieceEntry[] = [
+        {
+          id: 'w-p-e7',
+          label: 'Pe7',
+          color: 'w',
+          type: 'p',
+          square: 'e7',
+          moves: [
+            { uci: 'e7e8q', san: 'e8=Q', from: 'e7', to: 'e8', promotion: 'q' },
+          ],
+        },
+      ];
+      const state = createTestState({
+        phase: 'destSelect',
+        selectedPieceId: 'w-p-e7',
+        selectedMoveIndex: 0,
+        pieces,
+      });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.phase).toBe('promotionSelect');
+      expect(next.pendingPromotionMove).toEqual({ from: 'e7', to: 'e8' });
+      expect(next.selectedPromotionIndex).toBe(0);
+    });
+
+    it('commits promotion move from promotionSelect', () => {
+      const state = createTestState({
+        phase: 'promotionSelect',
+        pendingPromotionMove: { from: 'e7', to: 'e8' },
+        selectedPromotionIndex: 1, // Rook
+      });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.phase).toBe('idle');
+      expect(next.pendingPromotionMove).toBeNull();
+      expect(next.pendingMove).not.toBeNull();
+      expect(next.pendingMove!.from).toBe('e7');
+      expect(next.pendingMove!.to).toBe('e8');
+      expect(next.pendingMove!.promotion).toBe('r');
+    });
   });
 
   describe('DOUBLE_TAP', () => {
@@ -164,6 +234,17 @@ describe('reducer', () => {
       const next = reduce(state, { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('pieceSelect');
       expect(next.selectedMoveIndex).toBe(0);
+    });
+
+    it('goes back to destSelect from promotionSelect', () => {
+      const state = createTestState({
+        phase: 'promotionSelect',
+        pendingPromotionMove: { from: 'e7', to: 'e8' },
+        selectedPromotionIndex: 2,
+      });
+      const next = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(next.phase).toBe('destSelect');
+      expect(next.pendingPromotionMove).toBeNull();
     });
   });
 

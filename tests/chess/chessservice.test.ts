@@ -97,4 +97,19 @@ describe('ChessService', () => {
     const empty = chess.getPieceAt('e4');
     expect(empty).toBeNull();
   });
+
+  it('orders moves with captures first, then by progress towards opponent side', () => {
+    // After 1.e4 e5 2.Nf3 Nc6: white to move, knight on f3 can capture on e5 or make quiet moves
+    const chess = new ChessService();
+    chess.makeMove('e2', 'e4');
+    chess.makeMove('e7', 'e5');
+    chess.makeMove('g1', 'f3');
+    chess.makeMove('b8', 'c6');
+    const pieces = chess.getPiecesWithMoves();
+    const knight = pieces.find((p) => p.square === 'f3');
+    expect(knight).toBeDefined();
+    expect(knight!.moves.length).toBeGreaterThan(0);
+    const firstMove = knight!.moves[0];
+    expect(firstMove.san).toBe('Nxe5'); // capture should be first
+  });
 });
