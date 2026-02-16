@@ -1,0 +1,22 @@
+# Dependencies, build, and environment
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+*.log
+dist/
+build/
+*.egg-info/
+
+# Documentation (keep local only)
+docs/*.md
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~

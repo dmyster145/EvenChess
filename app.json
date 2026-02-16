@@ -1,0 +1,7 @@
+{
+  "name": "EvenChess",
+  "version": "0.1.0",
+  "description": "Heads-up chess HUD for Even G2 glasses with R1 ring input",
+  "author": "EvenChess",
+  "entry": "index.html"
+}

@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EvenChess - Smart Chess for Even Realities G2</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        /* Text Colors (TC) */
+        --tc-1st: #232323;
+        --tc-2nd: #7B7B7B;
+        --tc-highlight: #FFFFFF;
+        --tc-red: #FF4535;
+        --tc-green: #4BB954;
+        
+        /* Background Colors (BC) */
+        --bc-1st: #FFFFFF;
+        --bc-2nd: #F6F6F6;
+        --bc-3rd: #EEEEEE;
+        --bc-4th: #E4E4E4;
+        --bc-accent: #FEF991;
+        --bc-highlight: #232323;
+        
+        /* Semantic aliases */
+        --bg-primary: var(--bc-3rd);
+        --bg-secondary: var(--bc-2nd);
+        --bg-card: var(--bc-1st);
+        --bg-tertiary: var(--bc-4th);
+        --text-primary: var(--tc-1st);
+        --text-secondary: var(--tc-2nd);
+        --accent: var(--bc-accent);
+        --accent-dark: #E5E082;
+        --border: var(--bc-4th);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
+        line-height: 1.5;
+        min-height: 100vh;
+        font-size: 15px;
+        font-weight: 400;
+        letter-spacing: -0.15px;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      .container {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 24px 12px;
+      }
+
+      /* Header & Logo */
+      .header {
+        text-align: center;
+        padding: 24px 0;
+        margin-bottom: 24px;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .logo-text {
+        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 24px;
+        font-weight: 600;
+        letter-spacing: 1px;
+        color: var(--text-primary);
+      }
+
+      .logo-text .dot {
+        color: var(--text-primary);
+        font-size: 20px;
+        vertical-align: middle;
+        margin: 0 1px;
+      }
+
+      .knight-icon {
+        display: none;
+      }
+
+      .subtitle {
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 400;
+        letter-spacing: -0.13px;
+        margin-top: 8px;
+      }
+
+      /* Table of Contents */
+      .toc {
+        background: var(--bg-card);
+        border-radius: 6px;
+        padding: 16px;
+        margin-bottom: 24px;
+      }
+
+      .toc h2 {
+        font-size: 11px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-secondary);
+        margin-bottom: 16px;
+      }
+
+      .toc-list {
+        list-style: none;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 6px;
+      }
+
+      .toc-list a {
+        color: var(--text-primary);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 400;
+        letter-spacing: -0.13px;
+        display: block;
+        padding: 6px 10px;
+        background: var(--accent);
+        border-radius: 6px;
+        transition: background 0.2s, transform 0.2s;
+      }
+
+      .toc-list a:hover {
+        background: var(--accent-dark);
+        transform: translateY(-1px);
+      }
+
+      /* Sections */
+      .section {
+        margin-bottom: 12px;
+      }
+
+      details {
+        background: var(--bg-card);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+
+      details[open] {
+        box-shadow: 0 0 0 2px var(--accent);
+      }
+
+      summary {
+        padding: 16px;
+        cursor: pointer;
+        font-weight: 500;
+        font-size: 17px;
+        letter-spacing: -0.17px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        user-select: none;
+        list-style: none;
+        transition: background 0.2s;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary::before {
+        content: '▸';
+        font-size: 12px;
+        color: var(--text-primary);
+        background: var(--accent);
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition: transform 0.2s;
+      }
+
+      details[open] summary::before {
+        transform: rotate(90deg);
+      }
+
+      summary:hover {
+        background: var(--bg-secondary);
+      }
+
+      .section-content {
+        padding: 0 16px 16px;
+        color: var(--text-secondary);
+      }
+
+      .section-content h3 {
+        color: var(--text-primary);
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: -0.15px;
+        margin: 16px 0 8px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .section-content h3:first-child {
+        margin-top: 0;
+      }
+
+      .section-content p {
+        margin: 8px 0;
+        font-size: 15px;
+        font-weight: 300;
+        letter-spacing: -0.15px;
+      }
+
+      .section-content ul,
+      .section-content ol {
+        margin: 8px 0 8px 20px;
+        font-size: 15px;
+        font-weight: 300;
+        letter-spacing: -0.15px;
+        padding-left: 8px;
+      }
+
+      .section-content li {
+        margin: 6px 0;
+      }
+
+      /* Code/command styling */
+      code {
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        background: var(--bg-secondary);
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-size: 13px;
+        color: var(--text-primary);
+      }
+
+      /* Gesture cards */
+      .gesture-grid {
+        display: grid;
+        gap: 6px;
+        margin: 12px 0;
+      }
+
+      .gesture-card {
+        background: var(--bg-secondary);
+        border-radius: 6px;
+        padding: 12px 16px;
+        font-size: 15px;
+        font-weight: 300;
+      }
+
+      .gesture-card strong {
+        color: var(--text-primary);
+        display: block;
+        margin-bottom: 4px;
+        font-weight: 500;
+      }
+
+      /* Time control table */
+      .time-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 6px;
+        margin: 12px 0;
+        font-size: 15px;
+        font-weight: 300;
+      }
+
+      .time-table th,
+      .time-table td {
+        padding: 8px 12px;
+        text-align: left;
+      }
+
+      .time-table th {
+        color: var(--text-secondary);
+        font-weight: 500;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .time-table tr {
+        background: var(--bg-secondary);
+      }
+
+      .time-table td:first-child {
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        color: var(--text-primary);
+        font-weight: 500;
+        border-radius: 6px 0 0 6px;
+      }
+
+      .time-table td:last-child {
+        border-radius: 0 6px 6px 0;
+      }
+
+      /* Tips */
+      .tip {
+        background: var(--accent);
+        padding: 12px 16px;
+        margin: 12px 0;
+        border-radius: 6px;
+        font-size: 15px;
+        font-weight: 300;
+      }
+
+      .tip strong {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+
+      /* Footer */
+      .footer {
+        text-align: center;
+        padding: 24px 0;
+        margin-top: 24px;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: -0.11px;
+      }
+
+      .footer a {
+        color: var(--text-primary);
+        text-decoration: underline;
+      }
+
+      /* Hide app container */
+      #app {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div class="container">
+      <!-- Header with Logo -->
+      <header class="header">
+        <div class="logo">
+          <span class="logo-text">EVEN<span class="dot">•</span>CHESS</span>
+          <svg class="knight-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M19 22H5v-2h14v2M17.16 8.26A3.99 3.99 0 0 0 18 6c0-.23-.03-.46-.06-.69l1.56-.56-.37-1.45-1.67.6a4.007 4.007 0 0 0-2.7-1.86l.2-1.04h-1.5l-.2 1.04c-1.14.18-2.13.78-2.78 1.67l-1.5-.54-.36 1.45 1.33.48C10.08 5.4 10 5.68 10 6c0 .93.32 1.78.85 2.46L4 20h2l4.46-8.91c.75.52 1.65.84 2.62.9l.92 3.56 1.94-.5-.86-3.31a4.01 4.01 0 0 0 2.08-3.48z"/>
+          </svg>
+        </div>
+        <p class="subtitle">Smart Chess for Even Realities G2 Glasses</p>
+      </header>
+
+      <!-- Table of Contents -->
+      <nav class="toc">
+        <h2>Quick Navigation</h2>
+        <ul class="toc-list">
+          <li><a href="#getting-started">Getting Started</a></li>
+          <li><a href="#game-modes">Game Modes</a></li>
+          <li><a href="#controls">Controls</a></li>
+          <li><a href="#menu-options">Menu Options</a></li>
+          <li><a href="#academy">Academy Drills</a></li>
+          <li><a href="#tips">Tips & Tricks</a></li>
+        </ul>
+      </nav>
+
+      <!-- Getting Started -->
+      <section class="section" id="getting-started">
+        <details open>
+          <summary>Getting Started</summary>
+          <div class="section-content">
+            <h3>Welcome</h3>
+            <p>Play chess on your G2 glasses. Take on the AI, race the clock in Bullet mode, or sharpen your skills in the Academy.</p>
+            
+            <h3>Launch</h3>
+            <p>Open EvenChess from Even Hub. You'll see the board on your glasses with "Scroll to begin" at the bottom.</p>
+            
+            <h3>Display</h3>
+            <ul>
+              <li><strong>Top:</strong> Logo and game status</li>
+              <li><strong>Center:</strong> Board and pieces</li>
+              <li><strong>Bottom:</strong> Move info and prompts</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <!-- Game Modes -->
+      <section class="section" id="game-modes">
+        <details>
+          <summary>Game Modes</summary>
+          <div class="section-content">
+            <h3>Play vs AI</h3>
+            <p>Classic chess against Stockfish. You play White.</p>
+            <ul>
+              <li><strong>Casual:</strong> Forgiving AI that slips up now and then</li>
+              <li><strong>Serious:</strong> Tougher opponent for a real fight</li>
+            </ul>
+            <p>Games auto-save, so you can pick up where you left off.</p>
+
+            <h3>Bullet Blitz</h3>
+            <p>Speed chess. Your clock ticks down on your turn. Hit zero and you lose.</p>
+            
+            <table class="time-table">
+              <thead>
+                <tr>
+                  <th>Format</th>
+                  <th>Time</th>
+                  <th>Increment</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>1+0</td><td>1 min</td><td>None</td></tr>
+                <tr><td>1+5</td><td>1 min</td><td>+5 sec/move</td></tr>
+                <tr><td>3+0</td><td>3 min</td><td>None</td></tr>
+                <tr><td>3+5</td><td>3 min</td><td>+5 sec/move</td></tr>
+                <tr><td>5+0</td><td>5 min</td><td>None</td></tr>
+                <tr><td>5+5</td><td>5 min</td><td>+5 sec/move</td></tr>
+              </tbody>
+            </table>
+
+            <h3>Academy</h3>
+            <p>Five drills to level up your game. Details in <a href="#academy">Academy Drills</a>.</p>
+          </div>
+        </details>
+      </section>
+
+      <!-- Controls -->
+      <section class="section" id="controls">
+        <details>
+          <summary>Controls</summary>
+          <div class="section-content">
+            <p>Three gestures on your G2 touchpad:</p>
+            
+            <div class="gesture-grid">
+              <div class="gesture-card">
+                <strong>Scroll</strong>
+                Swipe up or down to browse pieces, moves, or menu items.
+              </div>
+              
+              <div class="gesture-card">
+                <strong>Tap</strong>
+                Confirm your choice: pick a piece, make a move, or select a menu option.
+              </div>
+              
+              <div class="gesture-card">
+                <strong>Double Tap</strong>
+                Go back one step, or open the menu from the idle screen.
+              </div>
+            </div>
+
+            <h3>Making a Move</h3>
+            <ol>
+              <li><strong>Scroll</strong> to start selecting</li>
+              <li><strong>Scroll</strong> to your piece</li>
+              <li><strong>Tap</strong> to lock it in</li>
+              <li><strong>Scroll</strong> through your options</li>
+              <li><strong>Tap</strong> to make the move</li>
+            </ol>
+            
+            <div class="tip">
+              <strong>Tip:</strong> Double-tap anytime to go back a step.
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <!-- Menu Options -->
+      <section class="section" id="menu-options">
+        <details>
+          <summary>Menu Options</summary>
+          <div class="section-content">
+            <p>Double-tap from idle to open the menu. Scroll to browse, tap to choose.</p>
+
+            <h3>Mode</h3>
+            <p>Switch between Play vs AI, Bullet Blitz, and Academy.</p>
+
+            <h3>Board Markers</h3>
+            <p>Show or hide the file (A-H) and rank (1-8) labels on the board.</p>
+
+            <h3>View Log</h3>
+            <p>See your move history. Scroll through it, then tap or double-tap to go back. Moves show as pairs like "Knight C3 | Pawn E5".</p>
+
+            <h3>Difficulty</h3>
+            <p>Choose your opponent's strength:</p>
+            <ul>
+              <li><strong>Casual:</strong> Good for practice</li>
+              <li><strong>Serious:</strong> Full-strength Stockfish</li>
+            </ul>
+
+            <h3>Reset</h3>
+            <p>Start fresh. You'll confirm first so you don't lose your game by accident.</p>
+
+            <h3>Exit</h3>
+            <p>Close the app. If you have unsaved moves, you'll get a chance to save.</p>
+          </div>
+        </details>
+      </section>
+
+      <!-- Academy Drills -->
+      <section class="section" id="academy">
+        <details>
+          <summary>Academy Drills</summary>
+          <div class="section-content">
+            <p>Five drills to sharpen your chess. Your score tracks each session.</p>
+
+            <h3>Coordinates</h3>
+            <p>Find the target square (e.g., "Find: E4").</p>
+            <ul>
+              <li><strong>Scroll:</strong> Move along file or rank</li>
+              <li><strong>Tap:</strong> Switch axis, then submit</li>
+            </ul>
+
+            <h3>Tactics</h3>
+            <p>Spot the winning move in positions that use these ideas:</p>
+            <ul>
+              <li><strong>Fork:</strong> One piece attacks two (or more) enemy pieces at once; the opponent can't defend both.</li>
+              <li><strong>Pin:</strong> A piece is stuck because moving it would expose a more valuable piece (often the king) to attack.</li>
+              <li><strong>Skewer:</strong> You attack a valuable piece so that when it moves, a piece behind it is left exposed and can be captured.</li>
+              <li><strong>Discovered attack:</strong> Moving one piece uncovers an attack from another piece behind it.</li>
+              <li><strong>Back rank:</strong> The enemy king is trapped on the back rank with no escape; a rook or queen can deliver checkmate or win material.</li>
+            </ul>
+            <ul>
+              <li><strong>Tap:</strong> Show answer</li>
+              <li><strong>Tap again:</strong> Next puzzle</li>
+            </ul>
+
+            <h3>Checkmate</h3>
+            <p>Find mate in one. Classic patterns like Scholar's, Arabian, and Back Rank mates.</p>
+            <ul>
+              <li><strong>Tap:</strong> Show the winning move</li>
+              <li><strong>Tap again:</strong> Next puzzle</li>
+            </ul>
+
+            <h3>Knight Path</h3>
+            <p>Get the knight from start to target in the fewest moves.</p>
+            <ul>
+              <li><strong>Scroll:</strong> Pick your landing square</li>
+              <li><strong>Tap:</strong> Jump there</li>
+            </ul>
+            <p>Your path shows as you go. Hit the target within the optimal count to succeed.</p>
+
+            <h3>PGN Study</h3>
+            <p>Step through legendary games and opening lines:</p>
+            <p><strong>Famous Games:</strong></p>
+            <ul>
+              <li>Opera Game (Morphy, 1858)</li>
+              <li>Immortal Game (Anderssen, 1851)</li>
+              <li>Evergreen Game (Anderssen, 1852)</li>
+              <li>Game of the Century (Fischer, 1956)</li>
+            </ul>
+            <p><strong>Openings:</strong></p>
+            <ul>
+              <li>Italian, Sicilian, Queen's Gambit, Ruy Lopez</li>
+              <li>King's Indian, French, Caro-Kann</li>
+            </ul>
+            <ul>
+              <li><strong>Scroll:</strong> Move forward or back</li>
+              <li><strong>Tap:</strong> Skip to the end, then tap for the next game</li>
+            </ul>
+
+            <div class="tip">
+              <strong>Exit any drill:</strong> Double-tap to return to Academy.
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <!-- Tips & Tricks -->
+      <section class="section" id="tips">
+        <details>
+          <summary>Tips & Tricks</summary>
+          <div class="section-content">
+            <h3>Gameplay</h3>
+            <ul>
+              <li>Your piece and its possible moves light up on the board</li>
+              <li>"Check!" flashes when the king is threatened</li>
+              <li>"Engine thinking..." means the AI is working on its reply</li>
+              <li>In Bullet, watch your clock. Zero means game over</li>
+              <li>Games end by checkmate, stalemate, draw, or timeout</li>
+            </ul>
+
+            <h3>Navigation</h3>
+            <ul>
+              <li>From idle, scroll or tap to start picking pieces</li>
+              <li>Double-tap from idle opens the menu</li>
+              <li>Difficulty and board markers save between sessions</li>
+              <li>Your game saves automatically when you exit</li>
+            </ul>
+
+            <h3>Academy</h3>
+            <ul>
+              <li>Coordinates: Aim to find any square in under 3 seconds</li>
+              <li>Knight Path: Think ahead. Knights move in an L-shape</li>
+              <li>PGN Study: Watch how the masters develop their pieces early</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>EvenChess v0.1.0 | Built for <a href="https://evenrealities.com" target="_blank">Even Realities</a> G2</p>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+    <script>
+      // Expand section when clicking navigation links
+      document.querySelectorAll('.toc-list a').forEach(link => {
+        link.addEventListener('click', (e) => {
+          const targetId = link.getAttribute('href').substring(1);
+          const section = document.getElementById(targetId);
+          if (section) {
+            const details = section.querySelector('details');
+            if (details) {
+              details.setAttribute('open', '');
+            }
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
