@@ -81,6 +81,7 @@ export function reduce(state: GameState, action: Action): GameState {
         hasUnsavedChanges: false,
         menuSelectedIndex: 0,
         previousPhase: null,
+        logScrollOffset: 0,
       };
 
     case 'REFRESH':
@@ -123,6 +124,7 @@ export function reduce(state: GameState, action: Action): GameState {
         hasUnsavedChanges: false,
         menuSelectedIndex: 0,
         previousPhase: null,
+        logScrollOffset: 0,
       };
 
     case 'SET_DIFFICULTY':
@@ -779,6 +781,7 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
         academyState: undefined,
         menuSelectedIndex: 0,
         previousPhase: null,
+        logScrollOffset: 0,
       };
 
     case 'bullet':
@@ -786,6 +789,7 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
         ...state,
         mode: 'bullet',
         phase: 'bulletSetup',
+        logScrollOffset: 0,
       };
 
     case 'academy':
@@ -796,6 +800,7 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
         menuSelectedIndex: 0,
         timerActive: false,
         timers: undefined,
+        logScrollOffset: 0,
       };
 
     default:
@@ -808,6 +813,21 @@ function handleStartBulletGame(state: GameState, timeControlIndex: number): Game
   return {
     ...state,
     phase: 'idle',
+    selectedPieceId: null,
+    selectedMoveIndex: 0,
+    pendingPromotionMove: null,
+    selectedPromotionIndex: 0,
+    history: [],
+    lastMove: null,
+    lastMoveToSquare: null,
+    playerLastMoveToSquare: null,
+    engineThinking: false,
+    gameOver: null,
+    pendingMove: null,
+    hasUnsavedChanges: false,
+    menuSelectedIndex: 0,
+    previousPhase: null,
+    logScrollOffset: 0,
     timers: {
       whiteMs: timeControl.initialMs,
       blackMs: timeControl.initialMs,
@@ -816,8 +836,6 @@ function handleStartBulletGame(state: GameState, timeControlIndex: number): Game
     timerActive: false,
     lastTickTime: null,
     selectedTimeControlIndex: timeControlIndex,
-    menuSelectedIndex: 0,
-    previousPhase: null,
   };
 }
 

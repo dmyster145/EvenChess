@@ -4,7 +4,15 @@ Chess for **Even Realities G2** smart glasses. Play vs Stockfish, race the clock
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
-![EvenChess on G2 — piece selection and board](assets/screenshot.png)
+## Screenshots
+
+| Play — piece selection | Menu | Mode select |
+|------------------------|------|-------------|
+| ![Piece selection and board](assets/screenshot.png) | ![Main menu](assets/screenshot-menu.png) | ![Select mode](assets/screenshot-mode-select.png) |
+
+| Academy — drill selection | Bullet Blitz — timed game |
+|---------------------------|----------------------------|
+| ![Academy drills](assets/screenshot-academy.png) | ![Bullet with timers and log](assets/screenshot-bullet.png) |
 
 ## Quick links
 
