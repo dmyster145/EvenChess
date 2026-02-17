@@ -35,11 +35,6 @@ export const TAP_COOLDOWN_MENU_MS = 500;
 export const TAP_COOLDOWN_DESTSELECT_MS = 280;
 let tapCooldownUntil = 0;
 
-function getTapCooldownRemainingMs(): number {
-  const now = Date.now();
-  return tapCooldownUntil > now ? tapCooldownUntil - now : 0;
-}
-
 // Prevents accidental selections from continued tapping after menu opens
 export function extendTapCooldown(durationMs: number = TAP_COOLDOWN_MS): void {
   const newCooldownUntil = Date.now() + durationMs;
@@ -52,13 +47,10 @@ function isInTapCooldown(): boolean {
   return Date.now() < tapCooldownUntil;
 }
 
-/** Returns false if tap was suppressed by cooldown (and logs); otherwise records tap and returns true. */
-function tryConsumeTap(intendedActionType: 'TAP' | 'DOUBLE_TAP'): boolean {
+/** Returns false if tap was suppressed by cooldown; otherwise records tap and returns true. */
+function tryConsumeTap(_intendedActionType: 'TAP' | 'DOUBLE_TAP'): boolean {
   recordTap();
   if (isInTapCooldown()) {
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'actions.ts:tap_cooldown',message:'Tap suppressed by cooldown',data:{stage:'tap_suppressed',intendedActionType,msRemaining:getTapCooldownRemainingMs()},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
-    // #endregion
     return false;
   }
   return true;
@@ -114,11 +106,6 @@ export function mapEvenHubEvent(event: EvenHubEvent, _state: GameState): Action 
       }
       action = mapSysEvent(event.sysEvent);
     }
-    // #region agent log
-    if (action && (action.type === 'SCROLL' || action.type === 'TAP' || action.type === 'DOUBLE_TAP')) {
-      fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'actions.ts:input',message:'Input event',data:{stage:'input',actionType:action.type},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
-    }
-    // #endregion
     return action;
   } catch (err) {
     console.error('[InputMapper] Error processing event:', err);

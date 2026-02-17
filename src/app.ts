@@ -102,27 +102,20 @@ export async function initApp(): Promise<void> {
   const initialProfile = PROFILE_BY_DIFFICULTY[initialState.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
   const turnLoop = new TurnLoop(chess, store, initialProfile);
 
-  // Delay (ms) after createStartUpPage before first image update; overlap with board render.
-  const CONTAINER_READY_MS = 50;
-
   try {
-    await Promise.all([hub.init(), turnLoop.init()]);
+    // Only block first paint on hub; engine init runs in background (fallback moves until ready)
+    await hub.init();
+    void turnLoop.init(); // don't block first paint on Stockfish load
 
     const startupPage = composeStartupPage(store.getState());
-    await hub.setupPage(startupPage);
-
+    const setupPagePromise = hub.setupPage(startupPage);
     const state = store.getState();
-    const containerReady = new Promise<void>((r) => setTimeout(r, CONTAINER_READY_MS));
-    const boardPromise = boardRenderer.renderPngAsync(state, chess, 0);
-
-    await containerReady;
-    let initialImages = await boardPromise;
-    if (initialImages.length === 0) {
-      initialImages = boardRenderer.renderFull(state, chess);
-    }
+    // First paint: BMP (sync) for speed; render runs in parallel with setupPage
+    const initialImages = boardRenderer.renderFull(state, chess);
+    await setupPagePromise;
     console.log('[EvenChess] Sending initial board images:', initialImages.length);
     await sendImages(hub, initialImages);
-    await hub.updateBoardImage(renderBrandingImage());
+    hub.updateBoardImage(renderBrandingImage()).catch((err) => console.error('[EvenChess] Branding image failed:', err));
   } catch (err) {
     console.error('[EvenChess] Initialization failed:', err);
   }
@@ -217,21 +210,6 @@ export async function initApp(): Promise<void> {
 
     // Schedule debounced display update
     if (pendingUpdateTimeout === null) {
-      // #region agent log
-      const changeSummary: string[] = [];
-      if (state.phase !== prevState.phase) changeSummary.push('phase');
-      if (state.fen !== prevState.fen) changeSummary.push('fen');
-      if (state.selectedPieceId !== prevState.selectedPieceId) changeSummary.push('selectedPieceId');
-      if (state.selectedMoveIndex !== prevState.selectedMoveIndex) changeSummary.push('selectedMoveIndex');
-      if (state.menuSelectedIndex !== prevState.menuSelectedIndex) changeSummary.push('menuSelectedIndex');
-      if (state.history.length !== prevState.history.length) changeSummary.push('history');
-      if (state.engineThinking !== prevState.engineThinking) changeSummary.push('engineThinking');
-      if (state.gameOver !== prevState.gameOver) changeSummary.push('gameOver');
-      if ((state.timers?.whiteMs ?? 0) !== (prevState.timers?.whiteMs ?? 0) || (state.timers?.blackMs ?? 0) !== (prevState.timers?.blackMs ?? 0)) changeSummary.push('timers');
-      if (state.academyState?.cursorFile !== prevState.academyState?.cursorFile || state.academyState?.cursorRank !== prevState.academyState?.cursorRank) changeSummary.push('academyCursor');
-      const trigger = changeSummary.length === 0 ? 'none' : changeSummary.includes('phase') || changeSummary.includes('selectedPieceId') || changeSummary.includes('selectedMoveIndex') || changeSummary.includes('menuSelectedIndex') ? 'input' : 'internal';
-      fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flush_scheduled',message:'Display flush scheduled',data:{stage:'flush_scheduled',delayMs:DISPLAY_DEBOUNCE_MS,changeSummary,trigger},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
-      // #endregion
       pendingUpdateTimeout = setTimeout(() => {
         pendingUpdateTimeout = null;
         void flushDisplayUpdate();
@@ -441,12 +419,6 @@ export async function initApp(): Promise<void> {
       return;
     }
     flushInProgress = true;
-    const flushStartTime = Date.now();
-    let imageCount = 0;
-    let textChanged = false;
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flushDisplayUpdate',message:'Flush started',data:{stage:'flush_start'},timestamp:flushStartTime,hypothesisId:'perf'})}).catch(()=>{});
-    // #endregion
 
     try {
       const state = latestState;
@@ -477,9 +449,6 @@ export async function initApp(): Promise<void> {
         state.academyState?.pgnStudy?.gameName !== prev.academyState?.pgnStudy?.gameName;
 
       if (!displayChanged) {
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flushDisplayUpdate',message:'Flush skipped',data:{stage:'flush_skipped',reason:'display_unchanged',durationMs:Date.now()-flushStartTime},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
-        // #endregion
         return;
       }
 
@@ -514,7 +483,6 @@ export async function initApp(): Promise<void> {
       let textPromise: Promise<boolean> | undefined;
       if (text !== lastSentText) {
         lastSentText = text;
-        textChanged = true;
         textPromise = hub.updateText(CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT, text);
       }
 
@@ -566,8 +534,8 @@ export async function initApp(): Promise<void> {
                   dirtyImages = useNext ? boardCache.nextImages : boardCache.prevImages;
                   boardRenderer.setStateForCache(state);
                 } else {
-                  dirtyImages = await boardRenderer.renderPngAsync(state, chess);
-                  if (dirtyImages.length === 0) dirtyImages = boardRenderer.render(state, chess);
+                  // Sync BMP for faster update (same as launch/drills); cache refill still uses PNG for smaller payload
+                  dirtyImages = boardRenderer.render(state, chess);
                 }
                 if (state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect') {
                   dirtyImages = orderImagesSelectionFirst(dirtyImages, state);
@@ -576,7 +544,6 @@ export async function initApp(): Promise<void> {
                 }
                 scheduleBoardCacheRefill(state);
               }
-              imageCount = dirtyImages.length;
               return sendImages(hub, dirtyImages);
             })()
           : Promise.resolve();
@@ -586,10 +553,6 @@ export async function initApp(): Promise<void> {
         console.error('[EvenChess] Display update failed:', err);
       }
     } finally {
-      const durationMs = Date.now() - flushStartTime;
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/b292c5db-7dfa-488b-bfc0-114fb9d476de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.ts:flushDisplayUpdate',message:'Flush completed',data:{stage:'flush_end',durationMs,imageCount,textChanged},timestamp:Date.now(),hypothesisId:'perf'})}).catch(()=>{});
-      // #endregion
       flushInProgress = false;
 
       if (pendingFlushState) {

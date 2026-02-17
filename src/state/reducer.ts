@@ -63,7 +63,18 @@ export function reduce(state: GameState, action: Action): GameState {
     case 'GAME_OVER':
       return { ...state, phase: 'idle', gameOver: action.reason, engineThinking: false };
 
-    case 'NEW_GAME':
+    case 'NEW_GAME': {
+      const bulletTimerReset =
+        state.mode === 'bullet' && state.selectedTimeControlIndex != null
+          ? (() => {
+              const tc = TIME_CONTROLS[state.selectedTimeControlIndex] ?? TIME_CONTROLS[2];
+              return {
+                timers: { whiteMs: tc.initialMs, blackMs: tc.initialMs, incrementMs: tc.incrementMs },
+                timerActive: false,
+                lastTickTime: null,
+              };
+            })()
+          : {};
       return {
         ...state,
         phase: 'idle',
@@ -82,7 +93,9 @@ export function reduce(state: GameState, action: Action): GameState {
         menuSelectedIndex: 0,
         previousPhase: null,
         logScrollOffset: 0,
+        ...bulletTimerReset,
       };
+    }
 
     case 'REFRESH':
       return {

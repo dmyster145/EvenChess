@@ -623,19 +623,29 @@
 
     <script type="module" src="/src/main.ts"></script>
     <script>
-      // Expand section when clicking navigation links
-      document.querySelectorAll('.toc-list a').forEach(link => {
-        link.addEventListener('click', (e) => {
-          const targetId = link.getAttribute('href').substring(1);
-          const section = document.getElementById(targetId);
-          if (section) {
-            const details = section.querySelector('details');
-            if (details) {
-              details.setAttribute('open', '');
-            }
-          }
-        });
+      // Expand the section that matches the given id (or current URL hash)
+      function openSectionForHash(idOrEmpty) {
+        const id = idOrEmpty != null ? idOrEmpty : window.location.hash.substring(1);
+        if (!id) return;
+        const section = document.getElementById(id);
+        if (section) {
+          const details = section.querySelector('details');
+          if (details) details.setAttribute('open', '');
+        }
+      }
+      window.addEventListener('hashchange', function () { openSectionForHash(); });
+      // On link click, always open the target section (so re-clicking the same link expands it again)
+      document.addEventListener('click', function (e) {
+        const a = e.target.closest('a[href^="#"]');
+        if (!a) return;
+        const id = a.getAttribute('href').substring(1);
+        if (id) openSectionForHash(id);
       });
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () { openSectionForHash(); });
+      } else {
+        openSectionForHash();
+      }
     </script>
   </body>
 </html>
