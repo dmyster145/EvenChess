@@ -109,8 +109,9 @@ export class BoardRenderer {
   private cachedBottomBmp: Uint8Array = initBmpBuffer();
   private drillBasePixels: Uint8Array | null = null;
 
-  /** Returns only the image halves that changed (highlight-based dirty tracking). */
-  render(state: GameState, chess: ChessService): ImageRawDataUpdate[] {
+  /** Returns only the image halves that changed (highlight-based dirty tracking).
+   * When forceBothHalves is true, always returns both halves without re-initing buffers (faster than renderFull for cross-half). */
+  render(state: GameState, chess: ChessService, forceBothHalves = false): ImageRawDataUpdate[] {
     const fen = state.fen;
     const showBoardMarkers = state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
@@ -126,8 +127,8 @@ export class BoardRenderer {
     this.currentHighlightKeys.clear();
     for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
 
-    // Fast path: highlight-only changes use dirty tracking
-    if (!fenChanged && !markersChanged) {
+    // Fast path: highlight-only changes use dirty tracking (skip when caller needs both halves)
+    if (!fenChanged && !markersChanged && !forceBothHalves) {
       let topDirty = false;
       let bottomDirty = false;
 

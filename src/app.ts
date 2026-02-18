@@ -33,7 +33,7 @@ import { EvenHubBridge } from './evenhub/bridge';
 import { TurnLoop } from './engine/turnloop';
 import { PROFILE_BY_DIFFICULTY } from './engine/profiles';
 import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoardMarkers, loadBoardMarkers } from './storage/persistence';
-import type { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
+import { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
 import { MENU_OPTIONS } from './state/constants';
 import { STARTING_FEN } from './academy/pgn';
 import { moveCursorAxis } from './academy/drills';
@@ -346,22 +346,30 @@ export async function initApp(): Promise<void> {
     }
   }
 
-  /** When both halves are sent, put the half containing the selection first so it appears sooner. */
+  /** When both halves are sent: in destSelect/promotionSelect send the half WITHOUT the destination X first
+   * so the device never shows new X + old X (it applies updates one at a time). Otherwise put selection half first. */
   function orderImagesSelectionFirst(images: ImageRawDataUpdate[], state: GameState): ImageRawDataUpdate[] {
     if (images.length !== 2) return images;
+    const topId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_TOP);
+    const bottomId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
+    if (!topId || !bottomId) return images;
     const piece = getSelectedPiece(state);
     const move = getSelectedMove(state);
-    const square =
+    const destSquare =
       (state.phase === 'promotionSelect' && state.pendingPromotionMove
         ? state.pendingPromotionMove.to
         : state.phase === 'destSelect'
           ? move?.to
-          : piece?.square) ?? 'e4';
+          : null);
+    if (destSquare) {
+      const displayRank = 8 - parseInt(destSquare[1] ?? '1', 10);
+      const halfWithX = rankHalf(displayRank);
+      // Send the half WITHOUT the X first so we never show new X + old X during the gap.
+      return halfWithX === 'top' ? [bottomId, topId] : [topId, bottomId];
+    }
+    const square = piece?.square ?? 'e4';
     const displayRank = 8 - parseInt(square[1] ?? '1', 10);
     const half = rankHalf(displayRank);
-    const topId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_TOP);
-    const bottomId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
-    if (!topId || !bottomId) return images;
     return half === 'top' ? [topId, bottomId] : [bottomId, topId];
   }
 
@@ -372,6 +380,29 @@ export async function initApp(): Promise<void> {
     const bottom = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
     if (!top || !bottom) return images;
     return [top, bottom];
+  }
+
+  /** True when destination X moved from one board half to the other (e.g. B5→B1). Device may show both X's during update. */
+  function isCrossHalfDestTransition(prev: GameState, state: GameState): boolean {
+    if (state.phase !== 'destSelect' && state.phase !== 'promotionSelect') return false;
+    const prevDest = prev.phase === 'destSelect' ? getSelectedMove(prev)?.to : prev.pendingPromotionMove?.to;
+    const currDest = state.phase === 'destSelect' ? getSelectedMove(state)?.to : state.pendingPromotionMove?.to;
+    if (!prevDest || !currDest || prevDest === currDest) return false;
+    const prevRank = 8 - parseInt(prevDest[1] ?? '1', 10);
+    const currRank = 8 - parseInt(currDest[1] ?? '1', 10);
+    const prevHalf = rankHalf(prevRank);
+    const currHalf = rankHalf(currRank);
+    return prevHalf !== currHalf;
+  }
+
+  /** Cross-half: we already order so the clear half is sent first (orderImagesSelectionFirst sends destination last).
+   * No duplicate send—sending 2 images in order keeps updates snappy; if duplicate X reappears on device we can re-add. */
+  function maybeDuplicateClearHalf(
+    images: ImageRawDataUpdate[],
+    _state: GameState,
+    _prev: GameState,
+  ): ImageRawDataUpdate[] {
+    return images;
   }
 
   function scheduleBoardCacheRefill(state: GameState): void {
@@ -398,10 +429,9 @@ export async function initApp(): Promise<void> {
       }
       boardCache.nextKey = boardCacheKey(nextState);
       boardCache.prevKey = boardCacheKey(prevState);
-      const [nextImages, prevImages] = await Promise.all([
-        boardRenderer.renderPngAsync(nextState, chess, 0),
-        boardRenderer.renderPngAsync(prevState, chess, 2),
-      ]);
+      // Serialize so both do not share BoardRenderer.workPixels (fixes duplicate X on device when refill raced).
+      const nextImages = await boardRenderer.renderPngAsync(nextState, chess, 0);
+      const prevImages = await boardRenderer.renderPngAsync(prevState, chess, 2);
       boardCache.nextImages = nextImages.length > 0 ? nextImages : boardRenderer.render(nextState, chess);
       boardCache.prevImages = prevImages.length > 0 ? prevImages : boardRenderer.render(prevState, chess);
     };
@@ -528,17 +558,28 @@ export async function initApp(): Promise<void> {
                 dirtyImages = boardRenderer.renderFull(state, chess);
               } else {
                 const key = boardCacheKey(state);
-                const useNext = boardCache.nextKey === key && boardCache.nextImages.length > 0;
-                const usePrev = boardCache.prevKey === key && boardCache.prevImages.length > 0;
+                const crossHalf = isCrossHalfDestTransition(prev, state);
+                // When cross-half, skip cache so we get both halves (cache/refill can have only the dirty half).
+                const useNext = !crossHalf && boardCache.nextKey === key && boardCache.nextImages.length > 0;
+                const usePrev = !crossHalf && boardCache.prevKey === key && boardCache.prevImages.length > 0;
                 if (useNext || usePrev) {
                   dirtyImages = useNext ? boardCache.nextImages : boardCache.prevImages;
                   boardRenderer.setStateForCache(state);
                 } else {
-                  // Sync BMP for faster update (same as launch/drills); cache refill still uses PNG for smaller payload
-                  dirtyImages = boardRenderer.render(state, chess);
+                  if (crossHalf) {
+                    // Use render with forceBothHalves (no buffer re-init) instead of renderFull for less delay.
+                    dirtyImages = boardRenderer.render(state, chess, true);
+                  } else {
+                    dirtyImages = boardRenderer.render(state, chess);
+                  }
+                }
+                // Fallback: if we still have only one image on cross-half (e.g. stale cache path), force both halves.
+                if (crossHalf && dirtyImages.length === 1) {
+                  dirtyImages = boardRenderer.render(state, chess, true);
                 }
                 if (state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect') {
                   dirtyImages = orderImagesSelectionFirst(dirtyImages, state);
+                  dirtyImages = maybeDuplicateClearHalf(dirtyImages, state, prev);
                 } else {
                   dirtyImages = orderImagesTopFirst(dirtyImages);
                 }
