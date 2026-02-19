@@ -11,8 +11,9 @@ dist/
 build/
 *.egg-info/
 
-# Documentation (keep local only)
-docs/*.md
+# Excluded from check-in (local only)
+.cursor/rules/
+docs/
 
 # IDE and OS
 .idea/

@@ -1,6 +1,6 @@
 # EvenChess
 
-Chess for **Even Realities G2** smart glasses. Play vs Stockfish, race the clock in Bullet Blitz, or train in the Academy. Navigate with scroll and tap on the R1 ring or touchpad.
+Chess for **Even Realities G2** smart glasses: play vs Stockfish, race the clock in Bullet Blitz, or train in the Academy. Use the ring controller (R1) or touchpad — scroll to move, tap to select.
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
@@ -16,12 +16,12 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
 ## Quick links
 
-- **In-app help:** When you open the app URL on your phone, you get the full instructions page (see [index.html](index.html)). It covers getting started, game modes, controls, menu options, academy drills, and tips. The same content is built from this repo.
+- **In-app help:** Open the app on your phone to see the full instructions (getting started, modes, controls, academy). Same content as [index.html](index.html) in this repo.
 
 ## Tech stack
 
 - **Runtime:** TypeScript, Vite
-- **Chess:** [chess.js](https://github.com/jhlywa/chess.js) (rules, FEN, moves); [Stockfish](https://stockfishchess.org/) WASM via the **stockfish.js** npm package — worker and WASM are copied to `public/stockfish/` by the postinstall script so Vite can serve them. If the engine fails to load, the app falls back to random moves.
+- **Chess:** [chess.js](https://github.com/jhlywa/chess.js) (rules, FEN, moves). [Stockfish](https://stockfishchess.org/) via **stockfish.js** (worker + WASM copied to `public/stockfish/` on install). If the engine doesn’t load, the app falls back to random moves.
 - **Glasses:** [Even Hub SDK](https://www.npmjs.com/package/@evenrealities/even_hub_sdk) — containers, 1-bit BMP updates, event mapping
 - **Tests:** Vitest
 
@@ -49,18 +49,18 @@ EvenChess/
 
 | Command        | Description                |
 |----------------|----------------------------|
-| `npm run dev`  | Start Vite dev server      |
-| `npm run build`| TypeScript build + Vite build |
+| `npm run dev`  | Start dev server           |
+| `npm run build`| Build for production       |
 | `npm run preview` | Preview production build |
-| `npm run test` | Run Vitest once            |
-| `npm run test:watch` | Vitest watch mode    |
-| `npm run lint` | ESLint on `src/`           |
+| `npm run test` | Run tests once             |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run lint` | Lint `src/`                |
 
 ## Running and testing
 
 1. **Install:** `npm install`
-2. **Dev:** `npm run dev` — open the URL in a browser to see the [help page](index.html); use the Even Hub simulator or real glasses for the chess HUD.
-3. **Test:** `npm test`
+2. **Dev:** `npm run dev` — open the URL in a browser for the [help page](index.html), or use the Even Hub simulator / real glasses to run the app.
+3. **Test:** `npm run test`
 4. **Build:** `npm run build` — output in `dist/`.
 
 ## Features (summary)
@@ -68,11 +68,11 @@ EvenChess/
 - **Play vs AI:** White vs Stockfish; Easy, Casual, or Serious difficulty. Game auto-saves.
 - **Bullet Blitz:** Timed game with optional increment (e.g. 1+0, 3+2, 5+5).
 - **Academy:** Coordinate drill, Tactics, Mate-in-one, Knight Path, PGN Study (famous games and openings).
-- **Menu (double-tap from idle):** Mode, Board Markers (A–H / 1–8), View Log, Difficulty, Reset, Exit. Difficulty and board markers persist.
+- **Menu (double-tap from idle):** Mode, Board Markers (A–H / 1–8), View Log, Difficulty, Reset, Exit. Difficulty and board markers are saved.
 
-All behavior is documented on the in-app help page defined in [index.html](index.html).
+Full behavior and tips are on the in-app help page ([index.html](index.html)).
 
 ## License & credits
 
 - **chess.js** — [BSD-2-Clause](https://opensource.org/licenses/BSD-2-Clause). Copyright © Jeff Hlywa. Used for move generation, validation, FEN, and PGN. [GitHub](https://github.com/jhlywa/chess.js).
-- **Stockfish** — The app uses [stockfish.js](https://www.npmjs.com/package/stockfish.js) (GPL-3.0) from npm; the worker and WASM are copied to `public/stockfish/` on install. A placeholder worker file (`src/engine/stockfish-worker.js`) still exists for reference; if the real engine does not load (e.g. missing files), the app uses random moves and difficulty has no effect. The MIT license above applies only to EvenChess; distribution of a build that includes Stockfish must comply with GPL-3.0 for that component (attribution, license text, source offer).
+- **Stockfish** — The app uses [stockfish.js](https://www.npmjs.com/package/stockfish.js) (GPL-3.0); worker and WASM are copied to `public/stockfish/` on install. If the engine doesn’t load (e.g. missing files), the app falls back to random moves. The MIT license above applies only to EvenChess; any build that includes Stockfish must comply with GPL-3.0 for that component (attribution, license text, source offer).
