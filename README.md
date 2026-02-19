@@ -45,6 +45,45 @@ EvenChess/
 └── tests/              # Unit tests for state, storage, bullet, academy, chess, input
 ```
 
+## Prerequisites
+
+- **Even Realities** — G2 glasses and the [Even App](https://www.evenrealities.com/) (so you can open the widget and see the chess HUD on your glasses).
+- **Node.js** — v20.19.0 or newer. [Download Node.js](https://nodejs.org/) if you don’t have it; the installer is enough.
+
+## Setup
+
+1. **Clone and install**
+   - Open a terminal (Command Prompt, PowerShell, or Terminal app).
+   - Clone the repo (use the project’s clone URL from GitHub, or your fork):
+     ```bash
+     git clone https://github.com/owner/EvenChess.git
+     cd EvenChess
+     ```
+   - Install dependencies:
+     ```bash
+     npm install
+     ```
+
+2. **Run locally**
+   ```bash
+   npm run dev
+   ```
+   - You’ll see a local URL (e.g. `http://localhost:5173`). Keep this terminal open while you use the app.
+
+3. **Open in the Even App**
+   - **Option A:** Run `npx evenhub qr` in the project folder, then scan the QR code with the Even App to open the widget on your glasses.
+   - **Option B:** Open the dev URL (e.g. `http://<your-computer-ip>:5173`) in the Even App’s in-app browser so the chess app appears on your G2 glasses.
+
+4. **Try it**
+   - On your **phone:** Open the same URL in a browser to see the [help page](index.html) (getting started, modes, controls).
+   - On your **glasses:** Scroll to move the cursor, tap to select; double-tap from idle to open the menu (Mode, Difficulty, Academy, etc.).
+
+## Usage on the glasses
+
+- **Scroll** — Move the selection on the board or in menus.
+- **Tap** — Select a square, confirm a move, or choose a menu item.
+- **Double-tap (from idle)** — Open the menu: Mode, Board Markers, View Log, Difficulty, Reset, Exit.
+
 ## Scripts
 
 | Command        | Description                |
@@ -56,12 +95,13 @@ EvenChess/
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run lint` | Lint `src/`                |
 
-## Running and testing
+## Build and deploy
 
-1. **Install:** `npm install`
-2. **Dev:** `npm run dev` — open the URL in a browser for the [help page](index.html), or use the Even Hub simulator / real glasses to run the app.
-3. **Test:** `npm run test`
-4. **Build:** `npm run build` — output in `dist/`.
+```bash
+npm run build
+```
+
+Output is in `dist/`. Deploy that folder to any static host, then open the deployed URL in the Even App to use the widget in production.
 
 ## Features (summary)
 
