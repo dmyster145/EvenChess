@@ -91,7 +91,7 @@ EvenChess/
 | `npm run dev`  | Start dev server           |
 | `npm run build`| Build for production       |
 | `npm run preview` | Preview production build |
-| `npm run qr`   | Generate QR code (use `-- --url https://...` for deployed app) |
+| `npm run qr`   | Generate QR code for dev server URL |
 | `npm run test` | Run tests once             |
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run lint` | Lint `src/`                |
@@ -103,8 +103,6 @@ npm run build
 ```
 
 Output is in `dist/`. Deploy that folder to any static host, then open the deployed URL in the Even App to use the widget in production.
-
-**Shareable QR code (no dev server):** After deploying, generate a QR code that points to your deployed URL so others can open the widget without you running `npm run dev`. See [docs/SDKandDevResources.md](docs/SDKandDevResources.md#shared-qr-code-no-dev-server) for the exact steps; in short: `npm run qr -- --url https://your-deployed-url.com` (use `--external` to open the QR in a separate window for sharing).
 
 ## Features (summary)
 

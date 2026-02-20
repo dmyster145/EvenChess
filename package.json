@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "qr": "evenhub qr",
+    "qr": "evenhub qr --http --port 5173",
     "lint": "eslint src/",
     "test": "vitest run",
     "test:watch": "vitest",
