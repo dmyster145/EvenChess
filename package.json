@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "qr": "evenhub qr",
     "lint": "eslint src/",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -19,6 +20,7 @@
     "stockfish.js": "^10.0.2"
   },
   "devDependencies": {
+    "@evenrealities/evenhub-cli": "^0.1.5",
     "@types/node": "^24.3.0",
     "@typescript-eslint/eslint-plugin": "^8.42.0",
     "@typescript-eslint/parser": "^8.42.0",
