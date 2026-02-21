@@ -91,7 +91,6 @@ EvenChess/
 | `npm run dev`  | Start dev server           |
 | `npm run build`| Build for production       |
 | `npm run preview` | Preview production build |
-| `npm run qr`   | Generate QR code for dev server URL |
 | `npm run test` | Run tests once             |
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run lint` | Lint `src/`                |
