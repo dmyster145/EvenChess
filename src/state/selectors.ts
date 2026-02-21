@@ -429,7 +429,7 @@ export function getKnightPathDisplayText(state: GameState): string {
     lines.push(`Moves: ${kp.movesTaken}/${kp.optimalMoves}`);
     lines.push('');
     const cursorSquare = fileRankToSquare(academy.cursorFile, academy.cursorRank).toUpperCase();
-    lines.push(`Move to: ${ARROW_LEFT} ${cursorSquare} ${ARROW_RIGHT}`);
+    lines.push(`Move to: ${cursorSquare} ${ARROW_UPDOWN}`);
   }
 
   return lines.join('\n');
@@ -593,7 +593,7 @@ export function getCombinedDisplayText(state: GameState): string {
   switch (state.phase) {
     case 'idle':
       lines.push('');
-      lines.push(`${ARROW_UPDOWN} Scroll to begin`);
+      lines.push(`Scroll to begin ${ARROW_UPDOWN}`);
       break;
 
     case 'pieceSelect': {
@@ -601,12 +601,8 @@ export function getCombinedDisplayText(state: GameState): string {
       if (items.length > 0) {
         const current = items[index] ?? items[0];
         const innerContent = `${current} (${index + 1}/${items.length})`;
-        const selectionLine = `${ARROW_LEFT} ${innerContent} ${ARROW_RIGHT}`;
-        const label = 'Select piece:';
-        // Unicode arrows render ~2x normal char width; +3 shifts label right for visual centering
-        const visualWidth = selectionLine.length + 2;
-        const padding = Math.max(0, Math.floor((visualWidth - label.length) / 2) + 3);
-        lines.push(' '.repeat(padding) + label);
+        const selectionLine = `${innerContent} ${ARROW_UPDOWN}`;
+        lines.push('Select piece:');
         lines.push(selectionLine);
       }
       break;
@@ -618,12 +614,9 @@ export function getCombinedDisplayText(state: GameState): string {
         const piece = getSelectedPiece(state);
         const current = items[index] ?? items[0];
         const innerContent = `${current} (${index + 1}/${items.length})`;
-        const selectionLine = `${ARROW_LEFT} ${innerContent} ${ARROW_RIGHT}`;
+        const selectionLine = `${innerContent} ${ARROW_UPDOWN}`;
         const label = piece ? `Moving: ${piece.label}` : 'Select move:';
-        // Unicode arrows render ~2x normal char width; +3 shifts label right for visual centering
-        const visualWidth = selectionLine.length + 2;
-        const padding = Math.max(0, Math.floor((visualWidth - label.length) / 2) + 3);
-        lines.push(' '.repeat(padding) + label);
+        lines.push(label);
         lines.push(selectionLine);
       }
       break;
@@ -634,11 +627,8 @@ export function getCombinedDisplayText(state: GameState): string {
       if (items.length > 0) {
         const current = items[index] ?? items[0];
         const innerContent = `${current} (${index + 1}/${items.length})`;
-        const selectionLine = `${ARROW_LEFT} ${innerContent} ${ARROW_RIGHT}`;
-        const label = 'Select promotion:';
-        const visualWidth = selectionLine.length + 2;
-        const padding = Math.max(0, Math.floor((visualWidth - label.length) / 2) + 3);
-        lines.push(' '.repeat(padding) + label);
+        const selectionLine = `${innerContent} ${ARROW_UPDOWN}`;
+        lines.push('Select promotion:');
         lines.push(selectionLine);
       }
       break;

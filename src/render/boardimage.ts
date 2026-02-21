@@ -31,17 +31,19 @@ import { encodePixelsToPng } from './png-encode';
 
 const BUF_W = IMAGE_WIDTH;
 const BUF_H = IMAGE_HEIGHT * 2;
-const CELL = 23;
+const SPLIT_Y = IMAGE_HEIGHT;
+const CELL = 21;
 const GRID_SIZE = CELL * 8;
 const LABEL_PAD = 10;
 const BORDER_L = LABEL_PAD;
 const GRID_X = LABEL_PAD + 1;
-const BORDER_T = 2;
-const GRID_Y = BORDER_T + 1;
+// GRID_Y set so the top of row 4 aligns with the panel split
+const GRID_Y = SPLIT_Y - 4 * CELL;
+const BORDER_T = GRID_Y - 1;
 const BORDER_R = GRID_X + GRID_SIZE;
 const BORDER_B = GRID_Y + GRID_SIZE;
-const LABEL_Y = BORDER_B + 5;
-const SPLIT_Y = IMAGE_HEIGHT;
+// Match padding between file labels and board to row-label padding (GRID_X - font width 5 = 6)
+const LABEL_Y = BORDER_B + 6;
 
 function hlKey(file: number, rank: number, style: string): string {
   return `${file},${rank},${style}`;
@@ -296,16 +298,12 @@ export class BoardRenderer {
     const pixels = this.basePixels;
     pixels.fill(0);
 
-    for (let y = GRID_Y; y < GRID_Y + GRID_SIZE; y++) {
-      for (let x = GRID_X; x < GRID_X + GRID_SIZE; x++) {
-        setPixel(pixels, x, y, 1);
-      }
-    }
-
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
           fillCell(pixels, file, rank, 0);
+        } else {
+          fillCellLightDots(pixels, file, rank);
         }
       }
     }
@@ -332,15 +330,12 @@ export class BoardRenderer {
   /** Fill a pixel buffer with the empty coordinate-drill grid (no highlight). */
   private fillDrillBase(pixels: Uint8Array): void {
     pixels.fill(0);
-    for (let y = GRID_Y; y < GRID_Y + GRID_SIZE; y++) {
-      for (let x = GRID_X; x < GRID_X + GRID_SIZE; x++) {
-        setPixel(pixels, x, y, 1);
-      }
-    }
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
           fillCell(pixels, file, rank, 0);
+        } else {
+          fillCellLightDots(pixels, file, rank);
         }
       }
     }
@@ -386,16 +381,12 @@ export class BoardRenderer {
     const pixels = this.workPixels;
     pixels.fill(0);
 
-    for (let y = GRID_Y; y < GRID_Y + GRID_SIZE; y++) {
-      for (let x = GRID_X; x < GRID_X + GRID_SIZE; x++) {
-        setPixel(pixels, x, y, 1);
-      }
-    }
-
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
           fillCell(pixels, file, rank, 0);
+        } else {
+          fillCellLightDots(pixels, file, rank);
         }
       }
     }
@@ -427,16 +418,12 @@ export class BoardRenderer {
     const pixels = this.workPixels;
     pixels.fill(0);
 
-    for (let y = GRID_Y; y < GRID_Y + GRID_SIZE; y++) {
-      for (let x = GRID_X; x < GRID_X + GRID_SIZE; x++) {
-        setPixel(pixels, x, y, 1);
-      }
-    }
-
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
           fillCell(pixels, file, rank, 0);
+        } else {
+          fillCellLightDots(pixels, file, rank);
         }
       }
     }
@@ -560,6 +547,18 @@ function fillCell(pixels: Uint8Array, file: number, rank: number, value: number)
   }
 }
 
+/** Fill a light square with a dot pattern (checkerboard 0/1). */
+function fillCellLightDots(pixels: Uint8Array, file: number, rank: number): void {
+  const x0 = cellX(file);
+  const y0 = cellY(rank);
+  for (let dy = 0; dy < CELL; dy++) {
+    for (let dx = 0; dx < CELL; dx++) {
+      const value = (dx + dy) % 2 === 0 ? 0 : 1;
+      setPixel(pixels, x0 + dx, y0 + dy, value);
+    }
+  }
+}
+
 function highlightCell(
   pixels: Uint8Array,
   file: number,
@@ -572,7 +571,6 @@ function highlightCell(
   if (style === 'selected') {
     // Diagonal striped border (3px wide)
     const borderWidth = 3;
-    
     for (let t = 0; t < borderWidth; t++) {
       for (let dx = 0; dx < CELL; dx++) {
         const stripe = (dx + t) % 4 < 2 ? 1 : 0;
@@ -592,36 +590,49 @@ function highlightCell(
       }
     }
   } else {
-    // Destination: outlined X centered in the cell
+    // Destination: outlined X centered in the cell. On white (light) squares: dark border + white X.
+    const isLightSquare = (rank + file) % 2 === 0;
+    const outlineVal = isLightSquare ? 0 : 1;
+    const xVal = isLightSquare ? 1 : 0;
     const pad = 5;
     const size = CELL - pad * 2;
+    // On light squares the background is stippled; use a thicker outline so the dark border reads as uniform.
+    const outlineSpread = isLightSquare ? 2 : 1;
+    const oxMin = -2 - (outlineSpread - 1);
+    const oxMax = 1 + (outlineSpread - 1);
+    const oyMin = -1 - (outlineSpread - 1);
+    const oyMax = 1 + (outlineSpread - 1);
+    const tMin = -1 - (outlineSpread - 1);
+    const tMax = 0 + (outlineSpread - 1);
 
-    // First pass: white outline around the X
+    // First pass: outline around the X
     for (let i = 0; i < size; i++) {
       const d1 = i;
       const d2 = size - 1 - i;
-      for (let ox = -2; ox <= 1; ox++) {
-        for (let oy = -1; oy <= 1; oy++) {
-          if (ox === -1 || ox === 0) continue;
-          setPixel(pixels, x0 + pad + d1 + ox, y0 + pad + i + oy, 1);
-          setPixel(pixels, x0 + pad + d2 + ox, y0 + pad + i + oy, 1);
+      for (let ox = oxMin; ox <= oxMax; ox++) {
+        for (let oy = oyMin; oy <= oyMax; oy++) {
+          if (ox >= -1 && ox <= 0) continue;
+          setPixel(pixels, x0 + pad + d1 + ox, y0 + pad + i + oy, outlineVal);
+          setPixel(pixels, x0 + pad + d2 + ox, y0 + pad + i + oy, outlineVal);
         }
       }
-      for (let t = -1; t <= 0; t++) {
-        setPixel(pixels, x0 + pad + d1 + t, y0 + pad + i - 1, 1);
-        setPixel(pixels, x0 + pad + d1 + t, y0 + pad + i + 1, 1);
-        setPixel(pixels, x0 + pad + d2 + t, y0 + pad + i - 1, 1);
-        setPixel(pixels, x0 + pad + d2 + t, y0 + pad + i + 1, 1);
+      for (let t = tMin; t <= tMax; t++) {
+        for (let oy2 = 1; oy2 <= outlineSpread; oy2++) {
+          setPixel(pixels, x0 + pad + d1 + t, y0 + pad + i - oy2, outlineVal);
+          setPixel(pixels, x0 + pad + d1 + t, y0 + pad + i + oy2, outlineVal);
+          setPixel(pixels, x0 + pad + d2 + t, y0 + pad + i - oy2, outlineVal);
+          setPixel(pixels, x0 + pad + d2 + t, y0 + pad + i + oy2, outlineVal);
+        }
       }
     }
 
-    // Second pass: black X on top
+    // Second pass: X fill on top
     for (let i = 0; i < size; i++) {
       const d1 = i;
       const d2 = size - 1 - i;
       for (let t = -1; t <= 0; t++) {
-        setPixel(pixels, x0 + pad + d1 + t, y0 + pad + i, 0);
-        setPixel(pixels, x0 + pad + d2 + t, y0 + pad + i, 0);
+        setPixel(pixels, x0 + pad + d1 + t, y0 + pad + i, xVal);
+        setPixel(pixels, x0 + pad + d2 + t, y0 + pad + i, xVal);
       }
     }
   }
@@ -727,7 +738,9 @@ function drawPiece(
 
   const bottomRow = findBottomRow(silhouette);
   const x0 = cellX(file) + Math.floor((CELL - PIECE_SIZE) / 2);
-  const y0 = cellY(rank) + CELL - 4 - bottomRow;
+  // Ensure at least 1px gap from top of cell so pieces don't touch the top
+  const topInset = Math.max(1, CELL - 4 - bottomRow);
+  const y0 = cellY(rank) + topInset;
 
   if (color === 'b') {
     const fillVal = 0;
@@ -768,14 +781,13 @@ function drawPiece(
         }
       }
     } else {
-      // Light squares: black outline extends the piece
+      // Light squares: white outline for contrast (same as dark squares), then black fill
+      const outlineVal = 1;
       for (let row = -1; row <= PIECE_SIZE; row++) {
         for (let col = -1; col <= PIECE_SIZE; col++) {
-          // Skip if this pixel IS part of the silhouette
           const inSilhouette = row >= 0 && row < PIECE_SIZE && col >= 0 && col < PIECE_SIZE &&
             silhouette[row] !== undefined && (silhouette[row]! & (1 << (PIECE_SIZE - 1 - col)));
           if (inSilhouette) continue;
-          // Check if any neighbor is part of the silhouette
           let adjacentToSilhouette = false;
           for (let dr = -1; dr <= 1 && !adjacentToSilhouette; dr++) {
             for (let dc = -1; dc <= 1 && !adjacentToSilhouette; dc++) {
@@ -789,7 +801,7 @@ function drawPiece(
             }
           }
           if (adjacentToSilhouette) {
-            setPixel(pixels, x0 + col, y0 + row, fillVal);
+            setPixel(pixels, x0 + col, y0 + row, outlineVal);
           }
         }
       }
@@ -804,10 +816,9 @@ function drawPiece(
       }
     }
   } else {
-    // White pieces: contrasting outline + stipple interior for visual weight
+    // White pieces: contrasting outline + solid white interior.
     const outlineVal = isDark ? 1 : 0;
-    const baseVal = isDark ? 0 : 1;
-    const stippleVal = isDark ? 1 : 0;
+    const fillVal = 1;
     for (let row = 0; row < PIECE_SIZE; row++) {
       const bits = silhouette[row];
       if (bits === undefined) continue;
@@ -815,11 +826,31 @@ function drawPiece(
         if (bits & (1 << (PIECE_SIZE - 1 - col))) {
           const edge = isEdgePixel(silhouette, row, col);
           const thickEdge = edge || isNearEdge(silhouette, row, col, 1);
-          if (thickEdge) {
+          setPixel(pixels, x0 + col, y0 + row, thickEdge ? outlineVal : fillVal);
+        }
+      }
+    }
+    // On light squares add an outer outline ring so the dark border is thick without shrinking the piece.
+    if (!isDark) {
+      for (let row = -1; row <= PIECE_SIZE; row++) {
+        for (let col = -1; col <= PIECE_SIZE; col++) {
+          const inSilhouette = row >= 0 && row < PIECE_SIZE && col >= 0 && col < PIECE_SIZE &&
+            silhouette[row] !== undefined && (silhouette[row]! & (1 << (PIECE_SIZE - 1 - col)));
+          if (inSilhouette) continue;
+          let adjacentToSilhouette = false;
+          for (let dr = -1; dr <= 1 && !adjacentToSilhouette; dr++) {
+            for (let dc = -1; dc <= 1 && !adjacentToSilhouette; dc++) {
+              if (dr === 0 && dc === 0) continue;
+              const nr = row + dr;
+              const nc = col + dc;
+              if (nr >= 0 && nr < PIECE_SIZE && nc >= 0 && nc < PIECE_SIZE &&
+                  silhouette[nr] !== undefined && (silhouette[nr]! & (1 << (PIECE_SIZE - 1 - nc)))) {
+                adjacentToSilhouette = true;
+              }
+            }
+          }
+          if (adjacentToSilhouette) {
             setPixel(pixels, x0 + col, y0 + row, outlineVal);
-          } else {
-            const isStipple = (row + col) % 2 === 0;
-            setPixel(pixels, x0 + col, y0 + row, isStipple ? stippleVal : baseVal);
           }
         }
       }
