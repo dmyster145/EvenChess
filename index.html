@@ -619,6 +619,21 @@
       <footer class="footer">
         <p>EvenChess v0.1.0 | Built for <a href="https://evenrealities.com" target="_blank">Even Realities</a> G2</p>
       </footer>
+
+      <!-- Debug log (slowdown investigation): show/copy logs when testing on glasses -->
+      <section class="section" id="debug-log">
+        <details>
+          <summary>Debug log (copy when slowdown occurs)</summary>
+          <div class="section-content">
+            <p>Logs are updated as you play. When the game feels slow, open this section and use <strong>Copy logs</strong> to paste elsewhere.</p>
+            <pre id="debug-log-output" style="background:var(--bg-secondary);padding:12px;border-radius:6px;font-size:11px;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-all;"></pre>
+            <p style="margin-top:8px;">
+              <button type="button" id="debug-copy-btn" style="padding:8px 16px;border-radius:6px;background:var(--accent);border:none;font-weight:500;cursor:pointer;">Copy logs</button>
+              <button type="button" id="debug-clear-btn" style="padding:8px 16px;border-radius:6px;background:var(--bg-secondary);border:none;margin-left:8px;cursor:pointer;">Clear</button>
+            </p>
+          </div>
+        </details>
+      </section>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
@@ -646,6 +661,20 @@
       } else {
         openSectionForHash();
       }
+
+      // Debug log Copy/Clear buttons (wired after app attaches __evenChessDebugLog)
+      function wireDebugButtons() {
+        var copyBtn = document.getElementById('debug-copy-btn');
+        var clearBtn = document.getElementById('debug-clear-btn');
+        if (copyBtn) copyBtn.addEventListener('click', function () {
+          if (window.__evenChessDebugLog && window.__evenChessDebugLog.copy()) copyBtn.textContent = 'Copied!'; else copyBtn.textContent = 'Copy logs';
+          setTimeout(function () { if (copyBtn) copyBtn.textContent = 'Copy logs'; }, 1500);
+        });
+        if (clearBtn) clearBtn.addEventListener('click', function () {
+          if (window.__evenChessDebugLog) window.__evenChessDebugLog.clear();
+        });
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireDebugButtons); else wireDebugButtons();
     </script>
   </body>
 </html>

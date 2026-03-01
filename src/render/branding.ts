@@ -194,7 +194,65 @@ const BRAND_FONT: Record<string, number[]> = {
     0b0110,
     0b0000,
   ],
+  'A': [
+    0b000111100000,
+    0b001111110000,
+    0b011000011000,
+    0b011000011000,
+    0b110000001100,
+    0b110000001100,
+    0b111111111100,
+    0b111111111100,
+    0b110000001100,
+    0b110000001100,
+    0b110000001100,
+    0b110000001100,
+    0b110000001100,
+    0b110000001100,
+    0b110000001100,
+    0b000000000000,
+  ],
+  'M': [
+    0b110000000011,
+    0b111000000111,
+    0b111100001111,
+    0b111110011111,
+    0b110111111011,
+    0b110011110011,
+    0b110001100011,
+    0b110000000011,
+    0b110000000011,
+    0b110000000011,
+    0b110000000011,
+    0b110000000011,
+    0b110000000011,
+    0b110000000011,
+    0b110000000011,
+    0b000000000000,
+  ],
+  'T': [
+    0b111111111111,
+    0b111111111111,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000001100000,
+    0b000000000000,
+  ],
 };
+
+function brandCharWidth(ch: string): number {
+  return ch === '.' ? 4 : 12;
+}
 
 function drawBrandChar(
   pixels: Uint8Array,
@@ -205,7 +263,7 @@ function drawBrandChar(
   const glyph = BRAND_FONT[ch];
   if (!glyph) return 0;
   
-  const charWidth = ch === '.' ? 4 : 12;
+  const charWidth = brandCharWidth(ch);
   const charHeight = 16;
   
   for (let row = 0; row < charHeight; row++) {
@@ -320,34 +378,40 @@ export function renderBlankBrandingImage(): ImageRawDataUpdate {
 }
 
 let cachedCheckBrandImage: ImageRawDataUpdate | null = null;
+let cachedCheckmateBrandImage: ImageRawDataUpdate | null = null;
 
-export function renderCheckBrandingImage(): ImageRawDataUpdate {
-  if (cachedCheckBrandImage) return cachedCheckBrandImage;
-
+function renderStatusBrandingText(text: string): ImageRawDataUpdate {
   const rowBytes = getBmpRowBytes(BRAND_WIDTH);
   const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
 
-  const text = 'CHECK!';
   let totalWidth = 0;
   for (const ch of text) {
-    totalWidth += (BRAND_FONT[ch]?.[0]?.toString(2).length ?? 8) + 2;
+    totalWidth += brandCharWidth(ch) + 2;
   }
-  totalWidth -= 2;
-  
+  if (text.length > 0) totalWidth -= 2;
+
   let xPos = Math.floor((BRAND_WIDTH - totalWidth) / 2);
   const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
-
   for (const ch of text) {
     xPos += drawBrandChar(pixels, xPos, yPos, ch);
   }
 
   const bmpData = create1BitBmp(pixels);
-
-  cachedCheckBrandImage = new ImageRawDataUpdate({
+  return new ImageRawDataUpdate({
     containerID: CONTAINER_ID_BRAND,
     containerName: CONTAINER_NAME_BRAND,
     imageData: Array.from(bmpData),
   });
+}
 
+export function renderCheckBrandingImage(): ImageRawDataUpdate {
+  if (cachedCheckBrandImage) return cachedCheckBrandImage;
+  cachedCheckBrandImage = renderStatusBrandingText('CHECK!');
   return cachedCheckBrandImage;
+}
+
+export function renderCheckmateBrandingImage(): ImageRawDataUpdate {
+  if (cachedCheckmateBrandImage) return cachedCheckmateBrandImage;
+  cachedCheckmateBrandImage = renderStatusBrandingText('CHECKMATE!');
+  return cachedCheckmateBrandImage;
 }

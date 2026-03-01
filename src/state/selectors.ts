@@ -94,7 +94,9 @@ function expandMove(san: string, includePawnPrefix: boolean): string {
 
   if (pieceName) {
     const rest = cleanNoPromotion.slice(1).replace('x', '').toUpperCase();
-    const base = isCapture ? `${pieceName} takes ${rest}` : `${pieceName} ${rest}`;
+    // SAN piece suffix is [disambiguation][destination]; destination is always last 2 chars (e.g. d8).
+    const destSquare = rest.length >= 2 ? rest.slice(-2) : rest;
+    const base = isCapture ? `${pieceName} takes ${destSquare}` : `${pieceName} ${destSquare}`;
     return promotionPiece ? `${base}=${promotionPiece}` : base;
   }
 

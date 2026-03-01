@@ -363,6 +363,12 @@ describe('selectors', () => {
       const state = createTestState({ phase: 'destSelect', selectedPieceId: 'w-q-h5', pieces });
       expect(getCarouselItems(state)).toEqual(['Queen takes F7']);
     });
+
+    it('expands rook move with file disambiguation as destination only (e.g. Rad8 → Rook D8)', () => {
+      const state = createTestState({ lastMove: 'Rad8' });
+      const display = getCombinedDisplayText(state);
+      expect(display).toContain('Last: Rook D8');
+    });
   });
 
   // ── Move Log Tests (expandMoveForLog) ───────────────────────────────────────

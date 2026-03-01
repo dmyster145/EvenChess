@@ -51,6 +51,9 @@ export function reduce(state: GameState, action: Action): GameState {
     case 'DOUBLE_TAP':
       return handleDoubleTap(state);
 
+    case 'PLAYER_MOVE_SAN':
+      return handlePlayerMoveSan(state, action.san);
+
     case 'ENGINE_THINKING':
       return { ...state, engineThinking: true };
 
@@ -687,6 +690,27 @@ function handleEngineMove(
     selectedMoveIndex: 0,
     pendingMove: null,
     hasUnsavedChanges: true,
+  };
+}
+
+function handlePlayerMoveSan(state: GameState, san: string): GameState {
+  if (!state.pendingMove || !san) return state;
+
+  const historyLen = state.history.length;
+  const lastHistorySan = historyLen > 0 ? state.history[historyLen - 1] : null;
+  const sanAlreadyApplied = state.lastMove === san && lastHistorySan === san && state.pendingMove.san === san;
+  if (sanAlreadyApplied) return state;
+
+  const nextHistory =
+    historyLen > 0
+      ? [...state.history.slice(0, historyLen - 1), san]
+      : state.history;
+
+  return {
+    ...state,
+    history: nextHistory,
+    lastMove: san,
+    pendingMove: { ...state.pendingMove, san },
   };
 }
 

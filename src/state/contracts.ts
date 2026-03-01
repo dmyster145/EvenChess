@@ -149,6 +149,7 @@ export type Action =
   | { type: 'SCROLL'; direction: 'up' | 'down' }
   | { type: 'TAP'; selectedIndex: number; selectedName: string }
   | { type: 'DOUBLE_TAP' }
+  | { type: 'PLAYER_MOVE_SAN'; san: string }
   | { type: 'ENGINE_MOVE'; uci: string; san: string; fen: string; turn: 'w' | 'b'; pieces: PieceEntry[]; inCheck: boolean }
   | { type: 'ENGINE_THINKING' }
   | { type: 'ENGINE_ERROR' }

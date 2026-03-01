@@ -11,20 +11,48 @@ import {
 } from '@evenrealities/even_hub_sdk';
 import type { Action, GameState } from '../state/contracts';
 
+// G2 touch input can emit very short burst duplicates (raw event chatter + delayed duplicate swipes).
+// We use a two-stage filter:
+// 1) raw burst debounce (few ms)
+// 2) accepted same-direction dedupe (phase-tuned)
 const DEBOUNCE_MS = 8;
-let lastScrollTime = 0;
+// Glasses can sometimes emit a duplicate same-direction scroll a few frames later.
+// Use a smaller window while selecting on the board so fast swipes still feel responsive.
+const SAME_DIRECTION_SCROLL_DEDUPE_MS_DEFAULT = 12;
+const SAME_DIRECTION_SCROLL_DEDUPE_MS_SELECTION = 5;
+let lastRawScrollEventTime = 0;
+let lastAcceptedScrollTime = 0;
+let lastAcceptedScrollDirection: 'up' | 'down' | null = null;
 
-function isScrollDebounced(): boolean {
+function isSelectionPhase(state: GameState): boolean {
+  return state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect';
+}
+
+function sameDirectionScrollDedupeMs(state: GameState): number {
+  return isSelectionPhase(state) ? SAME_DIRECTION_SCROLL_DEDUPE_MS_SELECTION : SAME_DIRECTION_SCROLL_DEDUPE_MS_DEFAULT;
+}
+
+function isScrollDebounced(direction: 'up' | 'down', state: GameState): boolean {
   const now = Date.now();
-  if (now - lastScrollTime < DEBOUNCE_MS) {
+  const rawDt = now - lastRawScrollEventTime;
+  lastRawScrollEventTime = now;
+  if (rawDt < DEBOUNCE_MS) {
     return true;
   }
-  lastScrollTime = now;
+  const acceptedDt = now - lastAcceptedScrollTime;
+  if (lastAcceptedScrollDirection === direction && acceptedDt < sameDirectionScrollDedupeMs(state)) {
+    return true;
+  }
+  // Important: only accepted scrolls advance this timestamp. Suppressed duplicates should not "extend" stickiness.
+  lastAcceptedScrollTime = now;
+  lastAcceptedScrollDirection = direction;
   return false;
 }
 
 export function resetScrollDebounce(): void {
-  lastScrollTime = 0;
+  lastRawScrollEventTime = 0;
+  lastAcceptedScrollTime = 0;
+  lastAcceptedScrollDirection = null;
 }
 
 /** Base cooldown after any tap (shorter = snappier, higher risk of accidental double-tap). */
@@ -47,7 +75,8 @@ function isInTapCooldown(): boolean {
   return Date.now() < tapCooldownUntil;
 }
 
-/** Returns false if tap was suppressed by cooldown; otherwise records tap and returns true. */
+/** Returns false if tap was suppressed by cooldown; otherwise records tap and returns true.
+ * Note: scroll-suppression currently uses raw tap attempts (accepted or suppressed) to avoid accidental swipe bleed-through. */
 function tryConsumeTap(_intendedActionType: 'TAP' | 'DOUBLE_TAP'): boolean {
   recordTap();
   if (isInTapCooldown()) {
@@ -78,7 +107,7 @@ function isScrollSuppressed(): boolean {
 
 const DEBUG_EVENTS = false;
 
-export function mapEvenHubEvent(event: EvenHubEvent, _state: GameState): Action | null {
+export function mapEvenHubEvent(event: EvenHubEvent, state: GameState): Action | null {
   if (!event) {
     console.warn('[InputMapper] Received null/undefined event');
     return null;
@@ -94,17 +123,17 @@ export function mapEvenHubEvent(event: EvenHubEvent, _state: GameState): Action 
       if (DEBUG_EVENTS) {
         console.log('[InputMapper] listEvent:', event.listEvent.eventType, event.listEvent);
       }
-      action = mapListEvent(event.listEvent);
+      action = mapListEvent(event.listEvent, state);
     } else if (event.textEvent) {
       if (DEBUG_EVENTS) {
         console.log('[InputMapper] textEvent:', event.textEvent.eventType, event.textEvent);
       }
-      action = mapTextEvent(event.textEvent);
+      action = mapTextEvent(event.textEvent, state);
     } else if (event.sysEvent) {
       if (DEBUG_EVENTS) {
         console.log('[InputMapper] sysEvent:', event.sysEvent.eventType, event.sysEvent);
       }
-      action = mapSysEvent(event.sysEvent);
+      action = mapSysEvent(event.sysEvent, state);
     }
     return action;
   } catch (err) {
@@ -114,18 +143,18 @@ export function mapEvenHubEvent(event: EvenHubEvent, _state: GameState): Action 
 }
 
 // Simulator sends clicks without eventType - just currentSelectItemIndex
-export function mapListEvent(event: List_ItemEvent): Action | null {
+export function mapListEvent(event: List_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
   const eventType = event.eventType;
 
   switch (eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollDebounced()) return null;
+      if (isScrollDebounced('up', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.SCROLL_BOTTOM_EVENT:
-      if (isScrollDebounced()) return null;
+      if (isScrollDebounced('down', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'down' };
 
@@ -156,18 +185,18 @@ export function mapListEvent(event: List_ItemEvent): Action | null {
   }
 }
 
-export function mapTextEvent(event: Text_ItemEvent): Action | null {
+export function mapTextEvent(event: Text_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
   const eventType = event.eventType;
 
   switch (eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollDebounced()) return null;
+      if (isScrollDebounced('up', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.SCROLL_BOTTOM_EVENT:
-      if (isScrollDebounced()) return null;
+      if (isScrollDebounced('down', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'down' };
 
@@ -192,16 +221,16 @@ export function mapTextEvent(event: Text_ItemEvent): Action | null {
 }
 
 // Simulator sends clicks as empty sysEvents
-export function mapSysEvent(event: Sys_ItemEvent): Action | null {
+export function mapSysEvent(event: Sys_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
   switch (event.eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollDebounced()) return null;
+      if (isScrollDebounced('up', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.SCROLL_BOTTOM_EVENT:
-      if (isScrollDebounced()) return null;
+      if (isScrollDebounced('down', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'down' };
 

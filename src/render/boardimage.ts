@@ -31,6 +31,7 @@ import { encodePixelsToPng } from './png-encode';
 
 const BUF_W = IMAGE_WIDTH;
 const BUF_H = IMAGE_HEIGHT * 2;
+const HALF_PIXELS = BUF_W * IMAGE_HEIGHT;
 const SPLIT_Y = IMAGE_HEIGHT;
 const CELL = 21;
 const GRID_SIZE = CELL * 8;
@@ -100,8 +101,59 @@ function encodeBmpPixels(bmpBuffer: Uint8Array, pixels: Uint8Array): void {
   }
 }
 
+function getHighlightDirtyHalves(
+  prevKeys: Set<string>,
+  currentKeys: Set<string>,
+): { topDirty: boolean; bottomDirty: boolean } {
+  let topDirty = false;
+  let bottomDirty = false;
+  const allKeys = new Set([...prevKeys, ...currentKeys]);
+  for (const key of allKeys) {
+    if (prevKeys.has(key) !== currentKeys.has(key)) {
+      const rank = parseInt(key.split(',')[1]!, 10);
+      if (rankToHalf(rank) === 'top') topDirty = true;
+      else bottomDirty = true;
+    }
+  }
+  return { topDirty, bottomDirty };
+}
+
+function buffersDiffer(a: Uint8Array, b: Uint8Array, start: number, end: number): boolean {
+  for (let i = start; i < end; i++) {
+    if (a[i] !== b[i]) return true;
+  }
+  return false;
+}
+
+function refreshDirtyHalvesFromBase(
+  workPixels: Uint8Array,
+  basePixels: Uint8Array,
+  highlights: Highlight[],
+  topDirty: boolean,
+  bottomDirty: boolean,
+): void {
+  if (topDirty) {
+    workPixels.subarray(0, HALF_PIXELS).set(basePixels.subarray(0, HALF_PIXELS));
+    for (const hl of highlights) {
+      if (rankToHalf(hl.rank) === 'top') highlightCell(workPixels, hl.file, hl.rank, hl.style);
+    }
+  }
+  if (bottomDirty) {
+    workPixels.subarray(HALF_PIXELS).set(basePixels.subarray(HALF_PIXELS));
+    for (const hl of highlights) {
+      if (rankToHalf(hl.rank) === 'bottom') highlightCell(workPixels, hl.file, hl.rank, hl.style);
+    }
+  }
+}
+
 export class BoardRenderer {
+  // Renderer is stateful by design for speed:
+  // - caches rebuilt board base (pieces/labels)
+  // - tracks previous highlight keys for dirty-half detection
+  // - reuses working pixel buffers/BMP buffers to avoid per-frame allocations
+  // Callers must avoid concurrent render* calls on the same instance.
   private basePixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
+  private prevBasePixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private workPixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private lastFen = '';
   private lastShowBoardMarkers = true;
@@ -118,86 +170,85 @@ export class BoardRenderer {
     const showBoardMarkers = state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
+    let baseTopDirty = false;
+    let baseBottomDirty = false;
 
     if (fenChanged || markersChanged) {
+      this.prevBasePixels.set(this.basePixels);
       this.rebuildBase(chess, showBoardMarkers);
       this.lastFen = fen;
       this.lastShowBoardMarkers = showBoardMarkers;
+      if (markersChanged) {
+        baseTopDirty = true;
+        baseBottomDirty = true;
+      } else if (fenChanged) {
+        baseTopDirty = buffersDiffer(this.prevBasePixels, this.basePixels, 0, HALF_PIXELS);
+        baseBottomDirty = buffersDiffer(this.prevBasePixels, this.basePixels, HALF_PIXELS, BUF_W * BUF_H);
+      }
     }
 
     const highlights = getHighlights(state);
     this.currentHighlightKeys.clear();
     for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
+    const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys);
 
     // Fast path: highlight-only changes use dirty tracking (skip when caller needs both halves)
     if (!fenChanged && !markersChanged && !forceBothHalves) {
-      let topDirty = false;
-      let bottomDirty = false;
-
-      const allKeys = new Set([...this.prevHighlightKeys, ...this.currentHighlightKeys]);
-      for (const key of allKeys) {
-        if (this.prevHighlightKeys.has(key) !== this.currentHighlightKeys.has(key)) {
-          const rank = parseInt(key.split(',')[1]!, 10);
-          if (rankToHalf(rank) === 'top') topDirty = true;
-          else bottomDirty = true;
-        }
-      }
+      const topDirty = highlightDirty.topDirty;
+      const bottomDirty = highlightDirty.bottomDirty;
 
       if (!topDirty && !bottomDirty) return [];
 
       // Refresh each dirty half from base + current highlights so we never encode stale highlights
       // (e.g. after using cached images, workPixels was never updated).
-      if (topDirty) {
-        this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-        for (const hl of highlights) {
-          if (rankToHalf(hl.rank) === 'top') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
-        }
-      }
-      if (bottomDirty) {
-        this.workPixels.subarray(BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(BUF_W * IMAGE_HEIGHT));
-        for (const hl of highlights) {
-          if (rankToHalf(hl.rank) === 'bottom') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
-        }
-      }
+      refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
       const tmp = this.prevHighlightKeys;
       this.prevHighlightKeys = this.currentHighlightKeys;
       this.currentHighlightKeys = tmp;
 
       const dirty: ImageRawDataUpdate[] = [];
       if (topDirty) {
-        encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT));
+        encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, HALF_PIXELS));
         dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
       }
       if (bottomDirty) {
-        encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(BUF_W * IMAGE_HEIGHT));
+        encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(HALF_PIXELS));
         dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
       }
       return dirty;
     }
 
-    // FEN changed: encode both halves (piece moved)
+    // FEN/markers changed or caller forced both halves: encode only dirty halves when possible.
+    const topDirty = forceBothHalves || markersChanged || baseTopDirty || highlightDirty.topDirty;
+    const bottomDirty = forceBothHalves || markersChanged || baseBottomDirty || highlightDirty.bottomDirty;
+    if (!topDirty && !bottomDirty) return [];
+
     const tmp = this.prevHighlightKeys;
     this.prevHighlightKeys = this.currentHighlightKeys;
     this.currentHighlightKeys = tmp;
-    this.workPixels.set(this.basePixels);
-    for (const hl of highlights) highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+    refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
 
-    encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-    encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(BUF_W * IMAGE_HEIGHT));
-
-    return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
-    ];
+    const dirty: ImageRawDataUpdate[] = [];
+    if (topDirty) {
+      encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, HALF_PIXELS));
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
+    }
+    if (bottomDirty) {
+      encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(HALF_PIXELS));
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
+    }
+    return dirty;
   }
 
   renderFull(state: GameState, chess: ChessService): ImageRawDataUpdate[] {
+    // Used for startup / mode transitions. Reset dirty-tracking state so both halves are regenerated deterministically.
     this.cachedTopBmp = initBmpBuffer();
     this.cachedBottomBmp = initBmpBuffer();
     this.prevHighlightKeys.clear();
     this.currentHighlightKeys.clear();
     this.lastFen = '';
-    return this.render(state, chess);
+    // Force both halves even if only one half appears "dirty" vs prior base state.
+    return this.render(state, chess, true);
   }
 
   /**
@@ -223,75 +274,83 @@ export class BoardRenderer {
     const showBoardMarkers = state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
+    let baseTopDirty = false;
+    let baseBottomDirty = false;
 
     if (fenChanged || markersChanged) {
+      this.prevBasePixels.set(this.basePixels);
       this.rebuildBase(chess, showBoardMarkers);
       this.lastFen = fen;
       this.lastShowBoardMarkers = showBoardMarkers;
+      if (markersChanged) {
+        baseTopDirty = true;
+        baseBottomDirty = true;
+      } else if (fenChanged) {
+        baseTopDirty = buffersDiffer(this.prevBasePixels, this.basePixels, 0, HALF_PIXELS);
+        baseBottomDirty = buffersDiffer(this.prevBasePixels, this.basePixels, HALF_PIXELS, BUF_W * BUF_H);
+      }
     }
 
     const highlights = getHighlights(state);
     this.currentHighlightKeys.clear();
     for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
+    const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys);
 
     if (!fenChanged && !markersChanged) {
-      let topDirty = false;
-      let bottomDirty = false;
-      const allKeys = new Set([...this.prevHighlightKeys, ...this.currentHighlightKeys]);
-      for (const key of allKeys) {
-        if (this.prevHighlightKeys.has(key) !== this.currentHighlightKeys.has(key)) {
-          const rank = parseInt(key.split(',')[1]!, 10);
-          if (rankToHalf(rank) === 'top') topDirty = true;
-          else bottomDirty = true;
-        }
-      }
+      const topDirty = highlightDirty.topDirty;
+      const bottomDirty = highlightDirty.bottomDirty;
       if (!topDirty && !bottomDirty) return [];
 
       // Refresh each dirty half from base + current highlights so we never encode stale highlights.
-      if (topDirty) {
-        this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-        for (const hl of highlights) {
-          if (rankToHalf(hl.rank) === 'top') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
-        }
-      }
-      if (bottomDirty) {
-        this.workPixels.subarray(BUF_W * IMAGE_HEIGHT).set(this.basePixels.subarray(BUF_W * IMAGE_HEIGHT));
-        for (const hl of highlights) {
-          if (rankToHalf(hl.rank) === 'bottom') highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
-        }
-      }
+      refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
       const tmp = this.prevHighlightKeys;
       this.prevHighlightKeys = this.currentHighlightKeys;
       this.currentHighlightKeys = tmp;
 
-      const topPixels = this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT);
-      const bottomPixels = this.workPixels.subarray(BUF_W * IMAGE_HEIGHT);
+      const topPixels = this.workPixels.subarray(0, HALF_PIXELS);
+      const bottomPixels = this.workPixels.subarray(HALF_PIXELS);
+      // Encode top/bottom in parallel on separate reusable canvas slots to reduce total encode time.
       const [topPng, bottomPng] = await Promise.all([
         topDirty ? encodePixelsToPng(topPixels, IMAGE_WIDTH, IMAGE_HEIGHT, slotBase) : Promise.resolve(new Uint8Array(0)),
         bottomDirty ? encodePixelsToPng(bottomPixels, IMAGE_WIDTH, IMAGE_HEIGHT, slotBase + 1) : Promise.resolve(new Uint8Array(0)),
       ]);
+      if ((topDirty && topPng.length === 0) || (bottomDirty && bottomPng.length === 0)) {
+        return this.render(state, chess, true);
+      }
       const dirty: ImageRawDataUpdate[] = [];
-      if (topDirty && topPng.length > 0) dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: topPng.slice() }));
-      if (bottomDirty && bottomPng.length > 0) dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: bottomPng.slice() }));
-      if (dirty.length === 0) return this.render(state, chess);
+      // PNG encoder returns fresh Uint8Arrays; no defensive copy needed before enqueue/send.
+      if (topDirty && topPng.length > 0) dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: topPng }));
+      if (bottomDirty && bottomPng.length > 0) dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: bottomPng }));
       return dirty;
     }
+
+    const topDirty = markersChanged || baseTopDirty || highlightDirty.topDirty;
+    const bottomDirty = markersChanged || baseBottomDirty || highlightDirty.bottomDirty;
+    if (!topDirty && !bottomDirty) return [];
 
     const tmpKeys = this.prevHighlightKeys;
     this.prevHighlightKeys = this.currentHighlightKeys;
     this.currentHighlightKeys = tmpKeys;
-    this.workPixels.set(this.basePixels);
-    for (const hl of highlights) highlightCell(this.workPixels, hl.file, hl.rank, hl.style);
+    refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
 
+    // FEN/marker changes may dirty both halves; parallel PNG encode keeps CPU time small vs transport time.
     const [topPng, bottomPng] = await Promise.all([
-      encodePixelsToPng(this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase),
-      encodePixelsToPng(this.workPixels.subarray(BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase + 1),
+      topDirty
+        ? encodePixelsToPng(this.workPixels.subarray(0, HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase)
+        : Promise.resolve(new Uint8Array(0)),
+      bottomDirty
+        ? encodePixelsToPng(this.workPixels.subarray(HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase + 1)
+        : Promise.resolve(new Uint8Array(0)),
     ]);
-    if (topPng.length === 0 || bottomPng.length === 0) return this.render(state, chess);
-    return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: topPng.slice() }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: bottomPng.slice() }),
-    ];
+    if ((topDirty && topPng.length === 0) || (bottomDirty && bottomPng.length === 0)) return this.render(state, chess, true);
+    const dirty: ImageRawDataUpdate[] = [];
+    if (topDirty && topPng.length > 0) {
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: topPng }));
+    }
+    if (bottomDirty && bottomPng.length > 0) {
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: bottomPng }));
+    }
+    return dirty;
   }
 
   private rebuildBase(chess: ChessService, showBoardMarkers: boolean = true): void {
