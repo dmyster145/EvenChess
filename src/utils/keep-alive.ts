@@ -5,7 +5,7 @@
  * Activation must happen from a user gesture context due autoplay policy.
  */
 
-import { perfLog } from '../perf/log';
+import { perfLogIfEnabled, perfLogLazyIfEnabled } from '../perf/log';
 
 let audioCtx: AudioContext | null = null;
 let oscillator: OscillatorNode | null = null;
@@ -29,18 +29,18 @@ export function activateKeepAlive(): void {
     gainNode.connect(audioCtx.destination);
     oscillator.start();
     active = true;
-    perfLog(`[Perf][KeepAlive][Audio] activated state=${audioCtx.state}`);
+    perfLogLazyIfEnabled?.(() => `[Perf][KeepAlive][Audio] activated state=${audioCtx?.state ?? 'null'}`);
 
     audioCtx.addEventListener('statechange', () => {
-      perfLog(`[Perf][KeepAlive][Audio] statechange=${audioCtx?.state ?? 'null'}`);
+      perfLogLazyIfEnabled?.(() => `[Perf][KeepAlive][Audio] statechange=${audioCtx?.state ?? 'null'}`);
       if (audioCtx?.state === 'suspended') {
         audioCtx.resume().catch(() => {
-          perfLog('[Perf][KeepAlive][Audio] resume-failed');
+          perfLogIfEnabled?.('[Perf][KeepAlive][Audio] resume-failed');
         });
       }
     });
   } catch {
-    perfLog('[Perf][KeepAlive][Audio] init-failed');
+    perfLogIfEnabled?.('[Perf][KeepAlive][Audio] init-failed');
   }
 
   try {
@@ -50,11 +50,11 @@ export function activateKeepAlive(): void {
           'evenchess_keep_alive',
           () =>
             new Promise<void>(() => {
-              perfLog('[Perf][KeepAlive][WebLock] acquired');
+              perfLogIfEnabled?.('[Perf][KeepAlive][WebLock] acquired');
             }),
         )
         .catch(() => {
-          perfLog('[Perf][KeepAlive][WebLock] request-failed');
+          perfLogIfEnabled?.('[Perf][KeepAlive][WebLock] request-failed');
         });
     }
   } catch {
@@ -93,6 +93,6 @@ export function deactivateKeepAlive(): void {
   }
   if (active) {
     active = false;
-    perfLog('[Perf][KeepAlive] deactivated');
+    perfLogIfEnabled?.('[Perf][KeepAlive] deactivated');
   }
 }

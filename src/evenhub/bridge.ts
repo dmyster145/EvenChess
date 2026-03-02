@@ -12,7 +12,7 @@ import {
   type EvenHubEvent,
   ImageRawDataUpdateResult,
 } from '@evenrealities/even_hub_sdk';
-import { perfLogLazy } from '../perf/log';
+import { perfLogLazyIfEnabled } from '../perf/log';
 
 export type EvenHubEventHandler = (event: EvenHubEvent) => void;
 export type BridgeSystemLifecycleEvent = 'foreground-enter' | 'foreground-exit' | 'abnormal-exit';
@@ -488,7 +488,7 @@ export class EvenHubBridge {
   notifySystemLifecycleEvent(event: BridgeSystemLifecycleEvent): void {
     if (PERF_BRIDGE_ENABLED) {
       const q = this.getImageQueueDepth();
-      perfLogLazy(
+      perfLogLazyIfEnabled?.(
         () =>
           `[Perf][Bridge][Lifecycle] event=${event} q=${q} busy=${this.hasPendingImageWork() ? 'y' : 'n'} ` +
           `intr=${this.imageInterrupted ? 'y' : 'n'} wedged=${this.imageSendWedged ? 'y' : 'n'} survival=${this.imageSurvivalMode ? 'y' : 'n'}`,
@@ -592,7 +592,7 @@ export class EvenHubBridge {
           if (inFlight.abandoned || runnerId !== this.activeImageQueueRunnerId) {
             const lateOk = ImageRawDataUpdateResult.isSuccess(result);
             if (PERF_BRIDGE_ENABLED) {
-              perfLogLazy(
+              perfLogLazyIfEnabled?.(
                 () =>
                   `[Perf][Bridge][Wedge] late-return cid=${queued.data.containerID ?? -1} send=${sendMs.toFixed(1)}ms ` +
                   `result=${lateOk ? 'ok' : 'non-ok'}`,
@@ -619,7 +619,7 @@ export class EvenHubBridge {
 
           if (inFlight.abandoned || runnerId !== this.activeImageQueueRunnerId) {
             if (PERF_BRIDGE_ENABLED) {
-              perfLogLazy(
+              perfLogLazyIfEnabled?.(
                 () => `[Perf][Bridge][Wedge] late-error cid=${queued.data.containerID ?? -1} send=${sendMs.toFixed(1)}ms`,
               );
             }
@@ -691,7 +691,7 @@ export class EvenHubBridge {
       this.recordWatchdogTripForSurvival();
       const elapsedMs = nowMs() - inFlight.sendStartedAtMs;
       if (PERF_BRIDGE_ENABLED) {
-        perfLogLazy(
+        perfLogLazyIfEnabled?.(
           () =>
             `[Perf][Bridge][Watchdog] active=y cid=${inFlight.queued.data.containerID ?? -1} ` +
             `elapsed=${elapsedMs.toFixed(1)}ms qwait=${inFlight.queueWaitMs.toFixed(1)}ms pending=${this.getImageQueueDepth()}`,
@@ -716,7 +716,7 @@ export class EvenHubBridge {
       inFlight.abandoned = true;
       const elapsedMs = nowMs() - inFlight.sendStartedAtMs;
       if (PERF_BRIDGE_ENABLED) {
-        perfLogLazy(
+        perfLogLazyIfEnabled?.(
           () =>
             `[Perf][Bridge][Wedge] active=y cid=${inFlight.queued.data.containerID ?? -1} ` +
             `elapsed=${elapsedMs.toFixed(1)}ms qwait=${inFlight.queueWaitMs.toFixed(1)}ms pending=${this.getImageQueueDepth()}`,
@@ -744,7 +744,7 @@ export class EvenHubBridge {
     }
     this.inFlightImageWatchdogSeq += 1;
     if (this.inFlightImageWatchdogTriggered && completed && PERF_BRIDGE_ENABLED) {
-      perfLogLazy(
+      perfLogLazyIfEnabled?.(
         () => `[Perf][Bridge][Watchdog] active=n cid=${completed.cid ?? -1} send=${completed.sendMs.toFixed(1)}ms`,
       );
     }
@@ -758,7 +758,7 @@ export class EvenHubBridge {
     }
     this.inFlightImageHardTimeoutSeq += 1;
     if (this.inFlightImageHardTimeoutTriggered && completed && PERF_BRIDGE_ENABLED) {
-      perfLogLazy(
+      perfLogLazyIfEnabled?.(
         () =>
           `[Perf][Bridge][Wedge] active=n cid=${completed.cid ?? -1} send=${completed.sendMs.toFixed(1)}ms ` +
           `abandoned=${completed.abandoned ? 'y' : 'n'}`,
@@ -878,7 +878,7 @@ export class EvenHubBridge {
       this.pruneQueuedImagesForInterruption();
     }
     if (PERF_BRIDGE_ENABLED) {
-      perfLogLazy(() => `[Perf][Bridge][Interrupt] active=${active ? 'y' : 'n'} reason=${reason}`);
+      perfLogLazyIfEnabled?.(() => `[Perf][Bridge][Interrupt] active=${active ? 'y' : 'n'} reason=${reason}`);
     }
     for (const listener of this.imageInterruptionListeners) {
       try {
@@ -893,7 +893,7 @@ export class EvenHubBridge {
     if (this.imageSendWedged === active) return;
     this.imageSendWedged = active;
     if (PERF_BRIDGE_ENABLED) {
-      perfLogLazy(() => `[Perf][Bridge][Wedge] active=${active ? 'y' : 'n'} reason=${reason}`);
+      perfLogLazyIfEnabled?.(() => `[Perf][Bridge][Wedge] active=${active ? 'y' : 'n'} reason=${reason}`);
     }
   }
 
@@ -901,7 +901,7 @@ export class EvenHubBridge {
     if (this.imageSurvivalMode === active) return;
     this.imageSurvivalMode = active;
     if (PERF_BRIDGE_ENABLED) {
-      perfLogLazy(
+      perfLogLazyIfEnabled?.(
         () =>
           `[Perf][Bridge][Survival] active=${active ? 'y' : 'n'} reason=${reason} watchdogs=${this.recentWatchdogTripAtMs.length}`,
       );
@@ -979,7 +979,7 @@ export class EvenHubBridge {
     const totalMs = queueWaitMs + sendMs;
     const pendingDepth = this.getImageQueueDepth();
     if (totalMs >= PERF_BRIDGE_LOG_SLOW_IMAGE_MS || pendingDepth > 0) {
-      perfLogLazy(
+      perfLogLazyIfEnabled?.(
         () =>
           `[Perf][Bridge][Image] cid=${data.containerID} bytes=${bytes} qwait=${queueWaitMs.toFixed(1)}ms ` +
           `send=${sendMs.toFixed(1)}ms total=${totalMs.toFixed(1)}ms pending=${pendingDepth}`,
@@ -994,7 +994,7 @@ export class EvenHubBridge {
     const avgBytes = Math.round(this.perfTotalBytes / this.perfImageCount);
     const throughputKbps = (this.perfTotalBytes / elapsedMs) * 1000 / 1024;
 
-    perfLogLazy(
+    perfLogLazyIfEnabled?.(
       () =>
         `[Perf][Bridge][Summary] images=${this.perfImageCount} avgBytes=${avgBytes} ` +
         `avgQueueWait=${avgQueueWaitMs.toFixed(1)}ms avgSend=${avgSendMs.toFixed(1)}ms ` +

@@ -5,7 +5,7 @@
  * Reuses four canvases (slots 0–3) so refill can encode next+prev in parallel.
  */
 
-import { isPerfLoggingEnabled, perfLogLazy, perfNowMs } from '../perf/log';
+import { PERF_LOG_ENABLED, perfLogLazyIfEnabled, perfNowMs } from '../perf/log';
 
 const REUSED_CANVAS_COUNT = 4;
 const reusedCanvases: (HTMLCanvasElement | null)[] = new Array(REUSED_CANVAS_COUNT).fill(null);
@@ -48,7 +48,7 @@ function recordPngEncodePerf(sample: PngEncodePerfSample): void {
 
   if (sample.totalMs >= PNG_ENCODE_PERF_SLOW_TOTAL_MS) {
     pngEncodePerfSlowCount += 1;
-    perfLogLazy(
+    perfLogLazyIfEnabled?.(
       () =>
         `[Perf][PngEncode] slot=${sample.slot} size=${sample.width}x${sample.height} ` +
         `toBlob=${sample.toBlobMs.toFixed(1)}ms read=${sample.readMs.toFixed(1)}ms ` +
@@ -59,7 +59,7 @@ function recordPngEncodePerf(sample: PngEncodePerfSample): void {
   if (pngEncodePerfCount % PNG_ENCODE_PERF_SUMMARY_EVERY !== 0) return;
 
   const avg = (value: number): number => value / Math.max(1, pngEncodePerfCount);
-  perfLogLazy(
+  perfLogLazyIfEnabled?.(
     () =>
       `[Perf][PngEncodeSummary] n=${pngEncodePerfCount} avgBytes=${Math.round(avg(pngEncodePerfTotalBytes))} ` +
       `avgBlob=${avg(pngEncodePerfTotalToBlobMs).toFixed(1)}ms avgRead=${avg(pngEncodePerfTotalReadMs).toFixed(1)}ms ` +
@@ -115,7 +115,7 @@ async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
 }
 
 async function canvasToPngBytes(canvas: HTMLCanvasElement, slot: number): Promise<Uint8Array> {
-  const perfEnabled = isPerfLoggingEnabled();
+  const perfEnabled = PERF_LOG_ENABLED;
   const totalStartMs = perfEnabled ? perfNowMs() : 0;
   const blobStartMs = perfEnabled ? perfNowMs() : 0;
   const blob = await canvasToBlobPng(canvas);

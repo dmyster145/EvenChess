@@ -38,7 +38,7 @@ import { MENU_OPTIONS } from './state/constants';
 import { STARTING_FEN } from './academy/pgn';
 import { moveCursorAxis } from './academy/drills';
 import { getFileIndex, getRankIndex } from './chess/square-utils';
-import { perfLogLazy } from './perf/log';
+import { perfLogLazyIfEnabled } from './perf/log';
 import { getLastPerfDispatchTrace, recordPerfDispatch } from './perf/dispatch-trace';
 import type { Action } from './state/contracts';
 import { debugLog, attachDebugCopyApi, markRunStart } from './debug/logger';
@@ -425,7 +425,7 @@ export async function initApp(): Promise<void> {
     earlyShutdownInFlight = true;
     earlyShutdownFiredAtMs = perfNowMs();
     if (PERF_FLUSH_LOGGING) {
-      perfLogLazy(() => `[Perf][Heartbeat][EarlyShutdown] fired reason=${reason}`);
+      perfLogLazyIfEnabled?.(() => `[Perf][Heartbeat][EarlyShutdown] fired reason=${reason}`);
     }
     void (async () => {
       try {
@@ -437,7 +437,7 @@ export async function initApp(): Promise<void> {
         earlyShutdownSettled = true;
         earlyShutdownInFlight = false;
         if (PERF_FLUSH_LOGGING) {
-          perfLogLazy(() => `[Perf][Heartbeat][EarlyShutdown] settled reason=${reason}`);
+          perfLogLazyIfEnabled?.(() => `[Perf][Heartbeat][EarlyShutdown] settled reason=${reason}`);
         }
       }, BRIDGE_REINIT_SHUTDOWN_SETTLE_MS);
     })();
@@ -453,7 +453,7 @@ export async function initApp(): Promise<void> {
         : BRIDGE_REINIT_COOLDOWN_MS;
     if (lastBridgeReinitAtMs > 0 && now - lastBridgeReinitAtMs < effectiveCooldown) {
       if (PERF_FLUSH_LOGGING) {
-        perfLogLazy(
+        perfLogLazyIfEnabled?.(
           () =>
             `[Perf][Heartbeat][Reinit] cooldown reason=${reason} elapsed=${(now - lastBridgeReinitAtMs).toFixed(1)}ms ` +
             `effective=${effectiveCooldown}ms failures=${consecutiveBridgeReinitFailures}`,
@@ -465,7 +465,7 @@ export async function initApp(): Promise<void> {
     bridgeReinitInProgress = true;
     lastBridgeReinitAtMs = now;
     if (PERF_FLUSH_LOGGING) {
-      perfLogLazy(
+      perfLogLazyIfEnabled?.(
         () =>
           `[Perf][Heartbeat][Reinit] start reason=${reason} attempt=${consecutiveBridgeReinitFailures + 1}/${BRIDGE_REINIT_MAX_CONSECUTIVE_FAILURES}`,
       );
@@ -708,7 +708,7 @@ export async function initApp(): Promise<void> {
       scheduleDisplayFlush();
     }, 0);
     if (PERF_FLUSH_LOGGING) {
-      perfLogLazy(() => `[Perf][Bridge][Lifecycle] ${source} force-refresh=y`);
+      perfLogLazyIfEnabled?.(() => `[Perf][Bridge][Lifecycle] ${source} force-refresh=y`);
     }
   }
 
@@ -716,7 +716,7 @@ export async function initApp(): Promise<void> {
     const sysEvent = event.sysEvent;
     if (!sysEvent) return;
     const rawType = sysEvent.eventType;
-    perfLogLazy(
+    perfLogLazyIfEnabled?.(
       () => `[Perf][SysEvent] eventType=${formatSysEventName(rawType)} raw=${rawType == null ? 'undefined' : String(rawType)}`,
     );
 
@@ -1513,7 +1513,7 @@ export async function initApp(): Promise<void> {
           const flushTotalMs = flushEndedAtMs - flushStartedAtMs;
           const fromInputToFlushStartMs = perfInputAtMs > 0 ? flushStartedAtMs - perfInputAtMs : -1;
           const fromInputToFlushEndMs = perfInputAtMs > 0 ? flushEndedAtMs - perfInputAtMs : -1;
-          perfLogLazy(
+          perfLogLazyIfEnabled?.(
             () =>
               `[Perf][Flush] phase=${state.phase} board=${boardMayHaveChanged ? 'y' : 'n'} text=${textChanged ? 'y' : 'n'} ` +
               `source=${perfDispatch.source} action=${perfDispatch.actionType} ` +

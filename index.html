@@ -349,6 +349,72 @@
       #app {
         display: none;
       }
+
+      /* Preserve existing perf console panel styles and IDs for src/perf/log.ts wiring */
+      #perf-console-panel {
+        position: fixed;
+        right: 8px;
+        bottom: 8px;
+        width: min(760px, calc(100vw - 16px));
+        max-height: 42vh;
+        display: none;
+        flex-direction: column;
+        border: 1px solid #3a3a3a;
+        border-radius: 8px;
+        background: rgba(10, 10, 10, 0.92);
+        color: #d8f7d0;
+        font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        z-index: 2147483647;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+
+      #perf-console-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-bottom: 1px solid #2a2a2a;
+        background: rgba(24, 24, 24, 0.95);
+      }
+
+      #perf-console-title {
+        font-weight: 600;
+        color: #f0f0f0;
+        margin-right: auto;
+      }
+
+      #perf-console-header button {
+        border: 1px solid #4a4a4a;
+        border-radius: 4px;
+        background: #1b1b1b;
+        color: #e6e6e6;
+        padding: 2px 8px;
+        cursor: pointer;
+        font: inherit;
+      }
+
+      #perf-console-header button:hover {
+        background: #262626;
+      }
+
+      #perf-console-output {
+        margin: 0;
+        padding: 8px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 90px;
+        max-height: calc(42vh - 42px);
+      }
+
+      #perf-console-panel[data-collapsed="true"] #perf-console-output {
+        display: none;
+      }
+
+      #perf-console-panel[data-collapsed="true"] {
+        max-height: none;
+        width: auto;
+      }
     </style>
   </head>
   <body>
@@ -375,6 +441,7 @@
           <li><a href="#controls">Controls</a></li>
           <li><a href="#menu-options">Menu Options</a></li>
           <li><a href="#academy">Academy Drills</a></li>
+          <li id="debug-console-nav" hidden><a href="#debug-console">Debug Console</a></li>
           <li><a href="#tips">Tips & Tricks</a></li>
         </ul>
       </nav>
@@ -620,6 +687,26 @@
         <p>EvenChess v0.1.0 | Built for <a href="https://evenrealities.com" target="_blank">Even Realities</a> G2</p>
       </footer>
 
+      <section class="section" id="debug-console" hidden>
+        <details>
+          <summary>Debug Console (Perf Panel)</summary>
+          <div class="section-content">
+            <p>The floating perf console panel is preserved on this page and uses the same DOM IDs and controls as EvenSolitaire.</p>
+
+            <h3>Panel Controls</h3>
+            <ul>
+              <li><strong>Hide / Show</strong></li>
+              <li><strong>Clear</strong></li>
+              <li><strong>Copy All</strong></li>
+              <li><strong>Stop / Start</strong> to pause or resume recording perf output</li>
+            </ul>
+
+            <h3>When It Appears</h3>
+            <p>The panel is hidden by default and appears when DOM perf logging is enabled in <code>src/perf/log.ts</code> via <code>PERF_LOG_DOM_ENABLED</code>.</p>
+          </div>
+        </details>
+      </section>
+
       <!-- Debug log (slowdown investigation): show/copy logs when testing on glasses -->
       <section class="section" id="debug-log">
         <details>
@@ -636,8 +723,34 @@
       </section>
     </div>
 
+    <div id="perf-console-panel" data-collapsed="false" aria-live="polite">
+      <div id="perf-console-header">
+        <span id="perf-console-title">Perf Console</span>
+        <button id="perf-console-toggle" type="button">Hide</button>
+        <button id="perf-console-clear" type="button">Clear</button>
+        <button id="perf-console-copy" type="button">Copy All</button>
+        <button id="perf-console-record" type="button">Stop</button>
+      </div>
+      <pre id="perf-console-output"></pre>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
     <script>
+      function syncDebugDocsVisibility() {
+        var cfg = window.__evenChessPerfConfig;
+        var visible = !!(cfg && cfg.domEnabled);
+        var debugSection = document.getElementById('debug-console');
+        var debugNav = document.getElementById('debug-console-nav');
+        if (debugSection) {
+          if (visible) debugSection.removeAttribute('hidden');
+          else debugSection.setAttribute('hidden', '');
+        }
+        if (debugNav) {
+          if (visible) debugNav.removeAttribute('hidden');
+          else debugNav.setAttribute('hidden', '');
+        }
+      }
+
       // Expand the section that matches the given id (or current URL hash)
       function openSectionForHash(idOrEmpty) {
         const id = idOrEmpty != null ? idOrEmpty : window.location.hash.substring(1);
@@ -657,8 +770,12 @@
         if (id) openSectionForHash(id);
       });
       if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function () { openSectionForHash(); });
+        document.addEventListener('DOMContentLoaded', function () {
+          syncDebugDocsVisibility();
+          openSectionForHash();
+        });
       } else {
+        syncDebugDocsVisibility();
         openSectionForHash();
       }
 
