@@ -1,4 +1,4 @@
-# EvenChess
+# Chess
 
 Chess for **Even Realities G2** smart glasses: play vs Stockfish, race the clock in Bullet Blitz, or train in the Academy. Use the ring controller (R1) or touchpad — scroll to move, tap to select.
 
@@ -28,7 +28,7 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE).
 ## Project structure
 
 ```
-EvenChess/
+Chess/
 ├── index.html          # Entry page; shows help/instructions on phone, mounts app in #app
 ├── src/
 │   ├── main.ts         # Boots the app
@@ -56,8 +56,8 @@ EvenChess/
    - Open a terminal (Command Prompt, PowerShell, or Terminal app).
    - Clone the repo (use the project’s clone URL from GitHub, or your fork):
      ```bash
-     git clone https://github.com/owner/EvenChess.git
-     cd EvenChess
+     git clone https://github.com/owner/Chess.git
+     cd Chess
      ```
    - Install dependencies:
      ```bash
@@ -115,4 +115,4 @@ Full behavior and tips are on the in-app help page ([index.html](index.html)).
 ## License & credits
 
 - **chess.js** — [BSD-2-Clause](https://opensource.org/licenses/BSD-2-Clause). Copyright © Jeff Hlywa. Used for move generation, validation, FEN, and PGN. [GitHub](https://github.com/jhlywa/chess.js).
-- **Stockfish** — The app uses [stockfish.js](https://www.npmjs.com/package/stockfish.js) (GPL-3.0); worker and WASM are copied to `public/stockfish/` on install. If the engine doesn’t load (e.g. missing files), the app falls back to random moves. The MIT license above applies only to EvenChess; any build that includes Stockfish must comply with GPL-3.0 for that component (attribution, license text, source offer).
+- **Stockfish** — The app uses [stockfish.js](https://www.npmjs.com/package/stockfish.js) (GPL-3.0); worker and WASM are copied to `public/stockfish/` on install. If the engine doesn’t load (e.g. missing files), the app falls back to random moves. The MIT license above applies only to Chess; any build that includes Stockfish must comply with GPL-3.0 for that component (attribution, license text, source offer).

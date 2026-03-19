@@ -247,8 +247,7 @@ export class BoardRenderer {
     this.prevHighlightKeys.clear();
     this.currentHighlightKeys.clear();
     this.lastFen = '';
-    // Force both halves even if only one half appears "dirty" vs prior base state.
-    return this.render(state, chess, true);
+    return this.render(state, chess);
   }
 
   /**

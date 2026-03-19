@@ -1,5 +1,5 @@
 /**
- * Branding image generator — renders "EvenChess" logo as 1-bit BMP.
+ * Branding image generator — renders "Chess" logo as 1-bit BMP.
  */
 
 import { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
@@ -337,7 +337,7 @@ export function renderBrandingImage(): ImageRawDataUpdate {
   const rowBytes = getBmpRowBytes(BRAND_WIDTH);
   const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
 
-  const text = 'EVEN.CHESS';
+  const text = 'CHESS';
   let xPos = 2;
   const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
 
