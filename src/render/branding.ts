@@ -1,5 +1,5 @@
 /**
- * Branding image generator — renders "Chess" logo as 1-bit BMP.
+ * Branding image generator — renders "Chess" logo as 1-bit PNG (BMP fallback if compression unavailable).
  */
 
 import { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
@@ -17,6 +17,7 @@ import {
   getBmpRowStride,
   getBmpFileSize,
 } from './bmp-constants';
+import { encodePackedPixelsToPng } from './png-encode';
 
 function setPixel(pixels: Uint8Array, x: number, y: number, on: number): void {
   if (x < 0 || x >= BRAND_WIDTH || y < 0 || y >= BRAND_HEIGHT) return;
@@ -328,90 +329,89 @@ function create1BitBmp(pixels: Uint8Array): Uint8Array {
   return bmp;
 }
 
+// ── Pixel renderers (bit-packed, MSB first) ───────────────────────────────
+
+function makeBrandPixels(): Uint8Array {
+  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
+  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
+  let xPos = 2;
+  const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
+  for (const ch of 'CHESS') {
+    xPos += drawBrandChar(pixels, xPos, yPos, ch);
+  }
+  drawKnightIcon(pixels, xPos + 4, Math.floor((BRAND_HEIGHT - 19) / 2));
+  return pixels;
+}
+
+function makeBlankPixels(): Uint8Array {
+  return new Uint8Array(Math.ceil(BRAND_WIDTH / 8) * BRAND_HEIGHT);
+}
+
+function makeStatusPixels(text: string): Uint8Array {
+  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
+  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
+  let totalWidth = 0;
+  for (const ch of text) totalWidth += brandCharWidth(ch) + 2;
+  if (text.length > 0) totalWidth -= 2;
+  let xPos = Math.floor((BRAND_WIDTH - totalWidth) / 2);
+  const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
+  for (const ch of text) xPos += drawBrandChar(pixels, xPos, yPos, ch);
+  return pixels;
+}
+
+function makeBrandingUpdate(imageData: Uint8Array | number[]): ImageRawDataUpdate {
+  return new ImageRawDataUpdate({ containerID: CONTAINER_ID_BRAND, containerName: CONTAINER_NAME_BRAND, imageData });
+}
+
+// ── Caches ────────────────────────────────────────────────────────────────
+
 let cachedBrandImage: ImageRawDataUpdate | null = null;
 let cachedBlankBrandImage: ImageRawDataUpdate | null = null;
+let cachedCheckBrandImage: ImageRawDataUpdate | null = null;
+let cachedCheckmateBrandImage: ImageRawDataUpdate | null = null;
+
+// ── Sync BMP render (fallback) ────────────────────────────────────────────
 
 export function renderBrandingImage(): ImageRawDataUpdate {
   if (cachedBrandImage) return cachedBrandImage;
-
-  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
-  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
-
-  const text = 'CHESS';
-  let xPos = 2;
-  const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
-
-  for (const ch of text) {
-    xPos += drawBrandChar(pixels, xPos, yPos, ch);
-  }
-
-  const knightX = xPos + 4;
-  const knightY = Math.floor((BRAND_HEIGHT - 19) / 2);
-  drawKnightIcon(pixels, knightX, knightY);
-
-  const bmpData = create1BitBmp(pixels);
-
-  cachedBrandImage = new ImageRawDataUpdate({
-    containerID: CONTAINER_ID_BRAND,
-    containerName: CONTAINER_NAME_BRAND,
-    imageData: Array.from(bmpData),
-  });
-
+  cachedBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeBrandPixels())));
   return cachedBrandImage;
 }
 
 export function renderBlankBrandingImage(): ImageRawDataUpdate {
   if (cachedBlankBrandImage) return cachedBlankBrandImage;
-
-  const rowBytes = Math.ceil(BRAND_WIDTH / 8);
-  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT); // All zeros = blank
-
-  const bmpData = create1BitBmp(pixels);
-
-  cachedBlankBrandImage = new ImageRawDataUpdate({
-    containerID: CONTAINER_ID_BRAND,
-    containerName: CONTAINER_NAME_BRAND,
-    imageData: Array.from(bmpData),
-  });
-
+  cachedBlankBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeBlankPixels())));
   return cachedBlankBrandImage;
-}
-
-let cachedCheckBrandImage: ImageRawDataUpdate | null = null;
-let cachedCheckmateBrandImage: ImageRawDataUpdate | null = null;
-
-function renderStatusBrandingText(text: string): ImageRawDataUpdate {
-  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
-  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
-
-  let totalWidth = 0;
-  for (const ch of text) {
-    totalWidth += brandCharWidth(ch) + 2;
-  }
-  if (text.length > 0) totalWidth -= 2;
-
-  let xPos = Math.floor((BRAND_WIDTH - totalWidth) / 2);
-  const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
-  for (const ch of text) {
-    xPos += drawBrandChar(pixels, xPos, yPos, ch);
-  }
-
-  const bmpData = create1BitBmp(pixels);
-  return new ImageRawDataUpdate({
-    containerID: CONTAINER_ID_BRAND,
-    containerName: CONTAINER_NAME_BRAND,
-    imageData: Array.from(bmpData),
-  });
 }
 
 export function renderCheckBrandingImage(): ImageRawDataUpdate {
   if (cachedCheckBrandImage) return cachedCheckBrandImage;
-  cachedCheckBrandImage = renderStatusBrandingText('CHECK!');
+  cachedCheckBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeStatusPixels('CHECK!'))));
   return cachedCheckBrandImage;
 }
 
 export function renderCheckmateBrandingImage(): ImageRawDataUpdate {
   if (cachedCheckmateBrandImage) return cachedCheckmateBrandImage;
-  cachedCheckmateBrandImage = renderStatusBrandingText('CHECKMATE!');
+  cachedCheckmateBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeStatusPixels('CHECKMATE!'))));
   return cachedCheckmateBrandImage;
+}
+
+// ── PNG preload ───────────────────────────────────────────────────────────
+
+/**
+ * Pre-encode all branding images as 1-bit PNG and replace the BMP caches.
+ * Call once at startup; runs in parallel with hub init so PNG is ready before first branding send.
+ * Silently keeps BMP fallbacks if PNG encoding is unavailable.
+ */
+export async function preloadBrandingImages(): Promise<void> {
+  const [brandPng, blankPng, checkPng, checkmatePng] = await Promise.all([
+    encodePackedPixelsToPng(makeBrandPixels(), BRAND_WIDTH, BRAND_HEIGHT),
+    encodePackedPixelsToPng(makeBlankPixels(), BRAND_WIDTH, BRAND_HEIGHT),
+    encodePackedPixelsToPng(makeStatusPixels('CHECK!'), BRAND_WIDTH, BRAND_HEIGHT),
+    encodePackedPixelsToPng(makeStatusPixels('CHECKMATE!'), BRAND_WIDTH, BRAND_HEIGHT),
+  ]);
+  if (brandPng.length > 0)     cachedBrandImage         = makeBrandingUpdate(brandPng);
+  if (blankPng.length > 0)     cachedBlankBrandImage    = makeBrandingUpdate(blankPng);
+  if (checkPng.length > 0)     cachedCheckBrandImage    = makeBrandingUpdate(checkPng);
+  if (checkmatePng.length > 0) cachedCheckmateBrandImage = makeBrandingUpdate(checkmatePng);
 }

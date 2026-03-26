@@ -264,6 +264,20 @@ export class BoardRenderer {
   }
 
   /**
+   * Copy rendering state from another instance so this renderer diffs from the same
+   * baseline. Used by the refill renderer to prevent it from corrupting the main
+   * renderer's prevHighlightKeys across sequential refill renders.
+   */
+  copyStateFrom(other: BoardRenderer): void {
+    this.basePixels.set(other.basePixels);
+    this.prevBasePixels.set(other.prevBasePixels);
+    this.lastFen = other.lastFen;
+    this.lastShowBoardMarkers = other.lastShowBoardMarkers;
+    this.prevHighlightKeys = new Set(other.prevHighlightKeys);
+    this.currentHighlightKeys = new Set(other.currentHighlightKeys);
+  }
+
+  /**
    * Same as render() but encodes dirty halves as PNG for smaller BLE payload.
    * Returns [] in non-browser or if canvas fails (caller can fall back to render()).
    * slotBase 0 = main flush (uses canvas slots 0,1); slotBase 2 = refill (uses 2,3) for parallel next+prev.

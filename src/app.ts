@@ -28,7 +28,7 @@ import {
 } from './render/composer';
 import { BoardRenderer, rankHalf } from './render/boardimage';
 import { getCombinedDisplayText, getSelectedPiece, getSelectedMove } from './state/selectors';
-import { renderBrandingImage, renderCheckBrandingImage, renderCheckmateBrandingImage } from './render/branding';
+import { renderBrandingImage, renderCheckBrandingImage, renderCheckmateBrandingImage, preloadBrandingImages } from './render/branding';
 import { EvenHubBridge } from './evenhub/bridge';
 import { TurnLoop } from './engine/turnloop';
 import { PROFILE_BY_DIFFICULTY } from './engine/profiles';
@@ -172,6 +172,7 @@ export async function initApp(): Promise<void> {
   const store = createStore(initialState);
   const hub = new EvenHubBridge();
   const boardRenderer = new BoardRenderer();
+  const boardRefillRenderer = new BoardRenderer();
   const initialProfile = PROFILE_BY_DIFFICULTY[initialState.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
   const turnLoop = new TurnLoop(chess, store, initialProfile);
 
@@ -869,6 +870,7 @@ export async function initApp(): Promise<void> {
   try {
     // Only block first paint on hub; engine init runs in background (fallback moves until ready).
     // Store + input subscriptions are already installed, but startupFlushArmed keeps runtime flushes from racing startup paint.
+    void preloadBrandingImages(); // start PNG encoding in parallel with hub init
     await hub.init();
     hub.subscribeEvents(handleHubEvent);
     void turnLoop.init();
@@ -901,7 +903,7 @@ export async function initApp(): Promise<void> {
 
     console.log('[EvenChess] Sending initial board images:', initialImages.length);
     // Queue both halves immediately after page setup; SDK still serializes transfer, but this removes extra app-side handoff delay.
-    await hub.updateBoardImages(initialImages, { kind: 'board' });
+    await hub.updateBoardImages(initialImages, { kind: 'board', priority: 'high', interruptProtected: true });
     hub.updateBoardImage(renderBrandingImage(), { priority: 'low', kind: 'branding' }).catch((err) =>
       console.error('[EvenChess] Branding image failed:', err),
     );
@@ -1191,13 +1193,17 @@ export async function initApp(): Promise<void> {
       }
       boardCache.nextKey = boardCacheKey(nextState);
       boardCache.prevKey = boardCacheKey(prevState);
-      // Serialize refill renders because BoardRenderer is stateful and shares working buffers.
-      // (A dedicated renderer instance would be cleaner but this keeps memory/complexity lower.)
-      const nextImages = await boardRenderer.renderPngAsync(nextState, chess, 2);
-      const prevImages = await boardRenderer.renderPngAsync(prevState, chess, 2);
+      // Use a dedicated refill renderer so these renders never corrupt the main renderer's
+      // prevHighlightKeys. Re-sync before each render so both diffs start from the same baseline.
+      boardRefillRenderer.copyStateFrom(boardRenderer);
+      const nextImages = await boardRefillRenderer.renderPngAsync(nextState, chess, 2);
+      boardRefillRenderer.copyStateFrom(boardRenderer);
+      const prevImages = await boardRefillRenderer.renderPngAsync(prevState, chess, 2);
       if (seq !== boardCacheRefillSeq) return;
-      boardCache.nextImages = nextImages.length > 0 ? nextImages : boardRenderer.render(nextState, chess);
-      boardCache.prevImages = prevImages.length > 0 ? prevImages : boardRenderer.render(prevState, chess);
+      boardRefillRenderer.copyStateFrom(boardRenderer);
+      boardCache.nextImages = nextImages.length > 0 ? nextImages : boardRefillRenderer.render(nextState, chess);
+      boardRefillRenderer.copyStateFrom(boardRenderer);
+      boardCache.prevImages = prevImages.length > 0 ? prevImages : boardRefillRenderer.render(prevState, chess);
     };
     if (typeof requestIdleCallback !== 'undefined') {
       requestIdleCallback(run, { timeout: 80 });
@@ -1436,7 +1442,7 @@ export async function initApp(): Promise<void> {
               } else {
               const boardSendMeta: BoardImageSendMeta = forceRecoveryRefresh
                 ? { kind: 'board', priority: 'high', interruptProtected: true }
-                : { kind: 'board' };
+                : { kind: 'board', interruptProtected: true };
               const isTwoHalfSelectionScroll =
                 perfDispatch.source === 'input' &&
                 perfDispatch.actionType === 'SCROLL' &&
