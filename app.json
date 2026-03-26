@@ -1,7 +1,17 @@
 {
-  "name": "EvenChess",
+  "package_id": "com.harmon.chess",
+  "edition": "202601",
+  "name": "Chess",
   "version": "0.1.0",
-  "description": "Heads-up chess HUD for Even G2 glasses with R1 ring input",
-  "author": "EvenChess",
-  "entry": "index.html"
+  "min_app_version": "2.0.0",
+  "min_sdk_version": "0.0.9",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Loads fonts from Google Fonts for the companion help page.",
+      "whitelist": ["https://fonts.googleapis.com", "https://fonts.gstatic.com"]
+    }
+  ],
+  "supported_languages": ["en"]
 }
