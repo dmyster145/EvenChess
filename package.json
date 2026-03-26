@@ -1,6 +1,6 @@
 {
   "name": "evenchess",
-  "version": "0.1.0",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,7 +18,8 @@
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.9",
     "chess.js": "^1.4.0",
-    "stockfish.js": "^10.0.2"
+    "stockfish.js": "^10.0.2",
+    "upng-js": "^2.1.0"
   },
   "devDependencies": {
     "@evenrealities/evenhub-simulator": "^0.6.2",

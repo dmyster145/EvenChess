@@ -149,14 +149,14 @@ export function mapListEvent(event: List_ItemEvent, state: GameState): Action | 
 
   switch (eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollDebounced('up', state)) return null;
-      if (isScrollSuppressed()) return null;
-      return { type: 'SCROLL', direction: 'up' };
-
-    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
       if (isScrollDebounced('down', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'down' };
+
+    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
+      if (isScrollDebounced('up', state)) return null;
+      if (isScrollSuppressed()) return null;
+      return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.CLICK_EVENT: {
       if (!tryConsumeTap('TAP')) return null;
@@ -191,14 +191,14 @@ export function mapTextEvent(event: Text_ItemEvent, state: GameState): Action | 
 
   switch (eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollDebounced('up', state)) return null;
-      if (isScrollSuppressed()) return null;
-      return { type: 'SCROLL', direction: 'up' };
-
-    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
       if (isScrollDebounced('down', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'down' };
+
+    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
+      if (isScrollDebounced('up', state)) return null;
+      if (isScrollSuppressed()) return null;
+      return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.CLICK_EVENT: {
       if (!tryConsumeTap('TAP')) return null;
@@ -225,14 +225,14 @@ export function mapSysEvent(event: Sys_ItemEvent, state: GameState): Action | nu
   if (!event) return null;
   switch (event.eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollDebounced('up', state)) return null;
-      if (isScrollSuppressed()) return null;
-      return { type: 'SCROLL', direction: 'up' };
-
-    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
       if (isScrollDebounced('down', state)) return null;
       if (isScrollSuppressed()) return null;
       return { type: 'SCROLL', direction: 'down' };
+
+    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
+      if (isScrollDebounced('up', state)) return null;
+      if (isScrollSuppressed()) return null;
+      return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.CLICK_EVENT: {
       if (!tryConsumeTap('TAP')) return null;
