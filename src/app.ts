@@ -196,6 +196,7 @@ export async function initApp(): Promise<void> {
   let pendingAutosaveSnapshot: Pick<GameState, 'fen' | 'history' | 'turn' | 'difficulty'> | null = null;
   let lastQueuedBrandingMode: BrandingMode = 'normal';
   let pendingBrandingMode: BrandingMode | null = null;
+  let forceNextBrandingRefresh = false;
   let exitInProgress = false;
   let transportHangProbe: ReturnType<typeof setTimeout> | null = null;
   let transportHangProbeSeq = 0;
@@ -298,7 +299,7 @@ export async function initApp(): Promise<void> {
   function sendBrandingMode(mode: BrandingMode): void {
     pendingBrandingMode = null;
     lastQueuedBrandingMode = mode;
-    hub.updateBoardImage(renderBrandingMode(mode), { priority: 'low', kind: 'branding' }).catch((err) => {
+    hub.updateBoardImage(renderBrandingMode(mode), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) => {
       const label = mode === 'checkmate' ? 'checkmate' : mode === 'check' ? 'check' : 'normal';
       console.error(`[EvenChess] Failed to update ${label} branding:`, err);
     });
@@ -317,7 +318,10 @@ export async function initApp(): Promise<void> {
       pendingBrandingMode = null;
     }
 
-    if (desiredMode !== lastQueuedBrandingMode) {
+    const forceRefresh = forceNextBrandingRefresh;
+    forceNextBrandingRefresh = false;
+
+    if (forceRefresh || desiredMode !== lastQueuedBrandingMode) {
       if (suppressNonCriticalBranding) {
         pendingBrandingMode = desiredMode;
         return;
@@ -416,7 +420,7 @@ export async function initApp(): Promise<void> {
     const mode = desiredBrandingModeForState(state);
     pendingBrandingMode = null;
     lastQueuedBrandingMode = mode;
-    hub.updateBoardImage(renderBrandingMode(mode), { priority: 'low', kind: 'branding' }).catch((err) =>
+    hub.updateBoardImage(renderBrandingMode(mode), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) =>
       console.error('[EvenChess] Branding image failed:', err),
     );
   }
@@ -863,6 +867,7 @@ export async function initApp(): Promise<void> {
     }
     clearTransportHangProbe();
     forceNextDisplayRefresh = true;
+    forceNextBrandingRefresh = true;
     latestState = store.getState();
     scheduleDisplayFlush();
   });
@@ -904,7 +909,7 @@ export async function initApp(): Promise<void> {
     console.log('[EvenChess] Sending initial board images:', initialImages.length);
     // Queue both halves immediately after page setup; SDK still serializes transfer, but this removes extra app-side handoff delay.
     await hub.updateBoardImages(initialImages, { kind: 'board', priority: 'high', interruptProtected: true });
-    hub.updateBoardImage(renderBrandingImage(), { priority: 'low', kind: 'branding' }).catch((err) =>
+    hub.updateBoardImage(renderBrandingImage(), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) =>
       console.error('[EvenChess] Branding image failed:', err),
     );
   } catch (err) {

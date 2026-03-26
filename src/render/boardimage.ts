@@ -242,12 +242,14 @@ export class BoardRenderer {
 
   renderFull(state: GameState, chess: ChessService): ImageRawDataUpdate[] {
     // Used for startup / mode transitions. Reset dirty-tracking state so both halves are regenerated deterministically.
+    // forceBothHalves=true ensures both halves are always returned regardless of whether base pixels or highlights
+    // differ from the previous render (e.g. same FEN called twice in startup re-render path).
     this.cachedTopBmp = initBmpBuffer();
     this.cachedBottomBmp = initBmpBuffer();
     this.prevHighlightKeys.clear();
     this.currentHighlightKeys.clear();
     this.lastFen = '';
-    return this.render(state, chess);
+    return this.render(state, chess, true);
   }
 
   /**
