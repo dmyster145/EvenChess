@@ -17,9 +17,10 @@ import type { Action, GameState } from '../state/contracts';
 // 2) accepted same-direction dedupe (phase-tuned)
 const DEBOUNCE_MS = 8;
 // Glasses can sometimes emit a duplicate same-direction scroll a few frames later.
-// Use a smaller window while selecting on the board so fast swipes still feel responsive.
+// Use a large window during board selection so a single swipe (regardless of size) moves exactly one piece.
+// A full swipe can fire events for 150-400ms; 500ms ensures all tail events from the same gesture are suppressed.
 const SAME_DIRECTION_SCROLL_DEDUPE_MS_DEFAULT = 12;
-const SAME_DIRECTION_SCROLL_DEDUPE_MS_SELECTION = 5;
+const SAME_DIRECTION_SCROLL_DEDUPE_MS_SELECTION = 500;
 let lastRawScrollEventTime = 0;
 let lastAcceptedScrollTime = 0;
 let lastAcceptedScrollDirection: 'up' | 'down' | null = null;
