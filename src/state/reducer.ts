@@ -15,6 +15,12 @@ import {
   DIFFICULTY_OPTION_COUNT,
   BOARD_MARKERS_OPTIONS,
   BOARD_MARKERS_OPTION_COUNT,
+  DISPLAY_OPTIONS_OPTIONS,
+  DISPLAY_OPTIONS_OPTION_COUNT,
+  BOARD_ALIGNMENT_OPTIONS,
+  BOARD_ALIGNMENT_OPTION_COUNT,
+  BOARD_SIZE_OPTIONS,
+  BOARD_SIZE_OPTION_COUNT,
   LOG_MAX_VISIBLE,
   MAX_HISTORY_LENGTH,
   MODE_OPTIONS,
@@ -159,6 +165,22 @@ export function reduce(state: GameState, action: Action): GameState {
         menuSelectedIndex: MENU_INDEX.BOARD_MARKERS,
       };
 
+    case 'SET_BOARD_ALIGNMENT':
+      return {
+        ...state,
+        boardAlignment: action.alignment,
+        phase: 'menu',
+        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
+      };
+
+    case 'SET_BOARD_SIZE':
+      return {
+        ...state,
+        boardSize: action.size,
+        phase: 'menu',
+        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
+      };
+
     case 'MARK_SAVED':
       return { ...state, hasUnsavedChanges: false };
 
@@ -206,7 +228,17 @@ function initialPieceForPieceSelect(state: GameState): PieceEntry | null {
  * - pieceSelect: order = state.pieces (rank 1→8, file a→h). Start at bottom-left or latest-moved piece.
  * - destSelect: order = piece.moves (destination squares rank then file).
  */
+const SETTINGS_PHASES = new Set([
+  'menu', 'exitConfirm', 'resetConfirm', 'difficultySelect', 'boardMarkersSelect',
+  'displayOptionsSelect', 'boardAlignmentSelect', 'boardSizeSelect',
+  'modeSelect', 'bulletSetup', 'academySelect',
+]);
+
 function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
+  // Invert scroll direction in settings/menu screens vs gameplay
+  const d: 'up' | 'down' = SETTINGS_PHASES.has(state.phase)
+    ? (direction === 'down' ? 'up' : 'down')
+    : direction;
   switch (state.phase) {
     case 'idle':
       if (state.pieces.length === 0) return state;
@@ -226,7 +258,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       const idx = currentPieceIndex(state);
       const len = state.pieces.length;
       if (len === 0) return state;
-      const next = direction === 'down' ? (idx + 1) % len : (idx - 1 + len) % len;
+      const next = d === 'down' ? (idx + 1) % len : (idx - 1 + len) % len;
       const piece = state.pieces[next];
       return piece
         ? { ...state, selectedPieceId: piece.id, selectedMoveIndex: 0 }
@@ -238,13 +270,13 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       if (!piece) return state;
       const len = piece.moves.length;
       if (len === 0) return state;
-      const next = direction === 'down' ? (state.selectedMoveIndex + 1) % len : (state.selectedMoveIndex - 1 + len) % len;
+      const next = d === 'down' ? (state.selectedMoveIndex + 1) % len : (state.selectedMoveIndex - 1 + len) % len;
       return { ...state, selectedMoveIndex: next };
     }
 
     case 'promotionSelect': {
       const next =
-        direction === 'down'
+        d === 'down'
           ? (state.selectedPromotionIndex + 1) % PROMOTION_OPTION_COUNT
           : (state.selectedPromotionIndex - 1 + PROMOTION_OPTION_COUNT) % PROMOTION_OPTION_COUNT;
       return { ...state, selectedPromotionIndex: next };
@@ -252,10 +284,16 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
 
     case 'menu': {
       const idx = state.menuSelectedIndex;
-      const next =
-        direction === 'down'
+      let next =
+        d === 'down'
           ? (idx + 1) % MENU_OPTION_COUNT
           : (idx - 1 + MENU_OPTION_COUNT) % MENU_OPTION_COUNT;
+      // Skip boardMarkers when large board is active (markers are disabled in large mode)
+      if (state.boardSize === 'large' && next === MENU_INDEX.BOARD_MARKERS) {
+        next = d === 'down'
+          ? (next + 1) % MENU_OPTION_COUNT
+          : (next - 1 + MENU_OPTION_COUNT) % MENU_OPTION_COUNT;
+      }
       return { ...state, menuSelectedIndex: next };
     }
 
@@ -266,7 +304,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     case 'difficultySelect': {
       const idx = state.menuSelectedIndex;
       const next =
-        direction === 'down'
+        d === 'down'
           ? (idx + 1) % DIFFICULTY_OPTION_COUNT
           : (idx - 1 + DIFFICULTY_OPTION_COUNT) % DIFFICULTY_OPTION_COUNT;
       return { ...state, menuSelectedIndex: next };
@@ -275,9 +313,36 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     case 'boardMarkersSelect': {
       const idx = state.menuSelectedIndex;
       const next =
-        direction === 'down'
+        d === 'down'
           ? (idx + 1) % BOARD_MARKERS_OPTION_COUNT
           : (idx - 1 + BOARD_MARKERS_OPTION_COUNT) % BOARD_MARKERS_OPTION_COUNT;
+      return { ...state, menuSelectedIndex: next };
+    }
+
+    case 'displayOptionsSelect': {
+      const idx = state.menuSelectedIndex;
+      const next =
+        d === 'down'
+          ? (idx + 1) % DISPLAY_OPTIONS_OPTION_COUNT
+          : (idx - 1 + DISPLAY_OPTIONS_OPTION_COUNT) % DISPLAY_OPTIONS_OPTION_COUNT;
+      return { ...state, menuSelectedIndex: next };
+    }
+
+    case 'boardAlignmentSelect': {
+      const idx = state.menuSelectedIndex;
+      const next =
+        d === 'down'
+          ? (idx + 1) % BOARD_ALIGNMENT_OPTION_COUNT
+          : (idx - 1 + BOARD_ALIGNMENT_OPTION_COUNT) % BOARD_ALIGNMENT_OPTION_COUNT;
+      return { ...state, menuSelectedIndex: next };
+    }
+
+    case 'boardSizeSelect': {
+      const idx = state.menuSelectedIndex;
+      const next =
+        d === 'down'
+          ? (idx + 1) % BOARD_SIZE_OPTION_COUNT
+          : (idx - 1 + BOARD_SIZE_OPTION_COUNT) % BOARD_SIZE_OPTION_COUNT;
       return { ...state, menuSelectedIndex: next };
     }
 
@@ -285,7 +350,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       const maxMoves = Math.ceil(state.history.length / 2);
       const maxOffset = Math.max(0, maxMoves - LOG_MAX_VISIBLE);
       const newOffset =
-        direction === 'down'
+        d === 'down'
           ? Math.min(state.logScrollOffset + 1, maxOffset)
           : Math.max(state.logScrollOffset - 1, 0);
       return { ...state, logScrollOffset: newOffset };
@@ -294,7 +359,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     case 'modeSelect': {
       const idx = state.menuSelectedIndex;
       const next =
-        direction === 'down'
+        d === 'down'
           ? (idx + 1) % MODE_OPTION_COUNT
           : (idx - 1 + MODE_OPTION_COUNT) % MODE_OPTION_COUNT;
       return { ...state, menuSelectedIndex: next };
@@ -303,7 +368,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     case 'bulletSetup': {
       const idx = state.selectedTimeControlIndex;
       const next =
-        direction === 'down'
+        d === 'down'
           ? (idx + 1) % TIME_CONTROL_COUNT
           : (idx - 1 + TIME_CONTROL_COUNT) % TIME_CONTROL_COUNT;
       return { ...state, selectedTimeControlIndex: next };
@@ -312,7 +377,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     case 'academySelect': {
       const idx = state.menuSelectedIndex;
       const next =
-        direction === 'down'
+        d === 'down'
           ? (idx + 1) % DRILL_OPTION_COUNT
           : (idx - 1 + DRILL_OPTION_COUNT) % DRILL_OPTION_COUNT;
       return { ...state, menuSelectedIndex: next };
@@ -324,7 +389,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
         state.academyState.cursorFile,
         state.academyState.cursorRank,
         state.academyState.navAxis,
-        direction
+        d
       );
       return {
         ...state,
@@ -350,7 +415,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       let currentIdx = validMoves.indexOf(currentHighlight.toLowerCase());
       if (currentIdx === -1) currentIdx = 0;
 
-      const nextIdx = direction === 'down'
+      const nextIdx = d === 'down'
         ? (currentIdx + 1) % validMoves.length
         : (currentIdx - 1 + validMoves.length) % validMoves.length;
 
@@ -374,7 +439,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       const maxIndex = pgn.moves.length;
 
       let newIndex = pgn.currentMoveIndex;
-      if (direction === 'down') {
+      if (d === 'down') {
         newIndex = Math.min(maxIndex, newIndex + 1);
       } else {
         newIndex = Math.max(0, newIndex - 1);
@@ -530,6 +595,42 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
       };
     }
 
+    case 'displayOptionsSelect': {
+      const selected = DISPLAY_OPTIONS_OPTIONS[state.menuSelectedIndex];
+      if (selected === 'alignment') {
+        return {
+          ...state,
+          phase: 'boardAlignmentSelect',
+          menuSelectedIndex: BOARD_ALIGNMENT_OPTIONS.indexOf(state.boardAlignment),
+        };
+      }
+      return {
+        ...state,
+        phase: 'boardSizeSelect',
+        menuSelectedIndex: BOARD_SIZE_OPTIONS.indexOf(state.boardSize),
+      };
+    }
+
+    case 'boardAlignmentSelect': {
+      const selectedAlignment = BOARD_ALIGNMENT_OPTIONS[state.menuSelectedIndex] ?? 'right';
+      return {
+        ...state,
+        boardAlignment: selectedAlignment,
+        phase: 'menu',
+        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
+      };
+    }
+
+    case 'boardSizeSelect': {
+      const selectedSize = BOARD_SIZE_OPTIONS[state.menuSelectedIndex] ?? 'small';
+      return {
+        ...state,
+        boardSize: selectedSize,
+        phase: 'menu',
+        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
+      };
+    }
+
     case 'modeSelect': {
       const selectedMode = MODE_OPTIONS[state.menuSelectedIndex] ?? 'play';
       return handleSetMode(state, selectedMode);
@@ -633,6 +734,13 @@ function handleDoubleTap(state: GameState): GameState {
     case 'boardMarkersSelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.BOARD_MARKERS };
 
+    case 'displayOptionsSelect':
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS };
+
+    case 'boardAlignmentSelect':
+    case 'boardSizeSelect':
+      return { ...state, phase: 'displayOptionsSelect', menuSelectedIndex: 0 };
+
     case 'modeSelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.MODE };
 
@@ -734,7 +842,7 @@ function handleOpenMenu(state: GameState): GameState {
 
   // Preserve original phase when navigating within menu sub-screens
   const previousPhase: UIPhase =
-    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'boardMarkersSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
+    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'boardMarkersSelect' || state.phase === 'displayOptionsSelect' || state.phase === 'boardAlignmentSelect' || state.phase === 'boardSizeSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
       ? (state.previousPhase ?? 'idle')
       : state.phase;
 
@@ -775,6 +883,13 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
         ...state,
         phase: 'boardMarkersSelect',
         menuSelectedIndex: state.showBoardMarkers ? 0 : 1,
+      };
+
+    case 'displayOptions':
+      return {
+        ...state,
+        phase: 'displayOptionsSelect',
+        menuSelectedIndex: 0,
       };
 
     case 'viewLog': {

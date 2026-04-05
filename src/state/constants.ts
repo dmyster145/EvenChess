@@ -5,8 +5,8 @@
 import type { MenuOption, DifficultyLevel, GameMode, DrillType } from './contracts';
 
 // Menu options and labels are parallel arrays
-export const MENU_OPTIONS: MenuOption[] = ['mode', 'boardMarkers', 'viewLog', 'difficulty', 'reset', 'exit'];
-export const MENU_LABELS: readonly string[] = ['Mode', 'Board Markers', 'View Log', 'Difficulty', 'Reset', 'Exit'];
+export const MENU_OPTIONS: MenuOption[] = ['mode', 'boardMarkers', 'viewLog', 'difficulty', 'displayOptions', 'reset', 'exit'];
+export const MENU_LABELS: readonly string[] = ['Mode', 'Board Markers', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit'];
 export const MENU_OPTION_COUNT = MENU_OPTIONS.length;
 
 export const MENU_INDEX = {
@@ -14,9 +14,22 @@ export const MENU_INDEX = {
   BOARD_MARKERS: 1,
   VIEW_LOG: 2,
   DIFFICULTY: 3,
-  RESET: 4,
-  EXIT: 5,
+  DISPLAY_OPTIONS: 4,
+  RESET: 5,
+  EXIT: 6,
 } as const;
+
+export const DISPLAY_OPTIONS_OPTIONS: readonly string[] = ['alignment', 'size'];
+export const DISPLAY_OPTIONS_LABELS: readonly string[] = ['Alignment', 'Size'];
+export const DISPLAY_OPTIONS_OPTION_COUNT = DISPLAY_OPTIONS_OPTIONS.length;
+
+export const BOARD_ALIGNMENT_OPTIONS: readonly ('center' | 'right')[] = ['center', 'right'];
+export const BOARD_ALIGNMENT_LABELS: readonly string[] = ['Center', 'Right'];
+export const BOARD_ALIGNMENT_OPTION_COUNT = BOARD_ALIGNMENT_OPTIONS.length;
+
+export const BOARD_SIZE_OPTIONS: readonly ('small' | 'large')[] = ['small', 'large'];
+export const BOARD_SIZE_LABELS: readonly string[] = ['Small', 'Large'];
+export const BOARD_SIZE_OPTION_COUNT = BOARD_SIZE_OPTIONS.length;
 
 export const BOARD_MARKERS_OPTIONS: readonly ('on' | 'off')[] = ['on', 'off'];
 export const BOARD_MARKERS_LABELS: readonly string[] = ['On', 'Off'];

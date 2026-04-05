@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+declare const __APP_VERSION__: string;
+
 declare module "upng-js" {
   /** Encode RGBA or indexed image data as PNG. */
   function encode(

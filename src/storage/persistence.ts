@@ -2,7 +2,7 @@
  * Game state persistence using localStorage.
  */
 
-import type { DifficultyLevel } from '../state/contracts';
+import type { DifficultyLevel, BoardAlignment, BoardSize } from '../state/contracts';
 
 export interface SavedGame {
   fen: string;
@@ -18,20 +18,24 @@ const SETTINGS_KEY = 'evenchess-settings';
 interface Settings {
   difficulty: DifficultyLevel;
   showBoardMarkers?: boolean;
+  boardAlignment?: BoardAlignment;
+  boardSize?: BoardSize;
 }
 
 function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { difficulty: 'casual', showBoardMarkers: true };
+    if (!raw) return { difficulty: 'casual', showBoardMarkers: true, boardAlignment: 'right', boardSize: 'small' };
     const settings = JSON.parse(raw) as Settings;
     return {
       difficulty: settings.difficulty ?? 'casual',
       showBoardMarkers: settings.showBoardMarkers ?? true,
+      boardAlignment: settings.boardAlignment ?? 'right',
+      boardSize: settings.boardSize ?? 'small',
     };
   } catch (err) {
     console.error('[Persistence] Failed to load settings:', err);
-    return { difficulty: 'casual', showBoardMarkers: true };
+    return { difficulty: 'casual', showBoardMarkers: true, boardAlignment: 'right', boardSize: 'small' };
   }
 }
 
@@ -59,6 +63,22 @@ export function saveBoardMarkers(showBoardMarkers: boolean): void {
 
 export function loadBoardMarkers(): boolean {
   return loadSettings().showBoardMarkers ?? true;
+}
+
+export function saveBoardAlignment(boardAlignment: BoardAlignment): void {
+  saveSettings({ boardAlignment });
+}
+
+export function loadBoardAlignment(): BoardAlignment {
+  return loadSettings().boardAlignment ?? 'right';
+}
+
+export function saveBoardSize(boardSize: BoardSize): void {
+  saveSettings({ boardSize });
+}
+
+export function loadBoardSize(): BoardSize {
+  return loadSettings().boardSize ?? 'small';
 }
 
 export function saveGame(fen: string, history: string[], turn: 'w' | 'b', difficulty: DifficultyLevel = 'casual'): void {

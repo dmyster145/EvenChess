@@ -21,6 +21,7 @@ import type { GameState, MenuOption } from './state/contracts';
 import { mapEvenHubEvent, extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from './input/actions';
 import {
   composeStartupPage,
+  composePageForState,
   CONTAINER_ID_TEXT,
   CONTAINER_NAME_TEXT,
   CONTAINER_ID_IMAGE_TOP,
@@ -32,7 +33,7 @@ import { renderBrandingImage, renderCheckBrandingImage, renderCheckmateBrandingI
 import { EvenHubBridge } from './evenhub/bridge';
 import { TurnLoop } from './engine/turnloop';
 import { PROFILE_BY_DIFFICULTY } from './engine/profiles';
-import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoardMarkers, loadBoardMarkers } from './storage/persistence';
+import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoardMarkers, loadBoardMarkers, saveBoardAlignment, loadBoardAlignment, saveBoardSize, loadBoardSize } from './storage/persistence';
 import { ImageRawDataUpdate, OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 import { MENU_OPTIONS } from './state/constants';
 import { STARTING_FEN } from './academy/pgn';
@@ -138,10 +139,12 @@ export async function initApp(): Promise<void> {
 
   const persistedDifficulty = loadDifficulty();
   const persistedBoardMarkers = loadBoardMarkers();
+  const persistedBoardAlignment = loadBoardAlignment();
+  const persistedBoardSize = loadBoardSize();
   const savedGame = loadGame();
-  
+
   let initialState = buildInitialState(chess);
-  initialState = { ...initialState, difficulty: persistedDifficulty, showBoardMarkers: persistedBoardMarkers };
+  initialState = { ...initialState, difficulty: persistedDifficulty, showBoardMarkers: persistedBoardMarkers, boardAlignment: persistedBoardAlignment, boardSize: persistedBoardSize };
 
   if (savedGame) {
     console.log('[EvenChess] Restoring saved game...');
@@ -171,13 +174,15 @@ export async function initApp(): Promise<void> {
 
   const store = createStore(initialState);
   const hub = new EvenHubBridge();
-  const boardRenderer = new BoardRenderer();
-  const boardRefillRenderer = new BoardRenderer();
+  let boardRenderer = new BoardRenderer({ largeGrid: initialState.boardSize === 'large' });
+  let boardRefillRenderer = new BoardRenderer({ largeGrid: initialState.boardSize === 'large' });
   const initialProfile = PROFILE_BY_DIFFICULTY[initialState.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
   const turnLoop = new TurnLoop(chess, store, initialProfile);
 
   attachDebugCopyApi();
   markRunStart();
+  const versionEl = document.getElementById('app-version');
+  if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
 
   let perfLastInputAtMs = 0;
   let perfLastInputSeq = 0;
@@ -820,6 +825,39 @@ export async function initApp(): Promise<void> {
     if (state.showBoardMarkers !== prevState.showBoardMarkers) {
       saveBoardMarkers(state.showBoardMarkers);
       console.log('[EvenChess] Board markers changed to:', state.showBoardMarkers ? 'on' : 'off');
+    }
+
+    if (state.boardSize !== prevState.boardSize) {
+      saveBoardSize(state.boardSize);
+      boardRenderer = new BoardRenderer({ largeGrid: state.boardSize === 'large' });
+      boardRefillRenderer = new BoardRenderer({ largeGrid: state.boardSize === 'large' });
+      const page = composePageForState(state);
+      void hub.updatePage(page);
+      forceNextDisplayRefresh = true;
+      forceNextBrandingRefresh = true;
+      console.log('[EvenChess] Board size changed to:', state.boardSize);
+    }
+
+    if (state.boardAlignment !== prevState.boardAlignment) {
+      saveBoardAlignment(state.boardAlignment);
+      const page = composePageForState(state);
+      void hub.updatePage(page);
+      forceNextDisplayRefresh = true;
+      forceNextBrandingRefresh = true;
+      console.log('[EvenChess] Board alignment changed to:', state.boardAlignment);
+    }
+
+    // Rebuild page when entering/exiting viewLog in center alignment (board position shifts)
+    if (state.boardAlignment === 'center' &&
+        (state.phase === 'viewLog') !== (prevState.phase === 'viewLog')) {
+      const page = composePageForState(state);
+      void hub.updatePage(page);
+      forceNextBrandingRefresh = true;
+    }
+
+    // Force full board re-render when exiting viewLog (board may need to repaint after being off-screen)
+    if (prevState.phase === 'viewLog' && state.phase !== 'viewLog') {
+      forceNextDisplayRefresh = true;
     }
 
     // Extend tap cooldown for menu/destSelect to prevent accidental inputs

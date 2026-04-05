@@ -33,25 +33,41 @@ const BUF_W = IMAGE_WIDTH;
 const BUF_H = IMAGE_HEIGHT * 2;
 const HALF_PIXELS = BUF_W * IMAGE_HEIGHT;
 const SPLIT_Y = IMAGE_HEIGHT;
-const CELL = 21;
-const GRID_SIZE = CELL * 8;
-const LABEL_PAD = 10;
-const BORDER_L = LABEL_PAD;
-const GRID_X = LABEL_PAD + 1;
-// GRID_Y set so the top of row 4 aligns with the panel split
-const GRID_Y = SPLIT_Y - 4 * CELL;
-const BORDER_T = GRID_Y - 1;
-const BORDER_R = GRID_X + GRID_SIZE;
-const BORDER_B = GRID_Y + GRID_SIZE;
-// Match padding between file labels and board to row-label padding (GRID_X - font width 5 = 6)
-const LABEL_Y = BORDER_B + 6;
+
+// Grid layout — all dimension-dependent constants in one place so two layouts can coexist.
+interface GridLayout {
+  cell: number;
+  gridX: number;
+  gridY: number;
+  borderL: number;
+  borderR: number;
+  borderT: number;
+  borderB: number;
+  labelY: number;
+}
+
+function makeLayout(cell: number, labelPad: number): GridLayout {
+  const gridX = labelPad > 0 ? labelPad + 1 : 0;
+  const gridY = SPLIT_Y - 4 * cell;
+  const borderL = labelPad;
+  const borderR = Math.min(BUF_W - 1, gridX + cell * 8);
+  const borderT = Math.max(0, gridY - 1);
+  const borderB = Math.min(BUF_H - 1, gridY + cell * 8);
+  const labelY = borderB + 6;
+  return { cell, gridX, gridY, borderL, borderR, borderT, borderB, labelY };
+}
+
+// Small: CELL=21, LABEL_PAD=10  →  fits in 200×100
+const SMALL_LAYOUT: GridLayout = makeLayout(21, 10);
+// Large: CELL=25, no label padding  →  board fills full 200×200, markers removed
+const LARGE_LAYOUT: GridLayout = makeLayout(25, 0);
 
 function hlKey(file: number, rank: number, style: string): string {
   return `${file},${rank},${style}`;
 }
 
-function rankToHalf(rank: number): 'top' | 'bottom' {
-  return cellY(rank) + CELL <= SPLIT_Y ? 'top' : 'bottom';
+function rankToHalf(rank: number, g: GridLayout): 'top' | 'bottom' {
+  return (g.gridY + rank * g.cell + g.cell) <= SPLIT_Y ? 'top' : 'bottom';
 }
 
 const BMP_ROW_STRIDE = getBmpRowStride(IMAGE_WIDTH);
@@ -104,6 +120,7 @@ function encodeBmpPixels(bmpBuffer: Uint8Array, pixels: Uint8Array): void {
 function getHighlightDirtyHalves(
   prevKeys: Set<string>,
   currentKeys: Set<string>,
+  g: GridLayout,
 ): { topDirty: boolean; bottomDirty: boolean } {
   let topDirty = false;
   let bottomDirty = false;
@@ -111,7 +128,7 @@ function getHighlightDirtyHalves(
   for (const key of allKeys) {
     if (prevKeys.has(key) !== currentKeys.has(key)) {
       const rank = parseInt(key.split(',')[1]!, 10);
-      if (rankToHalf(rank) === 'top') topDirty = true;
+      if (rankToHalf(rank, g) === 'top') topDirty = true;
       else bottomDirty = true;
     }
   }
@@ -131,17 +148,18 @@ function refreshDirtyHalvesFromBase(
   highlights: Highlight[],
   topDirty: boolean,
   bottomDirty: boolean,
+  g: GridLayout,
 ): void {
   if (topDirty) {
     workPixels.subarray(0, HALF_PIXELS).set(basePixels.subarray(0, HALF_PIXELS));
     for (const hl of highlights) {
-      if (rankToHalf(hl.rank) === 'top') highlightCell(workPixels, hl.file, hl.rank, hl.style);
+      if (rankToHalf(hl.rank, g) === 'top') highlightCell(workPixels, hl.file, hl.rank, hl.style, g);
     }
   }
   if (bottomDirty) {
     workPixels.subarray(HALF_PIXELS).set(basePixels.subarray(HALF_PIXELS));
     for (const hl of highlights) {
-      if (rankToHalf(hl.rank) === 'bottom') highlightCell(workPixels, hl.file, hl.rank, hl.style);
+      if (rankToHalf(hl.rank, g) === 'bottom') highlightCell(workPixels, hl.file, hl.rank, hl.style, g);
     }
   }
 }
@@ -152,6 +170,8 @@ export class BoardRenderer {
   // - tracks previous highlight keys for dirty-half detection
   // - reuses working pixel buffers/BMP buffers to avoid per-frame allocations
   // Callers must avoid concurrent render* calls on the same instance.
+  readonly largeGrid: boolean;
+  private readonly g: GridLayout;
   private basePixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private prevBasePixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private workPixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
@@ -163,11 +183,16 @@ export class BoardRenderer {
   private cachedBottomBmp: Uint8Array = initBmpBuffer();
   private drillBasePixels: Uint8Array | null = null;
 
+  constructor({ largeGrid = false }: { largeGrid?: boolean } = {}) {
+    this.largeGrid = largeGrid;
+    this.g = largeGrid ? LARGE_LAYOUT : SMALL_LAYOUT;
+  }
+
   /** Returns only the image halves that changed (highlight-based dirty tracking).
    * When forceBothHalves is true, always returns both halves without re-initing buffers (faster than renderFull for cross-half). */
   render(state: GameState, chess: ChessService, forceBothHalves = false): ImageRawDataUpdate[] {
     const fen = state.fen;
-    const showBoardMarkers = state.showBoardMarkers;
+    const showBoardMarkers = this.largeGrid ? false : state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
     let baseTopDirty = false;
@@ -190,7 +215,7 @@ export class BoardRenderer {
     const highlights = getHighlights(state);
     this.currentHighlightKeys.clear();
     for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
-    const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys);
+    const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys, this.g);
 
     // Fast path: highlight-only changes use dirty tracking (skip when caller needs both halves)
     if (!fenChanged && !markersChanged && !forceBothHalves) {
@@ -201,7 +226,7 @@ export class BoardRenderer {
 
       // Refresh each dirty half from base + current highlights so we never encode stale highlights
       // (e.g. after using cached images, workPixels was never updated).
-      refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
+      refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty, this.g);
       const tmp = this.prevHighlightKeys;
       this.prevHighlightKeys = this.currentHighlightKeys;
       this.currentHighlightKeys = tmp;
@@ -226,7 +251,7 @@ export class BoardRenderer {
     const tmp = this.prevHighlightKeys;
     this.prevHighlightKeys = this.currentHighlightKeys;
     this.currentHighlightKeys = tmp;
-    refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
+    refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty, this.g);
 
     const dirty: ImageRawDataUpdate[] = [];
     if (topDirty) {
@@ -284,9 +309,9 @@ export class BoardRenderer {
    * Returns [] in non-browser or if canvas fails (caller can fall back to render()).
    * slotBase 0 = main flush (uses canvas slots 0,1); slotBase 2 = refill (uses 2,3) for parallel next+prev.
    */
-  async renderPngAsync(state: GameState, chess: ChessService, slotBase: 0 | 2 = 0): Promise<ImageRawDataUpdate[]> {
+  async renderPngAsync(state: GameState, chess: ChessService, slotBase: 0 | 2 = 0, forceBothHalves = false): Promise<ImageRawDataUpdate[]> {
     const fen = state.fen;
-    const showBoardMarkers = state.showBoardMarkers;
+    const showBoardMarkers = this.largeGrid ? false : state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
     let baseTopDirty = false;
@@ -309,15 +334,15 @@ export class BoardRenderer {
     const highlights = getHighlights(state);
     this.currentHighlightKeys.clear();
     for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
-    const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys);
+    const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys, this.g);
 
-    if (!fenChanged && !markersChanged) {
+    if (!fenChanged && !markersChanged && !forceBothHalves) {
       const topDirty = highlightDirty.topDirty;
       const bottomDirty = highlightDirty.bottomDirty;
       if (!topDirty && !bottomDirty) return [];
 
       // Refresh each dirty half from base + current highlights so we never encode stale highlights.
-      refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
+      refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty, this.g);
       const tmp = this.prevHighlightKeys;
       this.prevHighlightKeys = this.currentHighlightKeys;
       this.currentHighlightKeys = tmp;
@@ -339,14 +364,14 @@ export class BoardRenderer {
       return dirty;
     }
 
-    const topDirty = markersChanged || baseTopDirty || highlightDirty.topDirty;
-    const bottomDirty = markersChanged || baseBottomDirty || highlightDirty.bottomDirty;
+    const topDirty = forceBothHalves || markersChanged || baseTopDirty || highlightDirty.topDirty;
+    const bottomDirty = forceBothHalves || markersChanged || baseBottomDirty || highlightDirty.bottomDirty;
     if (!topDirty && !bottomDirty) return [];
 
     const tmpKeys = this.prevHighlightKeys;
     this.prevHighlightKeys = this.currentHighlightKeys;
     this.currentHighlightKeys = tmpKeys;
-    refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty);
+    refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty, this.g);
 
     // FEN/marker changes may dirty both halves; parallel PNG encode keeps CPU time small vs transport time.
     const [topPng, bottomPng] = await Promise.all([
@@ -370,22 +395,23 @@ export class BoardRenderer {
 
   private rebuildBase(chess: ChessService, showBoardMarkers: boolean = true): void {
     const pixels = this.basePixels;
+    const g = this.g;
     pixels.fill(0);
 
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0);
+          fillCell(pixels, file, rank, 0, g);
         } else {
-          fillCellLightDots(pixels, file, rank);
+          fillCellLightDots(pixels, file, rank, g);
         }
       }
     }
 
-    drawBorder(pixels);
+    drawBorder(pixels, g);
     if (showBoardMarkers) {
-      drawFileLabels(pixels);
-      drawRankLabels(pixels);
+      drawFileLabels(pixels, g);
+      drawRankLabels(pixels, g);
     }
 
     const board = chess.getBoard();
@@ -395,7 +421,7 @@ export class BoardRenderer {
       for (let file = 0; file < 8; file++) {
         const piece = row[file];
         if (piece) {
-          drawPiece(pixels, file, rank, piece.color, piece.type);
+          drawPiece(pixels, file, rank, piece.color, piece.type, g);
         }
       }
     }
@@ -403,17 +429,18 @@ export class BoardRenderer {
 
   /** Fill a pixel buffer with the empty coordinate-drill grid (no highlight). */
   private fillDrillBase(pixels: Uint8Array): void {
+    const g = this.g;
     pixels.fill(0);
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0);
+          fillCell(pixels, file, rank, 0, g);
         } else {
-          fillCellLightDots(pixels, file, rank);
+          fillCellLightDots(pixels, file, rank, g);
         }
       }
     }
-    drawBorder(pixels);
+    drawBorder(pixels, g);
   }
 
   /** Render empty board for drill mode (no pieces, no labels). Uses cached base; always returns both halves for full board updates. */
@@ -425,7 +452,7 @@ export class BoardRenderer {
 
     this.workPixels.set(this.drillBasePixels);
     const displayRank = 7 - cursorRank;
-    highlightCell(this.workPixels, cursorFile, displayRank, 'selected');
+    highlightCell(this.workPixels, cursorFile, displayRank, 'selected', this.g);
 
     // Always return both halves for the coordinate drill so the device never shows a half-stale board
     // (one panel with old highlight, one with new). Cache and live updates both send full board.
@@ -453,30 +480,31 @@ export class BoardRenderer {
     highlightRank: number,
   ): ImageRawDataUpdate[] {
     const pixels = this.workPixels;
+    const g = this.g;
     pixels.fill(0);
 
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0);
+          fillCell(pixels, file, rank, 0, g);
         } else {
-          fillCellLightDots(pixels, file, rank);
+          fillCellLightDots(pixels, file, rank, g);
         }
       }
     }
 
-    drawBorder(pixels);
+    drawBorder(pixels, g);
 
     // Convert rank indices to display coords (rank 1 at bottom = display row 7)
     const knightDisplayRank = 7 - knightRank;
     const targetDisplayRank = 7 - targetRank;
     const highlightDisplayRank = 7 - highlightRank;
 
-    highlightCell(pixels, targetFile, targetDisplayRank, 'destination');
-    drawPiece(pixels, knightFile, knightDisplayRank, 'w', 'n');
+    highlightCell(pixels, targetFile, targetDisplayRank, 'destination', g);
+    drawPiece(pixels, knightFile, knightDisplayRank, 'w', 'n', g);
 
     if (highlightFile !== knightFile || highlightRank !== knightRank) {
-      highlightCell(pixels, highlightFile, highlightDisplayRank, 'selected');
+      highlightCell(pixels, highlightFile, highlightDisplayRank, 'selected', g);
     }
 
     encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
@@ -490,19 +518,20 @@ export class BoardRenderer {
 
   renderFromFen(fen: string): ImageRawDataUpdate[] {
     const pixels = this.workPixels;
+    const g = this.g;
     pixels.fill(0);
 
     for (let rank = 0; rank < 8; rank++) {
       for (let file = 0; file < 8; file++) {
         if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0);
+          fillCell(pixels, file, rank, 0, g);
         } else {
-          fillCellLightDots(pixels, file, rank);
+          fillCellLightDots(pixels, file, rank, g);
         }
       }
     }
 
-    drawBorder(pixels);
+    drawBorder(pixels, g);
 
     const fenParts = fen.split(' ');
     const position = fenParts[0] ?? '';
@@ -521,7 +550,7 @@ export class BoardRenderer {
         } else {
           const color = char === char.toUpperCase() ? 'w' : 'b';
           const pieceType = char.toLowerCase();
-          drawPiece(pixels, file, fenRank, color, pieceType);
+          drawPiece(pixels, file, fenRank, color, pieceType, g);
           file++;
         }
       }
@@ -559,7 +588,7 @@ interface Highlight {
 }
 
 export function rankHalf(rank: number): 'top' | 'bottom' {
-  return rankToHalf(rank);
+  return rankToHalf(rank, SMALL_LAYOUT);
 }
 
 function getHighlights(state: GameState): Highlight[] {
@@ -597,12 +626,12 @@ function getHighlights(state: GameState): Highlight[] {
   return highlights;
 }
 
-function cellX(file: number): number {
-  return GRID_X + file * CELL;
+function cellX(file: number, g: GridLayout): number {
+  return g.gridX + file * g.cell;
 }
 
-function cellY(rank: number): number {
-  return GRID_Y + rank * CELL;
+function cellY(rank: number, g: GridLayout): number {
+  return g.gridY + rank * g.cell;
 }
 
 function setPixel(pixels: Uint8Array, x: number, y: number, value: number): void {
@@ -611,22 +640,22 @@ function setPixel(pixels: Uint8Array, x: number, y: number, value: number): void
   }
 }
 
-function fillCell(pixels: Uint8Array, file: number, rank: number, value: number): void {
-  const x0 = cellX(file);
-  const y0 = cellY(rank);
-  for (let dy = 0; dy < CELL; dy++) {
-    for (let dx = 0; dx < CELL; dx++) {
+function fillCell(pixels: Uint8Array, file: number, rank: number, value: number, g: GridLayout): void {
+  const x0 = cellX(file, g);
+  const y0 = cellY(rank, g);
+  for (let dy = 0; dy < g.cell; dy++) {
+    for (let dx = 0; dx < g.cell; dx++) {
       setPixel(pixels, x0 + dx, y0 + dy, value);
     }
   }
 }
 
 /** Fill a light square with a dot pattern (checkerboard 0/1). */
-function fillCellLightDots(pixels: Uint8Array, file: number, rank: number): void {
-  const x0 = cellX(file);
-  const y0 = cellY(rank);
-  for (let dy = 0; dy < CELL; dy++) {
-    for (let dx = 0; dx < CELL; dx++) {
+function fillCellLightDots(pixels: Uint8Array, file: number, rank: number, g: GridLayout): void {
+  const x0 = cellX(file, g);
+  const y0 = cellY(rank, g);
+  for (let dy = 0; dy < g.cell; dy++) {
+    for (let dx = 0; dx < g.cell; dx++) {
       const value = (dx + dy) % 2 === 0 ? 0 : 1;
       setPixel(pixels, x0 + dx, y0 + dy, value);
     }
@@ -638,29 +667,30 @@ function highlightCell(
   file: number,
   rank: number,
   style: 'selected' | 'destination',
+  g: GridLayout,
 ): void {
-  const x0 = cellX(file);
-  const y0 = cellY(rank);
+  const x0 = cellX(file, g);
+  const y0 = cellY(rank, g);
 
   if (style === 'selected') {
     // Diagonal striped border (3px wide)
     const borderWidth = 3;
     for (let t = 0; t < borderWidth; t++) {
-      for (let dx = 0; dx < CELL; dx++) {
+      for (let dx = 0; dx < g.cell; dx++) {
         const stripe = (dx + t) % 4 < 2 ? 1 : 0;
         setPixel(pixels, x0 + dx, y0 + t, stripe);
       }
-      for (let dx = 0; dx < CELL; dx++) {
+      for (let dx = 0; dx < g.cell; dx++) {
         const stripe = (dx + t) % 4 < 2 ? 1 : 0;
-        setPixel(pixels, x0 + dx, y0 + CELL - 1 - t, stripe);
+        setPixel(pixels, x0 + dx, y0 + g.cell - 1 - t, stripe);
       }
-      for (let dy = 0; dy < CELL; dy++) {
+      for (let dy = 0; dy < g.cell; dy++) {
         const stripe = (dy + t) % 4 < 2 ? 1 : 0;
         setPixel(pixels, x0 + t, y0 + dy, stripe);
       }
-      for (let dy = 0; dy < CELL; dy++) {
+      for (let dy = 0; dy < g.cell; dy++) {
         const stripe = (dy + t) % 4 < 2 ? 1 : 0;
-        setPixel(pixels, x0 + CELL - 1 - t, y0 + dy, stripe);
+        setPixel(pixels, x0 + g.cell - 1 - t, y0 + dy, stripe);
       }
     }
   } else {
@@ -669,7 +699,7 @@ function highlightCell(
     const outlineVal = isLightSquare ? 0 : 1;
     const xVal = isLightSquare ? 1 : 0;
     const pad = 5;
-    const size = CELL - pad * 2;
+    const size = g.cell - pad * 2;
     // On light squares the background is stippled; use a thicker outline so the dark border reads as uniform.
     const outlineSpread = isLightSquare ? 2 : 1;
     const oxMin = -2 - (outlineSpread - 1);
@@ -712,29 +742,29 @@ function highlightCell(
   }
 }
 
-function drawBorder(pixels: Uint8Array): void {
-  for (let x = BORDER_L; x <= BORDER_R; x++) {
-    setPixel(pixels, x, BORDER_T, 1);
-    setPixel(pixels, x, BORDER_B, 1);
+function drawBorder(pixels: Uint8Array, g: GridLayout): void {
+  for (let x = g.borderL; x <= g.borderR; x++) {
+    setPixel(pixels, x, g.borderT, 1);
+    setPixel(pixels, x, g.borderB, 1);
   }
-  for (let y = BORDER_T; y <= BORDER_B; y++) {
-    setPixel(pixels, BORDER_L, y, 1);
-    setPixel(pixels, BORDER_R, y, 1);
+  for (let y = g.borderT; y <= g.borderB; y++) {
+    setPixel(pixels, g.borderL, y, 1);
+    setPixel(pixels, g.borderR, y, 1);
   }
 }
 
-function drawFileLabels(pixels: Uint8Array): void {
+function drawFileLabels(pixels: Uint8Array, g: GridLayout): void {
   const files = 'ABCDEFGH';
   for (let f = 0; f < 8; f++) {
-    const lx = cellX(f) + Math.floor(CELL / 2) - 2;
-    drawChar(pixels, lx, LABEL_Y, files[f]!);
+    const lx = cellX(f, g) + Math.floor(g.cell / 2) - 2;
+    drawChar(pixels, lx, g.labelY, files[f]!);
   }
 }
 
-function drawRankLabels(pixels: Uint8Array): void {
+function drawRankLabels(pixels: Uint8Array, g: GridLayout): void {
   const ranks = '87654321';
   for (let r = 0; r < 8; r++) {
-    const ly = cellY(r) + Math.floor(CELL / 2) - 3;
+    const ly = cellY(r, g) + Math.floor(g.cell / 2) - 3;
     drawChar(pixels, 0, ly, ranks[r]!);
   }
 }
@@ -805,16 +835,17 @@ function drawPiece(
   rank: number,
   color: 'w' | 'b',
   type: string,
+  g: GridLayout,
 ): void {
   const isDark = (rank + file) % 2 === 1;
   const silhouette = PIECE_SILHOUETTES[type];
   if (!silhouette) return;
 
   const bottomRow = findBottomRow(silhouette);
-  const x0 = cellX(file) + Math.floor((CELL - PIECE_SIZE) / 2);
+  const x0 = cellX(file, g) + Math.floor((g.cell - PIECE_SIZE) / 2);
   // Ensure at least 1px gap from top of cell so pieces don't touch the top
-  const topInset = Math.max(1, CELL - 4 - bottomRow);
-  const y0 = cellY(rank) + topInset;
+  const topInset = Math.max(1, g.cell - 4 - bottomRow);
+  const y0 = cellY(rank, g) + topInset;
 
   if (color === 'b') {
     const fillVal = 0;

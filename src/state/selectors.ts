@@ -6,10 +6,16 @@
 
 import type { GameState, PieceEntry, CarouselMove } from './contracts';
 import {
+  MENU_OPTIONS,
   MENU_LABELS,
   DIFFICULTY_OPTIONS,
   DIFFICULTY_LABELS,
   BOARD_MARKERS_LABELS,
+  DISPLAY_OPTIONS_LABELS,
+  BOARD_ALIGNMENT_OPTIONS,
+  BOARD_ALIGNMENT_LABELS,
+  BOARD_SIZE_OPTIONS,
+  BOARD_SIZE_LABELS,
   MAX_MOVES_DISPLAY,
   MODE_LABELS,
   MODE_OPTIONS,
@@ -229,9 +235,11 @@ export function getCarouselDisplayText(state: GameState): string {
 }
 
 export function getMenuDisplayText(state: GameState): string {
-  const lines: string[] = ['', 'MENU', ''];
+  const lines: string[] = [''];
 
   MENU_LABELS.forEach((label, i) => {
+    // Hide Board Markers when large board is active (markers disabled in large mode)
+    if (MENU_OPTIONS[i] === 'boardMarkers' && state.boardSize === 'large') return;
     const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
     lines.push(`${prefix}${label}`);
   });
@@ -259,6 +267,42 @@ export function getBoardMarkersDisplayText(state: GameState): string {
     const current = (i === 0 && state.showBoardMarkers) ||
                     (i === 1 && !state.showBoardMarkers) ? ' *' : '';
     lines.push(`${prefix}${label}${current}`);
+  });
+
+  return lines.join('\n');
+}
+
+export function getDisplayOptionsDisplayText(state: GameState): string {
+  const lines: string[] = ['', 'DISPLAY OPTIONS', ''];
+
+  DISPLAY_OPTIONS_LABELS.forEach((label, i) => {
+    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
+    lines.push(`${prefix}${label}`);
+  });
+
+  return lines.join('\n');
+}
+
+export function getBoardAlignmentDisplayText(state: GameState): string {
+  const lines: string[] = ['', 'ALIGNMENT', ''];
+
+  BOARD_ALIGNMENT_LABELS.forEach((label, i) => {
+    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
+    const current = BOARD_ALIGNMENT_OPTIONS[i] === state.boardAlignment ? ' *' : '';
+    lines.push(`${prefix}${label}${current}`);
+  });
+
+  return lines.join('\n');
+}
+
+export function getBoardSizeDisplayText(state: GameState): string {
+  const lines: string[] = ['', 'BOARD SIZE', ''];
+
+  BOARD_SIZE_LABELS.forEach((label, i) => {
+    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
+    const current = BOARD_SIZE_OPTIONS[i] === state.boardSize ? ' *' : '';
+    const note = BOARD_SIZE_OPTIONS[i] === 'large' ? ' (no markers)' : '';
+    lines.push(`${prefix}${label}${note}${current}`);
   });
 
   return lines.join('\n');
@@ -339,9 +383,8 @@ export function getModeSelectDisplayText(state: GameState): string {
 }
 
 export function getBulletSetupDisplayText(state: GameState): string {
-  const lines: string[] = ['', 'BULLET BLITZ'];
+  const lines: string[] = ['BULLET BLITZ'];
   lines.push('Select time control:');
-  lines.push('');
 
   TIME_CONTROLS.forEach((tc, i) => {
     const prefix = i === state.selectedTimeControlIndex ? '> ' : '  ';
@@ -353,7 +396,6 @@ export function getBulletSetupDisplayText(state: GameState): string {
 
 export function getAcademySelectDisplayText(state: GameState): string {
   const lines: string[] = ['', 'ACADEMY'];
-  lines.push('Select drill:');
   lines.push('');
 
   DRILL_LABELS.forEach((label, i) => {
@@ -468,9 +510,7 @@ export function getTacticsDisplayText(state: GameState): string {
   } else {
     lines.push('');
     lines.push(isMate ? 'Find mate in 1!' : 'Find the best move!');
-    lines.push('');
     lines.push(`Theme: ${puzzle.theme}`);
-    lines.push('');
     lines.push('Tap: show answer');
   }
 
@@ -481,14 +521,13 @@ export function getPgnStudyDisplayText(state: GameState): string {
   const academy = state.academyState;
   const pgn = academy?.pgnStudy;
 
-  const lines: string[] = ['', 'PGN STUDY'];
+  const lines: string[] = ['PGN STUDY'];
 
   if (!pgn) {
     lines.push('');
     lines.push('Loading...');
   } else {
     lines.push(pgn.gameName);
-    lines.push('');
 
     // Show move number and current moves
     const moveIndex = pgn.currentMoveIndex;
@@ -530,6 +569,12 @@ export function getCombinedDisplayText(state: GameState): string {
       return getDifficultyDisplayText(state);
     case 'boardMarkersSelect':
       return getBoardMarkersDisplayText(state);
+    case 'displayOptionsSelect':
+      return getDisplayOptionsDisplayText(state);
+    case 'boardAlignmentSelect':
+      return getBoardAlignmentDisplayText(state);
+    case 'boardSizeSelect':
+      return getBoardSizeDisplayText(state);
     case 'resetConfirm':
       return getResetConfirmDisplayText(state);
     case 'exitConfirm':
@@ -552,7 +597,6 @@ export function getCombinedDisplayText(state: GameState): string {
   }
 
   const lines: string[] = [];
-  lines.push('');
 
   if (state.mode === 'bullet' && state.timers) {
     const whiteTime = formatTime(state.timers.whiteMs);
@@ -562,6 +606,8 @@ export function getCombinedDisplayText(state: GameState): string {
     const whiteDisplay = isWhiteLow ? `!${whiteTime}!` : whiteTime;
     const blackDisplay = isBlackLow ? `!${blackTime}!` : blackTime;
     lines.push(`W ${whiteDisplay}  |  B ${blackDisplay}`);
+  } else {
+    lines.push('');
   }
 
   const turnLabel = state.turn === 'w' ? 'White' : 'Black';
@@ -635,12 +681,6 @@ export function getCombinedDisplayText(state: GameState): string {
       }
       break;
     }
-  }
-
-  if (state.phase !== 'pieceSelect' && state.phase !== 'destSelect' && state.phase !== 'promotionSelect') {
-    lines.push('');
-    lines.push(SEPARATOR_LINE);
-    lines.push('Menu: Double tap');
   }
 
   return lines.join('\n');

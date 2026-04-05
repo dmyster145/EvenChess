@@ -35,6 +35,9 @@ export type UIPhase =
   | 'viewLog'
   | 'difficultySelect'
   | 'boardMarkersSelect'
+  | 'displayOptionsSelect'
+  | 'boardAlignmentSelect'
+  | 'boardSizeSelect'
   | 'resetConfirm'
   | 'exitConfirm'
   | 'modeSelect'
@@ -46,7 +49,10 @@ export type UIPhase =
   | 'knightPathDrill'
   | 'pgnStudy';
 
-export type MenuOption = 'mode' | 'boardMarkers' | 'viewLog' | 'difficulty' | 'reset' | 'exit';
+export type MenuOption = 'mode' | 'boardMarkers' | 'viewLog' | 'difficulty' | 'displayOptions' | 'reset' | 'exit';
+
+export type BoardAlignment = 'center' | 'right';
+export type BoardSize = 'small' | 'large';
 
 export type DrillType = 'coordinate' | 'tactics' | 'mate' | 'knightPath' | 'pgn';
 
@@ -130,6 +136,8 @@ export interface GameState {
   hasUnsavedChanges: boolean;
   previousPhase: UIPhase | null;
   difficulty: DifficultyLevel;
+  boardAlignment: BoardAlignment;
+  boardSize: BoardSize;
   logScrollOffset: number;
   /** For gesture disambiguation (see GESTURE_DISAMBIGUATION_MS in constants) */
   phaseEnteredAt: number;
@@ -166,6 +174,8 @@ export type Action =
   | { type: 'MARK_SAVED' }
   | { type: 'SET_DIFFICULTY'; level: DifficultyLevel }
   | { type: 'SET_BOARD_MARKERS'; enabled: boolean }
+  | { type: 'SET_BOARD_ALIGNMENT'; alignment: BoardAlignment }
+  | { type: 'SET_BOARD_SIZE'; size: BoardSize }
   | { type: 'SET_MODE'; mode: GameMode }
   | { type: 'START_BULLET_GAME'; timeControlIndex: number }
   | { type: 'TIMER_TICK' }
@@ -199,6 +209,8 @@ export function buildInitialState(chess: ChessService): GameState {
     hasUnsavedChanges: false,
     previousPhase: null,
     difficulty: 'casual',
+    boardAlignment: 'right',
+    boardSize: 'small',
     logScrollOffset: 0,
     phaseEnteredAt: Date.now(),
     timerActive: false,
