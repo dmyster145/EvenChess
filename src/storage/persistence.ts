@@ -1,5 +1,11 @@
 /**
- * Game state persistence using localStorage.
+ * Game state persistence.
+ *
+ * Uses an async storage adapter so the same code works in both local dev
+ * (browser localStorage) and the installed Even Hub app (SDK bridge storage).
+ * Call initPersistence() with bridge storage before loading any data.
+ *
+ * Each setting is stored under its own key to avoid read-modify-write races.
  */
 
 import type { DifficultyLevel, BoardAlignment, BoardSize } from '../state/contracts';
@@ -12,94 +18,85 @@ export interface SavedGame {
   savedAt: number;
 }
 
-const STORAGE_KEY = 'evenchess-save';
-const SETTINGS_KEY = 'evenchess-settings';
+const GAME_KEY         = 'evenchess-save';
+const DIFFICULTY_KEY   = 'evenchess-difficulty';
+const MARKERS_KEY      = 'evenchess-board-markers';
+const ALIGNMENT_KEY    = 'evenchess-board-alignment';
+const SIZE_KEY         = 'evenchess-board-size';
 
-interface Settings {
-  difficulty: DifficultyLevel;
-  showBoardMarkers?: boolean;
-  boardAlignment?: BoardAlignment;
-  boardSize?: BoardSize;
-}
+// --- Storage adapter ---
 
-function loadSettings(): Settings {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { difficulty: 'casual', showBoardMarkers: true, boardAlignment: 'right', boardSize: 'small' };
-    const settings = JSON.parse(raw) as Settings;
-    return {
-      difficulty: settings.difficulty ?? 'casual',
-      showBoardMarkers: settings.showBoardMarkers ?? true,
-      boardAlignment: settings.boardAlignment ?? 'right',
-      boardSize: settings.boardSize ?? 'small',
-    };
-  } catch (err) {
-    console.error('[Persistence] Failed to load settings:', err);
-    return { difficulty: 'casual', showBoardMarkers: true, boardAlignment: 'right', boardSize: 'small' };
+type StorageGetter = (key: string) => Promise<string | null>;
+type StorageSetter = (key: string, value: string) => Promise<void>;
+
+const browserGet: StorageGetter = async (key) => {
+  try { return localStorage.getItem(key); } catch { return null; }
+};
+const browserSet: StorageSetter = async (key, value) => {
+  try { localStorage.setItem(key, value); } catch (err) {
+    console.error('[Persistence] localStorage.setItem failed:', err);
   }
+};
+
+let _get: StorageGetter = browserGet;
+let _set: StorageSetter = browserSet;
+
+export function initPersistence(get: StorageGetter, set: StorageSetter): void {
+  _get = get;
+  _set = set;
 }
 
-function saveSettings(update: Partial<Settings>): void {
+// --- Public API ---
+
+export async function saveDifficulty(difficulty: DifficultyLevel): Promise<void> {
+  await _set(DIFFICULTY_KEY, difficulty);
+}
+
+export async function loadDifficulty(): Promise<DifficultyLevel> {
+  const value = await _get(DIFFICULTY_KEY);
+  return (value as DifficultyLevel | null) ?? 'casual';
+}
+
+export async function saveBoardMarkers(showBoardMarkers: boolean): Promise<void> {
+  await _set(MARKERS_KEY, showBoardMarkers ? '1' : '0');
+}
+
+export async function loadBoardMarkers(): Promise<boolean> {
+  const value = await _get(MARKERS_KEY);
+  return value === null ? true : value !== '0';
+}
+
+export async function saveBoardAlignment(boardAlignment: BoardAlignment): Promise<void> {
+  await _set(ALIGNMENT_KEY, boardAlignment);
+}
+
+export async function loadBoardAlignment(): Promise<BoardAlignment> {
+  const value = await _get(ALIGNMENT_KEY);
+  return (value as BoardAlignment | null) ?? 'right';
+}
+
+export async function saveBoardSize(boardSize: BoardSize): Promise<void> {
+  await _set(SIZE_KEY, boardSize);
+}
+
+export async function loadBoardSize(): Promise<BoardSize> {
+  const value = await _get(SIZE_KEY);
+  return (value as BoardSize | null) ?? 'small';
+}
+
+export async function saveGame(fen: string, history: string[], turn: 'w' | 'b', difficulty: DifficultyLevel = 'casual'): Promise<void> {
+  const saved: SavedGame = { fen, history, turn, difficulty, savedAt: Date.now() };
   try {
-    const current = loadSettings();
-    const merged: Settings = { ...current, ...update };
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
-  } catch (err) {
-    console.error('[Persistence] Failed to save settings:', err);
-  }
-}
-
-export function saveDifficulty(difficulty: DifficultyLevel): void {
-  saveSettings({ difficulty });
-}
-
-export function loadDifficulty(): DifficultyLevel {
-  return loadSettings().difficulty;
-}
-
-export function saveBoardMarkers(showBoardMarkers: boolean): void {
-  saveSettings({ showBoardMarkers });
-}
-
-export function loadBoardMarkers(): boolean {
-  return loadSettings().showBoardMarkers ?? true;
-}
-
-export function saveBoardAlignment(boardAlignment: BoardAlignment): void {
-  saveSettings({ boardAlignment });
-}
-
-export function loadBoardAlignment(): BoardAlignment {
-  return loadSettings().boardAlignment ?? 'right';
-}
-
-export function saveBoardSize(boardSize: BoardSize): void {
-  saveSettings({ boardSize });
-}
-
-export function loadBoardSize(): BoardSize {
-  return loadSettings().boardSize ?? 'small';
-}
-
-export function saveGame(fen: string, history: string[], turn: 'w' | 'b', difficulty: DifficultyLevel = 'casual'): void {
-  const saved: SavedGame = {
-    fen,
-    history,
-    turn,
-    difficulty,
-    savedAt: Date.now(),
-  };
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    await _set(GAME_KEY, JSON.stringify(saved));
     console.log('[Persistence] Game saved');
   } catch (err) {
     console.error('[Persistence] Failed to save game:', err);
   }
 }
 
-export function loadGame(): SavedGame | null {
+export async function loadGame(): Promise<SavedGame | null> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = await _get(GAME_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SavedGame;
     if (typeof parsed.fen !== 'string' || !Array.isArray(parsed.history)) {
@@ -116,20 +113,12 @@ export function loadGame(): SavedGame | null {
   }
 }
 
-export function clearSave(): void {
+export async function clearSave(): Promise<void> {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    // SDK bridge has no removeItem; empty string is treated as "no save" by loadGame.
+    await _set(GAME_KEY, '');
     console.log('[Persistence] Save cleared');
   } catch (err) {
     console.error('[Persistence] Failed to clear save:', err);
-  }
-}
-
-export function hasSavedGame(): boolean {
-  try {
-    return localStorage.getItem(STORAGE_KEY) !== null;
-  } catch (err) {
-    console.error('[Persistence] Failed to check for saved game:', err);
-    return false;
   }
 }

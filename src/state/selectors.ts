@@ -559,7 +559,14 @@ export function getPgnStudyDisplayText(state: GameState): string {
   return lines.join('\n');
 }
 
-export function getCombinedDisplayText(state: GameState): string {
+export type CombinedDisplayTextOptions = {
+  /** When false (text-first startup), avoid instructions that assume board images are on-screen. */
+  boardReady?: boolean;
+};
+
+export function getCombinedDisplayText(state: GameState, options?: CombinedDisplayTextOptions): string {
+  const boardReady = options?.boardReady !== false;
+
   switch (state.phase) {
     case 'menu':
       return getMenuDisplayText(state);
@@ -641,7 +648,7 @@ export function getCombinedDisplayText(state: GameState): string {
   switch (state.phase) {
     case 'idle':
       lines.push('');
-      lines.push(`Scroll to begin ${ARROW_UPDOWN}`);
+      lines.push(boardReady ? `Scroll to begin ${ARROW_UPDOWN}` : 'Preparing board…');
       break;
 
     case 'pieceSelect': {

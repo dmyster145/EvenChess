@@ -171,6 +171,7 @@ export class EvenHubBridge {
   private imageInterruptionListeners = new Set<(active: boolean) => void>();
   private consecutiveStallCount = 0;
   private consecutiveNonOkSendCount = 0;
+  private postResetGraceSends = 0;
   private lastSuccessfulImageSendAtMs = 0;
 
   private inFlightImageWatchdog: ReturnType<typeof setTimeout> | null = null;
@@ -196,6 +197,30 @@ export class EvenHubBridge {
       console.warn('[EvenHubBridge] Bridge init failed (running outside Even Hub?):', err);
       this.bridge = null;
     }
+  }
+
+  async storageGet(key: string): Promise<string | null> {
+    if (this.bridge) {
+      try {
+        const value = await this.bridge.getLocalStorage(key);
+        return value === '' ? null : value;
+      } catch (err) {
+        console.warn('[EvenHubBridge] storageGet failed, falling back to localStorage:', err);
+      }
+    }
+    try { return localStorage.getItem(key); } catch { return null; }
+  }
+
+  async storageSet(key: string, value: string): Promise<void> {
+    if (this.bridge) {
+      try {
+        await this.bridge.setLocalStorage(key, value);
+        return;
+      } catch (err) {
+        console.warn('[EvenHubBridge] storageSet failed, falling back to localStorage:', err);
+      }
+    }
+    try { localStorage.setItem(key, value); } catch { /* ignore */ }
   }
 
   async setupPage(container: CreateStartUpPageContainer): Promise<boolean> {
@@ -239,8 +264,10 @@ export class EvenHubBridge {
     if (!this.bridge) return false;
     const key = `${containerID}:${containerName}`;
     if (this.lastSentTextByKey.get(key) === content && !this.textQueue.has(key) && this.inFlightTextUpdate?.key !== key) {
+      console.log(`[Sync] bridge.updateText DEDUP key=${key} preview=${JSON.stringify(content.slice(0, 50))}`);
       return true;
     }
+    console.log(`[Sync] bridge.updateText QUEUE key=${key} blocked=${this.textSendBlocked} interrupted=${this.imageInterrupted} preview=${JSON.stringify(content.slice(0, 50))}`);
     if (this.inFlightTextUpdate?.key === key && this.inFlightTextUpdate.content === content) {
       return true;
     }
@@ -386,6 +413,7 @@ export class EvenHubBridge {
     // Caller is forcing a fresh start regardless of current queue state.
     this.consecutiveNonOkSendCount = 0;
     const inFlight = this.inFlightImage;
+    console.log(`[Sync] forceResetImageTransport reason=${reason} inFlight=${!!inFlight} sending=${this.isSendingImage} wedged=${this.imageSendWedged} interrupted=${this.imageInterrupted} qDepth=${this.getImageQueueDepth()} lastSentTextKeys=${this.lastSentTextByKey.size}`);
     if (
       this.getImageQueueDepth() <= 0 &&
       !inFlight &&
@@ -415,9 +443,15 @@ export class EvenHubBridge {
     }
     this.textSendBlocked = false;
     this.inFlightTextUpdate = null;
+    // Clear the dedup cache so the next updateText re-sends even if the content
+    // matches what was last acknowledged — the device may not have displayed it.
+    this.lastSentTextByKey.clear();
     this.setImageSendWedged(false, `force-reset:${reason}`);
     this.setImageInterrupted(false, `force-reset:${reason}`);
     this.setImageSurvivalMode(false, `force-reset:${reason}`);
+    // Allow the first few post-reset sends to be slow without re-triggering interruption.
+    // BLE often needs a warm-up send after resume from system dialogs.
+    this.postResetGraceSends = 2;
     if (this.textQueue.size > 0) {
       void this.processTextQueue();
     }
@@ -914,11 +948,17 @@ export class EvenHubBridge {
     const slowTotal = totalMs >= IMAGE_INTERRUPTION_TRIGGER_TOTAL_MS;
 
     if (slowSend || slowTotal) {
+      if (this.postResetGraceSends > 0) {
+        this.postResetGraceSends -= 1;
+        this.updateSurvivalMode();
+        return;
+      }
       this.imageInterruptedRecoveryGoodSends = 0;
       this.setImageInterrupted(true, slowSend ? 'slow-send' : 'slow-total');
       this.updateSurvivalMode();
       return;
     }
+    this.postResetGraceSends = 0;
 
     if (!this.imageInterrupted) {
       this.updateSurvivalMode();

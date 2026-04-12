@@ -17,10 +17,11 @@ import { ChessService } from './chess/chessservice';
 import { Chess } from 'chess.js';
 import { createStore } from './state/store';
 import { buildInitialState } from './state/contracts';
-import type { GameState, MenuOption } from './state/contracts';
+import type { GameState } from './state/contracts';
 import { mapEvenHubEvent, extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from './input/actions';
 import {
   composeStartupPage,
+  composeTextOnlyStartupPage,
   composePageForState,
   CONTAINER_ID_TEXT,
   CONTAINER_NAME_TEXT,
@@ -33,9 +34,8 @@ import { renderBrandingImage, renderCheckBrandingImage, renderCheckmateBrandingI
 import { EvenHubBridge } from './evenhub/bridge';
 import { TurnLoop } from './engine/turnloop';
 import { PROFILE_BY_DIFFICULTY } from './engine/profiles';
-import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoardMarkers, loadBoardMarkers, saveBoardAlignment, loadBoardAlignment, saveBoardSize, loadBoardSize } from './storage/persistence';
+import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoardMarkers, loadBoardMarkers, saveBoardAlignment, loadBoardAlignment, saveBoardSize, loadBoardSize, initPersistence } from './storage/persistence';
 import { ImageRawDataUpdate, OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
-import { MENU_OPTIONS } from './state/constants';
 import { STARTING_FEN } from './academy/pgn';
 import { moveCursorAxis } from './academy/drills';
 import { getFileIndex, getRankIndex } from './chess/square-utils';
@@ -43,7 +43,7 @@ import { perfLogLazyIfEnabled } from './perf/log';
 import { getLastPerfDispatchTrace, recordPerfDispatch } from './perf/dispatch-trace';
 import type { Action } from './state/contracts';
 import { debugLog, attachDebugCopyApi, markRunStart } from './debug/logger';
-import { activateKeepAlive, isKeepAliveActive, deactivateKeepAlive } from './utils/keep-alive';
+import { activateKeepAlive, isKeepAliveActive } from './utils/keep-alive';
 
 type BoardImageSendMeta = {
   kind?: 'board' | 'branding' | 'other';
@@ -128,20 +128,31 @@ function getPgnPositionFen(_chess: ChessService, moves: string[]): string {
   return tempChess.fen();
 }
 
-let storeUnsubscribe: (() => void) | null = null;
 let pendingUpdateTimeout: ReturnType<typeof setTimeout> | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let pendingRecoveryRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+let pendingBoardSendRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 export async function initApp(): Promise<void> {
   const chess = new ChessService();
 
-  const persistedDifficulty = loadDifficulty();
-  const persistedBoardMarkers = loadBoardMarkers();
-  const persistedBoardAlignment = loadBoardAlignment();
-  const persistedBoardSize = loadBoardSize();
-  const savedGame = loadGame();
+  // Init bridge first so storageGet/storageSet use SDK-backed persistence in the installed app.
+  // Falls back to localStorage when running outside Even Hub (local dev via QR code).
+  const hub = new EvenHubBridge();
+  await hub.init();
+  initPersistence(
+    (key) => hub.storageGet(key),
+    (key, value) => hub.storageSet(key, value),
+  );
+
+  const [persistedDifficulty, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, savedGame] = await Promise.all([
+    loadDifficulty(),
+    loadBoardMarkers(),
+    loadBoardAlignment(),
+    loadBoardSize(),
+    loadGame(),
+  ]);
 
   let initialState = buildInitialState(chess);
   initialState = { ...initialState, difficulty: persistedDifficulty, showBoardMarkers: persistedBoardMarkers, boardAlignment: persistedBoardAlignment, boardSize: persistedBoardSize };
@@ -154,7 +165,7 @@ export async function initApp(): Promise<void> {
         // Finished games are a poor resume experience and can confuse startup branding/state restoration.
         console.log('[EvenChess] Saved game was checkmate; starting a new game instead.');
         chess.reset();
-        clearSave();
+        void clearSave();
       } else {
         initialState = {
           ...initialState,
@@ -173,7 +184,6 @@ export async function initApp(): Promise<void> {
   }
 
   const store = createStore(initialState);
-  const hub = new EvenHubBridge();
   let boardRenderer = new BoardRenderer({ largeGrid: initialState.boardSize === 'large' });
   let boardRefillRenderer = new BoardRenderer({ largeGrid: initialState.boardSize === 'large' });
   const initialProfile = PROFILE_BY_DIFFICULTY[initialState.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
@@ -189,11 +199,17 @@ export async function initApp(): Promise<void> {
   let perfLastInputLabel = '';
   let startupFlushArmed = false;
   let startupPendingFlush = false;
+  let imageContainersActive = false;
+  let upgradeToFullLayoutPending = false;
 
   // G2 image transport can take seconds; prevent overlapping flushes and replay only the newest state afterward.
   let flushInProgress = false;
   let pendingFlushState: GameState | null = null;
   let forceNextDisplayRefresh = false;
+  // Set when board image was skipped due to queue busy; causes next flush to treat board as changed.
+  let boardSendPendingRetry = false;
+  let lastSentState = store.getState();
+  let lastSentText = '';
 
   // Autosave is deferred so localStorage writes and MARK_SAVED state churn do not compete with board-image sends.
   const AUTOSAVE_IDLE_DELAY_MS = 180;
@@ -202,7 +218,7 @@ export async function initApp(): Promise<void> {
   let lastQueuedBrandingMode: BrandingMode = 'normal';
   let pendingBrandingMode: BrandingMode | null = null;
   let forceNextBrandingRefresh = false;
-  let exitInProgress = false;
+  const exitInProgress = false;
   let transportHangProbe: ReturnType<typeof setTimeout> | null = null;
   let transportHangProbeSeq = 0;
   let visibilityListener: (() => void) | null = null;
@@ -230,6 +246,7 @@ export async function initApp(): Promise<void> {
     return 0;
   })();
   let recentHangRecoveryTimestamps: number[] = [];
+  let pendingForegroundRecovery = false;
   let earlyShutdownFiredAtMs = 0;
   let earlyShutdownSettled = false;
   let earlyShutdownInFlight = false;
@@ -302,6 +319,7 @@ export async function initApp(): Promise<void> {
   }
 
   function sendBrandingMode(mode: BrandingMode): void {
+    if (!imageContainersActive) return;
     pendingBrandingMode = null;
     lastQueuedBrandingMode = mode;
     hub.updateBoardImage(renderBrandingMode(mode), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) => {
@@ -311,6 +329,7 @@ export async function initApp(): Promise<void> {
   }
 
   function trySyncBrandingMode(state: GameState): void {
+    if (!imageContainersActive) return;
     const desiredMode = desiredBrandingModeForState(state);
     const brandingHealth = hub.getBoardSendHealth();
     // Branding is non-critical compared with board images. We only suppress entering CHECK! while the link is busy/degraded.
@@ -374,16 +393,16 @@ export async function initApp(): Promise<void> {
     scheduleDeferredAutosave();
   }
 
-  function flushDeferredAutosave(options?: { dispatchMarkSaved?: boolean }): void {
+  function flushDeferredAutosave(options?: { dispatchMarkSaved?: boolean; force?: boolean }): void {
     const snapshot = pendingAutosaveSnapshot;
     if (!snapshot) return;
-    if (flushInProgress || pendingFlushState || hub.hasPendingBoardImageWork()) {
+    if (!options?.force && (flushInProgress || pendingFlushState || hub.hasPendingBoardImageWork())) {
       scheduleDeferredAutosave(120);
       return;
     }
 
     pendingAutosaveSnapshot = null;
-    saveGame(snapshot.fen, snapshot.history, snapshot.turn, snapshot.difficulty);
+    void saveGame(snapshot.fen, snapshot.history, snapshot.turn, snapshot.difficulty);
 
     if (options?.dispatchMarkSaved === false) return;
 
@@ -510,7 +529,9 @@ export async function initApp(): Promise<void> {
       await hub.init();
       hub.subscribeEvents(handleHubEvent);
 
-      const startupPage = composeStartupPage(store.getState());
+      const startupPage = imageContainersActive
+        ? composeStartupPage(store.getState())
+        : composeTextOnlyStartupPage(store.getState());
       const setupOk = await Promise.race<boolean>([
         hub.setupPage(startupPage),
         new Promise<boolean>((resolve) => setTimeout(() => resolve(false), BRIDGE_REINIT_SETUP_PAGE_TIMEOUT_MS)),
@@ -551,7 +572,9 @@ export async function initApp(): Promise<void> {
       clearReloadCountPersistence();
       consecutiveForceResetsWithNoSends = 0;
       recentHangRecoveryTimestamps = [];
-      await sendInitialDisplaySnapshot(store.getState());
+      if (imageContainersActive) {
+        await sendInitialDisplaySnapshot(store.getState());
+      }
       forceNextDisplayRefresh = true;
       latestState = store.getState();
       scheduleDisplayFlush();
@@ -630,6 +653,31 @@ export async function initApp(): Promise<void> {
     }, FLUSH_TRANSPORT_ONLY_HANG_PROBE_MS);
   }
 
+  /** Lightweight hang probe: only resets transport + forces refresh. No shutdown, no reinit. */
+  function armLightweightHangProbe(reason: string): void {
+    if (transportHangProbe || exitInProgress || bridgeReinitInProgress) return;
+    const probeSeq = transportHangProbeSeq;
+    transportHangProbe = setTimeout(() => {
+      if (probeSeq !== transportHangProbeSeq) return;
+      transportHangProbe = null;
+      const transport = hub.getImageTransportSnapshot();
+      const blockedByAppFlow = exitInProgress || bridgeReinitInProgress;
+      const stuckByAge =
+        transport.hasInFlight && transport.inFlightAgeMs >= FLUSH_TRANSPORT_ONLY_HANG_MIN_INFLIGHT_AGE_MS;
+      if (!blockedByAppFlow && (transport.wedged || stuckByAge)) {
+        hub.forceResetImageTransport(`lightweight-${reason}`);
+        forceNextDisplayRefresh = true;
+        forceNextBrandingRefresh = true;
+        latestState = store.getState();
+        scheduleDisplayFlush();
+      }
+      // Re-arm if still interrupted
+      if (!blockedByAppFlow && transport.busy) {
+        armLightweightHangProbe(reason);
+      }
+    }, FLUSH_TRANSPORT_ONLY_HANG_PROBE_MS);
+  }
+
   function startHeartbeat(): void {
     if (heartbeatTimer || !SUSPENSION_GUARD_ENABLED) return;
     lastHeartbeatAtMs = perfNowMs();
@@ -664,12 +712,6 @@ export async function initApp(): Promise<void> {
     }, HEARTBEAT_INTERVAL_MS);
   }
 
-  function stopHeartbeat(): void {
-    if (!heartbeatTimer) return;
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-
   function setupVisibilityListener(): void {
     if (!SUSPENSION_GUARD_ENABLED || typeof document === 'undefined' || visibilityListener) return;
     const onVisibilityChange = (): void => {
@@ -683,20 +725,24 @@ export async function initApp(): Promise<void> {
     visibilityListener = () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }
 
-  function teardownVisibilityListener(): void {
-    visibilityListener?.();
-    visibilityListener = null;
-  }
-
-  function triggerForegroundEnterRecoveryRefresh(source: 'foreground-enter' | 'visibility-visible'): void {
+  function triggerForegroundEnterRecoveryRefresh(source: 'foreground-enter' | 'visibility-visible' | 'input-after-suspend'): void {
     if (pendingRecoveryRefreshTimeout) return;
+    // Reset transport BEFORE notifying the lifecycle event so the bridge
+    // doesn't resume draining stale images that would desync with the
+    // recovery text/board flush that follows.
+    if (imageContainersActive) {
+      const transport = hub.getImageTransportSnapshot();
+      const needsReset = transport.wedged || transport.interrupted || transport.busy;
+      console.log(`[Sync] recovery source=${source} wedged=${transport.wedged} interrupted=${transport.interrupted} busy=${transport.busy} needsReset=${needsReset}`);
+      debugLog('recovery-enter', { source, wedged: transport.wedged, interrupted: transport.interrupted, busy: transport.busy, needsReset });
+      if (needsReset) {
+        hub.forceResetImageTransport(`recovery-${source}`);
+      }
+    }
     hub.notifySystemLifecycleEvent('foreground-enter');
     refreshSuccessfulSendCounters();
     if (SUSPENSION_GUARD_ENABLED) {
       const transport = hub.getImageTransportSnapshot();
-      if (transport.wedged || transport.interrupted) {
-        hub.forceResetImageTransport(`visibility-recovery-${source}`);
-      }
       const recentRecoveryCount = recentHangRecoveryTimestamps.filter(
         (ts) => perfNowMs() - ts < VISIBILITY_RECENT_RECOVERY_WINDOW_MS,
       ).length;
@@ -732,16 +778,23 @@ export async function initApp(): Promise<void> {
 
     if (rawType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
       hub.notifySystemLifecycleEvent('foreground-exit');
+      pendingForegroundRecovery = true;
+      // Flush any pending autosave immediately — the OS may kill the app before the deferred timer fires.
+      flushDeferredAutosave({ dispatchMarkSaved: false, force: true });
       return;
     }
 
     const abnormalExitType = (OsEventTypeList as unknown as { ABNORMAL_EXIT_EVENT?: number }).ABNORMAL_EXIT_EVENT;
     if (typeof abnormalExitType === 'number' && rawType === abnormalExitType) {
       hub.notifySystemLifecycleEvent('abnormal-exit');
+      pendingForegroundRecovery = true;
+      // Flush any pending autosave immediately on abnormal exit.
+      flushDeferredAutosave({ dispatchMarkSaved: false, force: true });
       return;
     }
 
     if (rawType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
+      pendingForegroundRecovery = false;
       triggerForegroundEnterRecoveryRefresh('foreground-enter');
     }
   }
@@ -751,6 +804,13 @@ export async function initApp(): Promise<void> {
     const eventReceivedAtMs = perfNowMs();
     const action = mapEvenHubEvent(event, store.getState());
     if (action) {
+      if (!imageContainersActive) {
+        void upgradeToFullLayout('user-input');
+      }
+      if (pendingForegroundRecovery) {
+        pendingForegroundRecovery = false;
+        triggerForegroundEnterRecoveryRefresh('input-after-suspend');
+      }
       if (SUSPENSION_GUARD_ENABLED && !isKeepAliveActive()) {
         activateKeepAlive();
       }
@@ -788,7 +848,7 @@ export async function initApp(): Promise<void> {
     }, DISPLAY_DEBOUNCE_MS);
   }
 
-  storeUnsubscribe = store.subscribe((state, prevState) => {
+  store.subscribe((state, prevState) => {
     latestState = state;
 
     // Execute pending move immediately (not debounced)
@@ -815,40 +875,44 @@ export async function initApp(): Promise<void> {
     if (state.difficulty !== prevState.difficulty) {
       const profile = PROFILE_BY_DIFFICULTY[state.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
       turnLoop.setProfile(profile);
-      saveDifficulty(state.difficulty);
+      void saveDifficulty(state.difficulty);
       if (state.history.length > 0) {
-        saveGame(state.fen, state.history, state.turn, state.difficulty);
+        void saveGame(state.fen, state.history, state.turn, state.difficulty);
       }
       console.log('[EvenChess] Difficulty changed to:', state.difficulty);
     }
 
     if (state.showBoardMarkers !== prevState.showBoardMarkers) {
-      saveBoardMarkers(state.showBoardMarkers);
+      void saveBoardMarkers(state.showBoardMarkers);
       console.log('[EvenChess] Board markers changed to:', state.showBoardMarkers ? 'on' : 'off');
     }
 
     if (state.boardSize !== prevState.boardSize) {
-      saveBoardSize(state.boardSize);
+      void saveBoardSize(state.boardSize);
       boardRenderer = new BoardRenderer({ largeGrid: state.boardSize === 'large' });
       boardRefillRenderer = new BoardRenderer({ largeGrid: state.boardSize === 'large' });
-      const page = composePageForState(state);
-      void hub.updatePage(page);
+      if (imageContainersActive) {
+        const page = composePageForState(state);
+        void hub.updatePage(page);
+      }
       forceNextDisplayRefresh = true;
       forceNextBrandingRefresh = true;
       console.log('[EvenChess] Board size changed to:', state.boardSize);
     }
 
     if (state.boardAlignment !== prevState.boardAlignment) {
-      saveBoardAlignment(state.boardAlignment);
-      const page = composePageForState(state);
-      void hub.updatePage(page);
+      void saveBoardAlignment(state.boardAlignment);
+      if (imageContainersActive) {
+        const page = composePageForState(state);
+        void hub.updatePage(page);
+      }
       forceNextDisplayRefresh = true;
       forceNextBrandingRefresh = true;
       console.log('[EvenChess] Board alignment changed to:', state.boardAlignment);
     }
 
     // Rebuild page when entering/exiting viewLog in center alignment (board position shifts)
-    if (state.boardAlignment === 'center' &&
+    if (imageContainersActive && state.boardAlignment === 'center' &&
         (state.phase === 'viewLog') !== (prevState.phase === 'viewLog')) {
       const page = composePageForState(state);
       void hub.updatePage(page);
@@ -874,7 +938,7 @@ export async function initApp(): Promise<void> {
     // Branding is synced to desired state (normal/check/checkmate); non-critical updates may be deferred while busy.
     trySyncBrandingMode(state);
 
-    handleMenuSideEffects(state, prevState, chess, hub);
+    handleMenuSideEffects(state, prevState, chess);
 
     // Bullet mode timer
     if (state.mode === 'bullet' && state.timerActive && !timerInterval) {
@@ -891,11 +955,17 @@ export async function initApp(): Promise<void> {
   });
 
   hub.subscribeImageInterruption((active) => {
+    if (!imageContainersActive) return;
     if (active) {
+      if (!SUSPENSION_GUARD_ENABLED) {
+        // Lightweight recovery: detect wedged transport without aggressive shutdown/reinit.
+        armLightweightHangProbe('image-interruption');
+        return;
+      }
       const recentRecoveryCount = recentHangRecoveryTimestamps.filter(
         (ts) => perfNowMs() - ts < VISIBILITY_RECENT_RECOVERY_WINDOW_MS,
       ).length;
-      if (SUSPENSION_GUARD_ENABLED && recentRecoveryCount > 0 && !bridgeReinitInProgress && !exitInProgress) {
+      if (recentRecoveryCount > 0 && !bridgeReinitInProgress && !exitInProgress) {
         fireEarlyShutdown('interrupt-after-recent-recovery');
         void attemptBridgeReinit('interrupt-after-recent-recovery');
         return;
@@ -910,15 +980,46 @@ export async function initApp(): Promise<void> {
     scheduleDisplayFlush();
   });
 
+  async function upgradeToFullLayout(trigger: string): Promise<void> {
+    if (imageContainersActive || upgradeToFullLayoutPending || bridgeReinitInProgress) return;
+    upgradeToFullLayoutPending = true;
+    console.log(`[EvenChess] Upgrading to full layout (trigger: ${trigger})`);
+    try {
+      void preloadBrandingImages();
+      const state = store.getState();
+      const page = composePageForState(state);
+      await hub.updatePage(page);
+      imageContainersActive = true;
+      upgradeToFullLayoutPending = false;
+      // Re-send branding immediately so it doesn't vanish while board images transfer.
+      const mode = desiredBrandingModeForState(state);
+      lastQueuedBrandingMode = mode;
+      pendingBrandingMode = null;
+      await hub.updateBoardImage(renderBrandingMode(mode), { priority: 'high', kind: 'branding', interruptProtected: true });
+      // Send full board snapshot for the current state.
+      latestState = store.getState();
+      await sendInitialDisplaySnapshot(latestState);
+      // Sync tracking state so the next user-driven flush doesn't trigger an unnecessary
+      // recovery re-send that congests the queue and causes the next swipe's images to be skipped.
+      lastSentState = latestState;
+      // Force text re-send at the new (narrower) container width, but skip image recovery.
+      lastSentText = '';
+      scheduleDisplayFlush();
+      console.log('[EvenChess] Full layout active');
+    } catch (err) {
+      console.error('[EvenChess] Full layout upgrade error:', err);
+      upgradeToFullLayoutPending = false;
+    }
+  }
+
   try {
-    // Only block first paint on hub; engine init runs in background (fallback moves until ready).
-    // Store + input subscriptions are already installed, but startupFlushArmed keeps runtime flushes from racing startup paint.
-    void preloadBrandingImages(); // start PNG encoding in parallel with hub init
+    // Text-first startup: only text containers on the critical path.
+    // Image containers are deferred until first user interaction proves BLE link is live.
     await hub.init();
     hub.subscribeEvents(handleHubEvent);
     void turnLoop.init();
 
-    const startupPage = composeStartupPage(store.getState());
+    const startupPage = composeTextOnlyStartupPage(store.getState());
     const setupOk = await Promise.race<boolean>([
       hub.setupPage(startupPage),
       new Promise<boolean>((resolve) => setTimeout(() => resolve(false), BRIDGE_REINIT_SETUP_PAGE_TIMEOUT_MS)),
@@ -933,29 +1034,35 @@ export async function initApp(): Promise<void> {
       return;
     }
 
-    // Keep startup fast: render immediately in parallel with setupPage, then re-check state before send.
-    const renderState = store.getState();
-    let initialImages = boardRenderer.renderFull(renderState, chess);
-
-    const latestBeforeInitialSend = store.getState();
-    latestState = latestBeforeInitialSend;
-    if (latestBeforeInitialSend !== renderState) {
-      // Early input can change selection/menu state during startup. Re-render so the first frame matches latest state.
-      initialImages = boardRenderer.renderFull(latestBeforeInitialSend, chess);
-    }
-
-    console.log('[EvenChess] Sending initial board images:', initialImages.length);
-    // Queue both halves immediately after page setup; SDK still serializes transfer, but this removes extra app-side handoff delay.
-    await hub.updateBoardImages(initialImages, { kind: 'board', priority: 'high', interruptProtected: true });
+    // Text-first: send text + branding. Board images deferred until upgradeToFullLayout().
+    void preloadBrandingImages();
+    latestState = store.getState();
+    const text = getCombinedDisplayText(latestState, { boardReady: false });
+    await hub.updateText(CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT, text);
+    lastSentText = text;
     hub.updateBoardImage(renderBrandingImage(), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) =>
-      console.error('[EvenChess] Branding image failed:', err),
+      console.error('[EvenChess] Startup branding image failed:', err),
     );
+    // Auto-upgrade to full layout once the text-first frame is on screen.
+    void upgradeToFullLayout('startup-auto');
   } catch (err) {
     console.error('[EvenChess] Initialization failed:', err);
   } finally {
     if (SUSPENSION_GUARD_ENABLED) {
       setupVisibilityListener();
       startHeartbeat();
+    }
+    // Unconditional visibility listener: handles both text-first upgrade and recovery after system dialogs.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          if (!imageContainersActive) {
+            void upgradeToFullLayout('visibility-visible');
+          } else {
+            triggerForegroundEnterRecoveryRefresh('visibility-visible');
+          }
+        }
+      });
     }
     startupFlushArmed = true;
     if (startupPendingFlush) {
@@ -969,19 +1076,10 @@ export async function initApp(): Promise<void> {
     state: GameState,
     prevState: GameState,
     chess: ChessService,
-    hub: EvenHubBridge
   ): void {
-    if (prevState.phase === 'menu' && state.phase !== 'menu') {
-      const selectedOption = getMenuOptionFromIndex(prevState.menuSelectedIndex);
-
-      if (selectedOption === 'exit' && !prevState.hasUnsavedChanges) {
-        void shutdownApp(hub);
-      }
-    }
-
     if (prevState.phase === 'resetConfirm' && state.phase === 'idle') {
       chess.reset();
-      clearSave();
+      void clearSave();
       dispatchWithPerfSource('app', { type: 'NEW_GAME' });
       dispatchWithPerfSource('app', {
         type: 'REFRESH',
@@ -1006,66 +1104,7 @@ export async function initApp(): Promise<void> {
       });
     }
 
-    if (prevState.phase === 'exitConfirm' && state.phase === 'idle') {
-      if (prevState.hasUnsavedChanges && !state.hasUnsavedChanges) {
-        clearDeferredAutosave();
-        saveGame(state.fen, state.history, state.turn, state.difficulty);
-        console.log('[EvenChess] Game saved before exit');
-      }
-      void shutdownApp(hub);
-    }
   }
-
-  function getMenuOptionFromIndex(index: number): MenuOption {
-    return MENU_OPTIONS[index] ?? 'viewLog';
-  }
-
-  async function shutdownApp(hub: EvenHubBridge): Promise<void> {
-    if (exitInProgress) return;
-    exitInProgress = true;
-    console.log('[EvenChess] Shutting down...');
-    startupFlushArmed = false;
-    startupPendingFlush = false;
-    stopHeartbeat();
-    teardownVisibilityListener();
-    clearTransportHangProbe();
-    deactivateKeepAlive();
-
-    if (storeUnsubscribe) {
-      storeUnsubscribe();
-      storeUnsubscribe = null;
-    }
-    if (pendingUpdateTimeout) {
-      clearTimeout(pendingUpdateTimeout);
-      pendingUpdateTimeout = null;
-    }
-    if (timerInterval) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-    }
-    if (pendingAutosaveTimeout) {
-      clearTimeout(pendingAutosaveTimeout);
-      pendingAutosaveTimeout = null;
-    }
-    if (pendingRecoveryRefreshTimeout) {
-      clearTimeout(pendingRecoveryRefreshTimeout);
-      pendingRecoveryRefreshTimeout = null;
-    }
-    flushDeferredAutosave({ dispatchMarkSaved: false });
-
-    turnLoop.destroy();
-
-    try {
-      await hub.shutdown();
-    } catch (err) {
-      console.error('[EvenChess] Shutdown error:', err);
-    } finally {
-      exitInProgress = false;
-    }
-  }
-
-  let lastSentState = store.getState();
-  let lastSentText = '';
 
   /** Speculative cache: pre-rendered next/prev selection so scrolls can reuse already-encoded halves. */
   function boardCacheKey(s: GameState): string {
@@ -1274,6 +1313,7 @@ export async function initApp(): Promise<void> {
       const state = latestState;
       const prev = lastSentState;
       const forceRecoveryRefresh = forceNextDisplayRefresh;
+      console.log(`[Sync] flush phase=${state.phase} fen=${state.fen.slice(0,20)} pieceId=${state.selectedPieceId ?? 'none'} moveIdx=${state.selectedMoveIndex} force=${forceRecoveryRefresh} imgActive=${imageContainersActive}`);
       const flushStartedAtMs = perfNowMs();
       const perfInputAtMs = perfLastInputAtMs;
       const perfInputSeq = perfLastInputSeq;
@@ -1338,6 +1378,7 @@ export async function initApp(): Promise<void> {
         state.academyState?.pgnStudy?.gameName !== prev.academyState?.pgnStudy?.gameName
       );
       const boardMayHaveChanged =
+        boardSendPendingRetry ||
         forceRecoveryRefresh ||
         state.fen !== prev.fen ||
         state.showBoardMarkers !== prev.showBoardMarkers ||
@@ -1346,8 +1387,11 @@ export async function initApp(): Promise<void> {
         state.phase !== prev.phase ||
         drillCursorChanged;
 
-      const text = getCombinedDisplayText(state);
+      const text = getCombinedDisplayText(state, { boardReady: imageContainersActive });
       let textPromise: Promise<boolean> | undefined;
+      const textChanged_reason = forceRecoveryRefresh ? 'force' : text !== lastSentText ? 'changed' : 'skip';
+      console.log(`[Sync] text reason=${textChanged_reason} phase=${state.phase} preview=${JSON.stringify(text.slice(0,60))}`);
+      debugLog('flush-text', { reason: textChanged_reason, phase: state.phase, preview: text.slice(0, 60) });
       if (forceRecoveryRefresh || text !== lastSentText) {
         lastSentText = text;
         textChanged = true;
@@ -1355,6 +1399,7 @@ export async function initApp(): Promise<void> {
         textPromise = hub.updateText(CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT, text).then(
           (result) => {
             perfTextSendMs = perfNowMs() - textSendStartedAtMs;
+            console.log(`[Sync] text send result=${result} ms=${perfTextSendMs.toFixed(0)}`);
             // #region agent log
             debugLog('flush text sent', { sendMs: perfTextSendMs }, 'H4b');
             // #endregion
@@ -1368,7 +1413,25 @@ export async function initApp(): Promise<void> {
       }
 
       try {
-        const imagePromise = boardMayHaveChanged
+        // Check queue depth synchronously before going async, so we can set boardSendPendingRetry
+        // before lastSentState is updated — ensures next flush retries the board image.
+        const queueDepthBeforeSend = hub.getImageQueueDepth();
+        const skipImageDueToQueueBusy = boardMayHaveChanged && imageContainersActive && queueDepthBeforeSend > 0 && !forceRecoveryRefresh;
+        if (skipImageDueToQueueBusy) {
+          boardSendPendingRetry = true;
+          // Schedule a retry flush after the queue likely drains so the board catches up even if user is idle.
+          if (!pendingBoardSendRetryTimeout) {
+            pendingBoardSendRetryTimeout = setTimeout(() => {
+              pendingBoardSendRetryTimeout = null;
+              latestState = store.getState();
+              scheduleDisplayFlush();
+            }, 2500);
+          }
+        }
+        const imageSkipped = !boardMayHaveChanged || !imageContainersActive || skipImageDueToQueueBusy;
+        console.log(`[Sync] image skip=${imageSkipped} boardChanged=${boardMayHaveChanged} imgActive=${imageContainersActive} queueBusy=${skipImageDueToQueueBusy} phase=${state.phase} pieceId=${state.selectedPieceId ?? 'none'} moveIdx=${state.selectedMoveIndex}`);
+        debugLog('flush-image', { skip: imageSkipped, boardChanged: boardMayHaveChanged, phase: state.phase, pieceId: state.selectedPieceId ?? 'none', moveIdx: state.selectedMoveIndex });
+        const imagePromise = boardMayHaveChanged && imageContainersActive && !skipImageDueToQueueBusy
           ? (async () => {
               const imageBuildStartedAtMs = perfNowMs();
               let dirtyImages: ImageRawDataUpdate[];
@@ -1474,15 +1537,13 @@ export async function initApp(): Promise<void> {
               const boardLinkDegraded = boardSendHealth.degraded;
               perfLinkState = boardLinkDegraded ? 'degraded' : 'healthy';
               perfBoardBusyState = boardSendHealth.boardBusy ? 'y' : 'n';
-              // When queue already has unsent images, do not enqueue more: avoids out-of-order delivery
-              // (double X when selection moves top half → bottom half) and queue buildup that can freeze the app.
-              const queueDepth = hub.getImageQueueDepth();
-              if (queueDepth > 0 && !forceRecoveryRefresh) {
-                perfImageSendMs = 0;
-                // #region agent log
-                debugLog('flush images skipped (queue busy)', { queueDepth, imageCount: dirtyImages.length }, 'H4b');
-                // #endregion
-              } else {
+              // Queue depth was already checked synchronously before this async closure.
+              // Clear the pending retry since we're about to send.
+              boardSendPendingRetry = false;
+              if (pendingBoardSendRetryTimeout !== null) {
+                clearTimeout(pendingBoardSendRetryTimeout);
+                pendingBoardSendRetryTimeout = null;
+              }
               const boardSendMeta: BoardImageSendMeta = forceRecoveryRefresh
                 ? { kind: 'board', priority: 'high', interruptProtected: true }
                 : { kind: 'board', interruptProtected: true };
@@ -1544,7 +1605,6 @@ export async function initApp(): Promise<void> {
               // #region agent log
               debugLog('flush images sent', { sendMs: perfImageSendMs }, 'H4b');
               // #endregion
-              }
             })()
           : Promise.resolve();
 

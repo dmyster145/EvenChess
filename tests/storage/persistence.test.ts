@@ -1,47 +1,37 @@
 /**
  * Unit tests for game persistence and settings storage.
- * Uses mocked localStorage for testing.
+ * Uses mocked localStorage for testing (default browser adapter).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   saveGame,
   loadGame,
   clearSave,
-  hasSavedGame,
   saveDifficulty,
   loadDifficulty,
   saveBoardMarkers,
   loadBoardMarkers,
+  saveBoardAlignment,
+  loadBoardAlignment,
+  saveBoardSize,
+  loadBoardSize,
 } from '../../src/storage/persistence';
 
-// Mock localStorage
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
   return {
     getItem: vi.fn((key: string) => store[key] ?? null),
-    setItem: vi.fn((key: string, value: string) => {
-      store[key] = value;
-    }),
-    removeItem: vi.fn((key: string) => {
-      delete store[key];
-    }),
-    clear: vi.fn(() => {
-      store = {};
-    }),
-    get length() {
-      return Object.keys(store).length;
-    },
+    setItem: vi.fn((key: string, value: string) => { store[key] = value; }),
+    removeItem: vi.fn((key: string) => { delete store[key]; }),
+    clear: vi.fn(() => { store = {}; }),
+    get length() { return Object.keys(store).length; },
     key: vi.fn((i: number) => Object.keys(store)[i] ?? null),
-    // Helper to access the store directly for assertions
     _getStore: () => store,
   };
 })();
 
-Object.defineProperty(global, 'localStorage', {
-  value: localStorageMock,
-  writable: true,
-});
+Object.defineProperty(global, 'localStorage', { value: localStorageMock, writable: true });
 
 describe('persistence', () => {
   beforeEach(() => {
@@ -49,270 +39,177 @@ describe('persistence', () => {
     vi.clearAllMocks();
   });
 
-  describe('saveGame', () => {
-    it('saves game state to localStorage', () => {
-      saveGame('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1', ['e4'], 'b', 'casual');
-
-      expect(localStorageMock.setItem).toHaveBeenCalled();
-      const savedData = JSON.parse(localStorageMock._getStore()['evenchess-save']);
-      expect(savedData.fen).toBe('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1');
-      expect(savedData.history).toEqual(['e4']);
-      expect(savedData.turn).toBe('b');
-      expect(savedData.difficulty).toBe('casual');
-      expect(savedData.savedAt).toBeDefined();
-    });
-
-    it('saves with default difficulty', () => {
-      saveGame('fen', [], 'w');
-
-      const savedData = JSON.parse(localStorageMock._getStore()['evenchess-save']);
-      expect(savedData.difficulty).toBe('casual');
-    });
-
-    it('saves serious difficulty', () => {
-      saveGame('fen', ['e4', 'e5'], 'w', 'serious');
-
-      const savedData = JSON.parse(localStorageMock._getStore()['evenchess-save']);
-      expect(savedData.difficulty).toBe('serious');
-    });
-  });
-
-  describe('loadGame', () => {
-    it('returns null when no saved game exists', () => {
-      expect(loadGame()).toBeNull();
-    });
-
-    it('returns saved game data', () => {
-      const saved = {
-        fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
-        history: ['e4'],
-        turn: 'b',
-        difficulty: 'casual',
-        savedAt: Date.now(),
-      };
-      localStorageMock.setItem('evenchess-save', JSON.stringify(saved));
-
-      const loaded = loadGame();
-
+  describe('saveGame / loadGame', () => {
+    it('saves and loads game state', async () => {
+      await saveGame('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1', ['e4'], 'b', 'casual');
+      const loaded = await loadGame();
       expect(loaded).not.toBeNull();
-      expect(loaded!.fen).toBe(saved.fen);
+      expect(loaded!.fen).toBe('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1');
       expect(loaded!.history).toEqual(['e4']);
       expect(loaded!.turn).toBe('b');
       expect(loaded!.difficulty).toBe('casual');
+      expect(loaded!.savedAt).toBeDefined();
     });
 
-    it('returns null for invalid JSON', () => {
-      localStorageMock.setItem('evenchess-save', 'not valid json');
-
-      expect(loadGame()).toBeNull();
-    });
-
-    it('returns null for invalid save structure (missing fen)', () => {
-      localStorageMock.setItem('evenchess-save', JSON.stringify({
-        history: ['e4'],
-        turn: 'b',
-      }));
-
-      expect(loadGame()).toBeNull();
-    });
-
-    it('returns null for invalid save structure (history not array)', () => {
-      localStorageMock.setItem('evenchess-save', JSON.stringify({
-        fen: 'some-fen',
-        history: 'not-an-array',
-        turn: 'b',
-      }));
-
-      expect(loadGame()).toBeNull();
-    });
-
-    it('defaults difficulty to casual for older saves', () => {
-      const saved = {
-        fen: 'fen',
-        history: [],
-        turn: 'w',
-        savedAt: Date.now(),
-        // No difficulty field (older save format)
-      };
-      localStorageMock.setItem('evenchess-save', JSON.stringify(saved));
-
-      const loaded = loadGame();
-
+    it('saves with default difficulty', async () => {
+      await saveGame('fen', [], 'w');
+      const loaded = await loadGame();
       expect(loaded!.difficulty).toBe('casual');
+    });
+
+    it('saves serious difficulty', async () => {
+      await saveGame('fen', ['e4', 'e5'], 'w', 'serious');
+      const loaded = await loadGame();
+      expect(loaded!.difficulty).toBe('serious');
+    });
+
+    it('returns null when no saved game exists', async () => {
+      expect(await loadGame()).toBeNull();
+    });
+
+    it('returns null for invalid JSON', async () => {
+      localStorageMock.setItem('evenchess-save', 'not valid json');
+      expect(await loadGame()).toBeNull();
+    });
+
+    it('returns null for missing fen', async () => {
+      localStorageMock.setItem('evenchess-save', JSON.stringify({ history: ['e4'], turn: 'b' }));
+      expect(await loadGame()).toBeNull();
+    });
+
+    it('returns null for history not array', async () => {
+      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: 'x', history: 'bad', turn: 'b' }));
+      expect(await loadGame()).toBeNull();
+    });
+
+    it('defaults difficulty to casual for older saves', async () => {
+      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: 'f', history: [], turn: 'w', savedAt: 0 }));
+      const loaded = await loadGame();
+      expect(loaded!.difficulty).toBe('casual');
+    });
+
+    it('returns null for empty string (cleared save)', async () => {
+      localStorageMock.setItem('evenchess-save', '');
+      expect(await loadGame()).toBeNull();
     });
   });
 
   describe('clearSave', () => {
-    it('removes saved game from localStorage', () => {
-      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: 'test' }));
-
-      clearSave();
-
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('evenchess-save');
-      expect(localStorageMock._getStore()['evenchess-save']).toBeUndefined();
+    it('clears saved game so loadGame returns null', async () => {
+      await saveGame('fen', ['e4'], 'b', 'casual');
+      await clearSave();
+      expect(await loadGame()).toBeNull();
     });
   });
 
-  describe('hasSavedGame', () => {
-    it('returns false when no saved game exists', () => {
-      expect(hasSavedGame()).toBe(false);
+  describe('saveDifficulty / loadDifficulty', () => {
+    it('returns casual when not set', async () => {
+      expect(await loadDifficulty()).toBe('casual');
     });
 
-    it('returns true when saved game exists', () => {
-      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: 'test' }));
-
-      expect(hasSavedGame()).toBe(true);
-    });
-  });
-
-  describe('saveDifficulty', () => {
-    it('saves difficulty to settings', () => {
-      saveDifficulty('serious');
-
-      const settings = JSON.parse(localStorageMock._getStore()['evenchess-settings']);
-      expect(settings.difficulty).toBe('serious');
+    it('saves and loads serious', async () => {
+      await saveDifficulty('serious');
+      expect(await loadDifficulty()).toBe('serious');
     });
 
-    it('merges with existing settings', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        showBoardMarkers: false,
-      }));
+    it('saves and loads easy', async () => {
+      await saveDifficulty('easy');
+      expect(await loadDifficulty()).toBe('easy');
+    });
 
-      saveDifficulty('serious');
-
-      const settings = JSON.parse(localStorageMock._getStore()['evenchess-settings']);
-      expect(settings.difficulty).toBe('serious');
-      expect(settings.showBoardMarkers).toBe(false);
+    it('uses its own key independently of other settings', async () => {
+      await saveDifficulty('serious');
+      await saveBoardMarkers(false);
+      expect(await loadDifficulty()).toBe('serious');
+      expect(await loadBoardMarkers()).toBe(false);
     });
   });
 
-  describe('loadDifficulty', () => {
-    it('returns casual when no settings exist', () => {
-      expect(loadDifficulty()).toBe('casual');
+  describe('saveBoardMarkers / loadBoardMarkers', () => {
+    it('returns true when not set', async () => {
+      expect(await loadBoardMarkers()).toBe(true);
     });
 
-    it('returns saved difficulty', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        difficulty: 'serious',
-      }));
-
-      expect(loadDifficulty()).toBe('serious');
+    it('saves and loads false', async () => {
+      await saveBoardMarkers(false);
+      expect(await loadBoardMarkers()).toBe(false);
     });
 
-    it('returns saved difficulty for easy', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        difficulty: 'easy',
-      }));
-
-      expect(loadDifficulty()).toBe('easy');
-    });
-
-    it('returns casual when difficulty not in settings', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        showBoardMarkers: true,
-      }));
-
-      expect(loadDifficulty()).toBe('casual');
+    it('saves and loads true', async () => {
+      await saveBoardMarkers(true);
+      expect(await loadBoardMarkers()).toBe(true);
     });
   });
 
-  describe('saveBoardMarkers', () => {
-    it('saves board markers setting to true', () => {
-      saveBoardMarkers(true);
-
-      const settings = JSON.parse(localStorageMock._getStore()['evenchess-settings']);
-      expect(settings.showBoardMarkers).toBe(true);
+  describe('saveBoardAlignment / loadBoardAlignment', () => {
+    it('returns right when not set', async () => {
+      expect(await loadBoardAlignment()).toBe('right');
     });
 
-    it('saves board markers setting to false', () => {
-      saveBoardMarkers(false);
-
-      const settings = JSON.parse(localStorageMock._getStore()['evenchess-settings']);
-      expect(settings.showBoardMarkers).toBe(false);
+    it('saves and loads center', async () => {
+      await saveBoardAlignment('center');
+      expect(await loadBoardAlignment()).toBe('center');
     });
 
-    it('merges with existing settings', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        difficulty: 'serious',
-      }));
-
-      saveBoardMarkers(false);
-
-      const settings = JSON.parse(localStorageMock._getStore()['evenchess-settings']);
-      expect(settings.showBoardMarkers).toBe(false);
-      expect(settings.difficulty).toBe('serious');
+    it('saves and loads right', async () => {
+      await saveBoardAlignment('right');
+      expect(await loadBoardAlignment()).toBe('right');
     });
   });
 
-  describe('loadBoardMarkers', () => {
-    it('returns true when no settings exist', () => {
-      expect(loadBoardMarkers()).toBe(true);
+  describe('saveBoardSize / loadBoardSize', () => {
+    it('returns small when not set', async () => {
+      expect(await loadBoardSize()).toBe('small');
     });
 
-    it('returns saved value when false', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        showBoardMarkers: false,
-      }));
-
-      expect(loadBoardMarkers()).toBe(false);
+    it('saves and loads large', async () => {
+      await saveBoardSize('large');
+      expect(await loadBoardSize()).toBe('large');
     });
 
-    it('returns saved value when true', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        showBoardMarkers: true,
-      }));
-
-      expect(loadBoardMarkers()).toBe(true);
-    });
-
-    it('returns true when not in settings', () => {
-      localStorageMock.setItem('evenchess-settings', JSON.stringify({
-        difficulty: 'casual',
-      }));
-
-      expect(loadBoardMarkers()).toBe(true);
+    it('saves and loads small', async () => {
+      await saveBoardSize('small');
+      expect(await loadBoardSize()).toBe('small');
     });
   });
 
   describe('roundtrip integration', () => {
-    it('saves and loads game correctly', () => {
+    it('saves and loads game correctly', async () => {
       const fen = 'rnbqkbnr/pppppppp/8/8/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2';
       const history = ['e4', 'e5', 'Nf3'];
-      const turn = 'b' as const;
-      const difficulty = 'serious' as const;
-
-      saveGame(fen, history, turn, difficulty);
-      const loaded = loadGame();
-
-      expect(loaded).not.toBeNull();
+      await saveGame(fen, history, 'b', 'serious');
+      const loaded = await loadGame();
       expect(loaded!.fen).toBe(fen);
       expect(loaded!.history).toEqual(history);
-      expect(loaded!.turn).toBe(turn);
-      expect(loaded!.difficulty).toBe(difficulty);
+      expect(loaded!.turn).toBe('b');
+      expect(loaded!.difficulty).toBe('serious');
     });
 
-    it('settings roundtrip correctly', () => {
-      saveDifficulty('serious');
-      saveBoardMarkers(false);
+    it('all settings are independent — saving one does not affect others', async () => {
+      await saveDifficulty('serious');
+      await saveBoardMarkers(false);
+      await saveBoardAlignment('center');
+      await saveBoardSize('large');
 
-      expect(loadDifficulty()).toBe('serious');
-      expect(loadBoardMarkers()).toBe(false);
+      expect(await loadDifficulty()).toBe('serious');
+      expect(await loadBoardMarkers()).toBe(false);
+      expect(await loadBoardAlignment()).toBe('center');
+      expect(await loadBoardSize()).toBe('large');
     });
 
-    it('game and settings are independent', () => {
-      saveGame('fen', ['e4'], 'b', 'casual');
-      saveDifficulty('serious');
-      saveBoardMarkers(false);
+    it('game and settings are independent', async () => {
+      await saveGame('fen', ['e4'], 'b', 'casual');
+      await saveDifficulty('serious');
+      await saveBoardAlignment('center');
 
-      const game = loadGame();
-      expect(game!.difficulty).toBe('casual'); // Game has its own difficulty
+      const game = await loadGame();
+      expect(game!.difficulty).toBe('casual');         // game difficulty is separate
+      expect(await loadDifficulty()).toBe('serious');   // settings difficulty is separate
+      expect(await loadBoardAlignment()).toBe('center');
 
-      expect(loadDifficulty()).toBe('serious'); // Settings has different difficulty
-      expect(loadBoardMarkers()).toBe(false);
-
-      clearSave();
-      expect(loadGame()).toBeNull();
-      expect(loadDifficulty()).toBe('serious'); // Settings unaffected
+      await clearSave();
+      expect(await loadGame()).toBeNull();
+      expect(await loadDifficulty()).toBe('serious');   // settings unaffected by clearSave
     });
   });
 });

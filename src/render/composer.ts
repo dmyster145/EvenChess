@@ -81,6 +81,54 @@ export function getBoardLayout(state: GameState): BoardLayout {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Startup layout with text + optional brand only (full-width text, no board image slots).
+ * Used for text-first BLE bring-up; `upgradeToFullLayout` later calls `composePageForState`.
+ */
+function buildTextOnlyContainers(state: GameState): ContainerSet {
+  const TEXT_Y = BRAND_HEIGHT + 20 + 4;
+  const textWidth = DISPLAY_WIDTH;
+
+  const textObjects: TextContainerProperty[] = [
+    new TextContainerProperty({
+      xPosition: 0,
+      yPosition: TEXT_Y,
+      width: textWidth,
+      height: DISPLAY_HEIGHT - TEXT_Y,
+      containerID: CONTAINER_ID_TEXT,
+      containerName: CONTAINER_NAME_TEXT,
+      content: getCombinedDisplayText(state),
+      isEventCapture: 1,
+    }),
+  ];
+
+  const imageObjects: ImageContainerProperty[] = [];
+  const brandX = Math.floor((textWidth - BRAND_WIDTH) / 2);
+  if (brandX >= 0) {
+    imageObjects.push(
+      new ImageContainerProperty({
+        xPosition: brandX,
+        yPosition: 20,
+        width: BRAND_WIDTH,
+        height: BRAND_HEIGHT,
+        containerID: CONTAINER_ID_BRAND,
+        containerName: CONTAINER_NAME_BRAND,
+      }),
+    );
+  }
+
+  return { totalNum: textObjects.length + imageObjects.length, textObjects, imageObjects };
+}
+
+export function composeTextOnlyStartupPage(state: GameState): CreateStartUpPageContainer {
+  const containers = buildTextOnlyContainers(state);
+  return new CreateStartUpPageContainer({
+    containerTotalNum: containers.totalNum,
+    textObject: containers.textObjects,
+    imageObject: containers.imageObjects,
+  });
+}
+
 export function composeStartupPage(state: GameState): CreateStartUpPageContainer {
   const containers = buildContainers(state);
   return new CreateStartUpPageContainer({
