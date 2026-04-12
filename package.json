@@ -16,7 +16,7 @@
     "postinstall": "node scripts/copy-stockfish.cjs"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.9",
+    "@evenrealities/even_hub_sdk": "^0.0.10",
     "chess.js": "^1.4.0",
     "stockfish.js": "^10.0.2",
     "upng-js": "^2.1.0"
