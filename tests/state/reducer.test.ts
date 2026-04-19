@@ -393,27 +393,30 @@ describe('reducer', () => {
   });
 
   describe('menu scroll navigation', () => {
-    it('cycles menu options downward', () => {
+    // Scroll direction is inverted in settings phases (see SETTINGS_PHASES in
+    // reducer.ts) so that a physical scroll-down gesture moves the cursor to
+    // the previous item. Tests use the post-inversion convention: `up` = +1.
+    it('cycles menu options forward (scroll up)', () => {
       const state = createTestState({ phase: 'menu', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.menuSelectedIndex).toBe(1);
     });
 
     it('wraps menu options from last to first', () => {
       const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_OPTION_COUNT - 1 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.menuSelectedIndex).toBe(0);
     });
 
-    it('cycles menu options upward', () => {
+    it('cycles menu options backward (scroll down)', () => {
       const state = createTestState({ phase: 'menu', menuSelectedIndex: 2 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
       expect(next.menuSelectedIndex).toBe(1);
     });
 
     it('wraps menu options from first to last', () => {
       const state = createTestState({ phase: 'menu', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
       expect(next.menuSelectedIndex).toBe(MENU_OPTION_COUNT - 1);
     });
   });
@@ -454,21 +457,23 @@ describe('reducer', () => {
 
   describe('difficulty and board markers scroll', () => {
     it('cycles difficulty options', () => {
+      // Settings phase: scroll direction inverted; `up` advances forward.
       const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.menuSelectedIndex).toBe(1);
-      const next2 = reduce(next, { type: 'SCROLL', direction: 'down' });
+      const next2 = reduce(next, { type: 'SCROLL', direction: 'up' });
       expect(next2.menuSelectedIndex).toBe(2);
-      const wrapped = reduce(next2, { type: 'SCROLL', direction: 'down' });
+      const wrapped = reduce(next2, { type: 'SCROLL', direction: 'up' });
       expect(wrapped.menuSelectedIndex).toBe(0);
     });
 
     it('cycles board markers options', () => {
+      // Settings phase: scroll direction inverted; `up` advances forward.
       const state = createTestState({ phase: 'boardMarkersSelect', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.menuSelectedIndex).toBe(1);
-      
-      const wrapped = reduce(next, { type: 'SCROLL', direction: 'down' });
+
+      const wrapped = reduce(next, { type: 'SCROLL', direction: 'up' });
       expect(wrapped.menuSelectedIndex).toBe(0);
     });
   });
@@ -517,8 +522,9 @@ describe('reducer', () => {
 
   describe('mode scroll and tap', () => {
     it('cycles mode options', () => {
+      // Settings phase: scroll direction inverted; `up` advances forward.
       const state = createTestState({ phase: 'modeSelect', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.menuSelectedIndex).toBe(1);
     });
 
@@ -556,8 +562,9 @@ describe('reducer', () => {
 
   describe('bullet setup scroll and tap', () => {
     it('cycles time control options', () => {
+      // Settings phase: scroll direction inverted; `up` advances forward.
       const state = createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.selectedTimeControlIndex).toBe(1);
     });
 
@@ -692,8 +699,9 @@ describe('reducer', () => {
 
   describe('academy select scroll and tap', () => {
     it('cycles academy drill options', () => {
+      // Settings phase: scroll direction inverted; `up` advances forward.
       const state = createTestState({ phase: 'academySelect', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.menuSelectedIndex).toBe(1);
     });
 

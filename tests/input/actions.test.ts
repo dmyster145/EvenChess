@@ -34,7 +34,10 @@ describe('input/actions', () => {
       expect(action!.type).toBe('DOUBLE_TAP');
     });
 
-    it('maps SCROLL_TOP_EVENT to SCROLL up', () => {
+    // Note: the app intentionally maps SCROLL_TOP_EVENT → 'down' and
+    // SCROLL_BOTTOM_EVENT → 'up' (see 2f8a55c "Performance improvements"),
+    // matching the G2 touchpad's physical gesture direction.
+    it('maps SCROLL_TOP_EVENT to SCROLL down', () => {
       const event = new List_ItemEvent({
         eventType: OsEventTypeList.SCROLL_TOP_EVENT,
       });
@@ -42,11 +45,11 @@ describe('input/actions', () => {
       expect(action).not.toBeNull();
       expect(action!.type).toBe('SCROLL');
       if (action!.type === 'SCROLL') {
-        expect(action.direction).toBe('up');
+        expect(action.direction).toBe('down');
       }
     });
 
-    it('maps SCROLL_BOTTOM_EVENT to SCROLL down', () => {
+    it('maps SCROLL_BOTTOM_EVENT to SCROLL up', () => {
       const event = new List_ItemEvent({
         eventType: OsEventTypeList.SCROLL_BOTTOM_EVENT,
       });
@@ -54,7 +57,7 @@ describe('input/actions', () => {
       expect(action).not.toBeNull();
       expect(action!.type).toBe('SCROLL');
       if (action!.type === 'SCROLL') {
-        expect(action.direction).toBe('down');
+        expect(action.direction).toBe('up');
       }
     });
 
@@ -77,7 +80,8 @@ describe('input/actions', () => {
       expect(action!.type).toBe('TAP');
     });
 
-    it('maps SCROLL_BOTTOM_EVENT to SCROLL down', () => {
+    it('maps SCROLL_BOTTOM_EVENT to SCROLL up', () => {
+      // SCROLL_BOTTOM_EVENT → 'up' matches the G2 physical gesture direction.
       const event = new Text_ItemEvent({
         eventType: OsEventTypeList.SCROLL_BOTTOM_EVENT,
       });
@@ -85,7 +89,7 @@ describe('input/actions', () => {
       expect(action).not.toBeNull();
       expect(action!.type).toBe('SCROLL');
       if (action!.type === 'SCROLL') {
-        expect(action.direction).toBe('down');
+        expect(action.direction).toBe('up');
       }
     });
 

@@ -2,7 +2,7 @@
   "package_id": "com.harmon.chess",
   "edition": "202601",
   "name": "Chess",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "min_app_version": "2.0.0",
   "min_sdk_version": "0.0.10",
   "entrypoint": "index.html",

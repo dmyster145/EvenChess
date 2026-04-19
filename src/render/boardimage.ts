@@ -1,6 +1,10 @@
 /**
  * Board renderer — renders chess board as two stacked 200x100 images.
  * Base board cached (rebuilt on FEN change); highlight-based dirty tracking.
+ *
+ * Output format: packed 4-bit greyscale (see `./gray4.ts`) matching the Even
+ * Hub SDK contract for `updateImageRawData`. The PNG fast-path in
+ * `renderPngAsync` is preferred; this sync path is the BLE-failure fallback.
  */
 
 import type { GameState } from '../state/contracts';
@@ -16,16 +20,7 @@ import {
   IMAGE_HEIGHT,
 } from './composer';
 import { PIECE_SILHOUETTES, PIECE_SIZE } from './pieces';
-import {
-  BMP_HEADER_SIZE,
-  BMP_SIGNATURE,
-  BMP_DIB_HEADER_SIZE,
-  BMP_PPM,
-  BMP_COLORS_USED,
-  getBmpRowStride,
-  getBmpPixelDataSize,
-  getBmpFileSize,
-} from './bmp-constants';
+import { encodeUnpackedToGray4, gray4ByteLength } from './gray4';
 import { squareToDisplayCoords } from '../chess/square-utils';
 import { encodePixelsToPng } from './png-encode';
 
@@ -70,51 +65,10 @@ function rankToHalf(rank: number, g: GridLayout): 'top' | 'bottom' {
   return (g.gridY + rank * g.cell + g.cell) <= SPLIT_Y ? 'top' : 'bottom';
 }
 
-const BMP_ROW_STRIDE = getBmpRowStride(IMAGE_WIDTH);
-const BMP_PIXEL_DATA_SIZE = getBmpPixelDataSize(IMAGE_WIDTH, IMAGE_HEIGHT);
-const BMP_FILE_SIZE = getBmpFileSize(IMAGE_WIDTH, IMAGE_HEIGHT);
+const GRAY4_HALF_BYTES = gray4ByteLength(IMAGE_WIDTH, IMAGE_HEIGHT);
 
-function initBmpBuffer(): Uint8Array {
-  const buf = new ArrayBuffer(BMP_FILE_SIZE);
-  const view = new DataView(buf);
-  const data = new Uint8Array(buf);
-
-  view.setUint8(0, BMP_SIGNATURE[0]); view.setUint8(1, BMP_SIGNATURE[1]);
-  view.setUint32(2, BMP_FILE_SIZE, true);
-  view.setUint32(6, 0, true);
-  view.setUint32(10, BMP_HEADER_SIZE, true);
-  view.setUint32(14, BMP_DIB_HEADER_SIZE, true);
-  view.setInt32(18, IMAGE_WIDTH, true);
-  view.setInt32(22, IMAGE_HEIGHT, true);
-  view.setUint16(26, 1, true);
-  view.setUint16(28, 1, true);
-  view.setUint32(30, 0, true);
-  view.setUint32(34, BMP_PIXEL_DATA_SIZE, true);
-  view.setUint32(38, BMP_PPM, true);
-  view.setUint32(42, BMP_PPM, true);
-  view.setUint32(46, BMP_COLORS_USED, true);
-  view.setUint32(50, BMP_COLORS_USED, true);
-  view.setUint32(54, 0x00000000, true);
-  view.setUint32(58, 0x00ffffff, true);
-
-  return data;
-}
-
-/** BMP encodes pixels bottom-up; this writes pixel data into preallocated buffer. */
-function encodeBmpPixels(bmpBuffer: Uint8Array, pixels: Uint8Array): void {
-  bmpBuffer.fill(0, BMP_HEADER_SIZE);
-
-  for (let y = 0; y < IMAGE_HEIGHT; y++) {
-    const srcRow = IMAGE_HEIGHT - 1 - y;
-    const dstOffset = BMP_HEADER_SIZE + y * BMP_ROW_STRIDE;
-    for (let x = 0; x < IMAGE_WIDTH; x++) {
-      if (pixels[srcRow * IMAGE_WIDTH + x]) {
-        const byteIdx = dstOffset + Math.floor(x / 8);
-        const bitIdx = 7 - (x % 8);
-        bmpBuffer[byteIdx]! |= 1 << bitIdx;
-      }
-    }
-  }
+function makeGrayBuffer(): Uint8Array {
+  return new Uint8Array(GRAY4_HALF_BYTES);
 }
 
 function getHighlightDirtyHalves(
@@ -179,8 +133,8 @@ export class BoardRenderer {
   private lastShowBoardMarkers = true;
   private prevHighlightKeys = new Set<string>();
   private currentHighlightKeys = new Set<string>();
-  private cachedTopBmp: Uint8Array = initBmpBuffer();
-  private cachedBottomBmp: Uint8Array = initBmpBuffer();
+  private cachedTopGray: Uint8Array = makeGrayBuffer();
+  private cachedBottomGray: Uint8Array = makeGrayBuffer();
   private drillBasePixels: Uint8Array | null = null;
 
   constructor({ largeGrid = false }: { largeGrid?: boolean } = {}) {
@@ -233,12 +187,12 @@ export class BoardRenderer {
 
       const dirty: ImageRawDataUpdate[] = [];
       if (topDirty) {
-        encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, HALF_PIXELS));
-        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
+        encodeUnpackedToGray4(this.workPixels.subarray(0, HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedTopGray);
+        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopGray.slice() }));
       }
       if (bottomDirty) {
-        encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(HALF_PIXELS));
-        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
+        encodeUnpackedToGray4(this.workPixels.subarray(HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedBottomGray);
+        dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomGray.slice() }));
       }
       return dirty;
     }
@@ -255,12 +209,12 @@ export class BoardRenderer {
 
     const dirty: ImageRawDataUpdate[] = [];
     if (topDirty) {
-      encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, HALF_PIXELS));
-      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
+      encodeUnpackedToGray4(this.workPixels.subarray(0, HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedTopGray);
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopGray.slice() }));
     }
     if (bottomDirty) {
-      encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(HALF_PIXELS));
-      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
+      encodeUnpackedToGray4(this.workPixels.subarray(HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedBottomGray);
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomGray.slice() }));
     }
     return dirty;
   }
@@ -269,8 +223,8 @@ export class BoardRenderer {
     // Used for startup / mode transitions. Reset dirty-tracking state so both halves are regenerated deterministically.
     // forceBothHalves=true ensures both halves are always returned regardless of whether base pixels or highlights
     // differ from the previous render (e.g. same FEN called twice in startup re-render path).
-    this.cachedTopBmp = initBmpBuffer();
-    this.cachedBottomBmp = initBmpBuffer();
+    this.cachedTopGray.fill(0);
+    this.cachedBottomGray.fill(0);
     this.prevHighlightKeys.clear();
     this.currentHighlightKeys.clear();
     this.lastFen = '';
@@ -461,12 +415,12 @@ export class BoardRenderer {
 
     const dirty: ImageRawDataUpdate[] = [];
     if (topDirty) {
-      encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
+      encodeUnpackedToGray4(this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedTopGray);
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopGray.slice() }));
     }
     if (bottomDirty) {
-      encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(BUF_W * IMAGE_HEIGHT));
-      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
+      encodeUnpackedToGray4(this.workPixels.subarray(BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedBottomGray);
+      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomGray.slice() }));
     }
     return dirty;
   }
@@ -507,12 +461,12 @@ export class BoardRenderer {
       highlightCell(pixels, highlightFile, highlightDisplayRank, 'selected', g);
     }
 
-    encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-    encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
+    encodeUnpackedToGray4(pixels.subarray(0, BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedTopGray);
+    encodeUnpackedToGray4(pixels.subarray(BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedBottomGray);
 
     return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopGray.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomGray.slice() }),
     ];
   }
 
@@ -556,12 +510,12 @@ export class BoardRenderer {
       }
     }
 
-    encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-    encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
+    encodeUnpackedToGray4(pixels.subarray(0, BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedTopGray);
+    encodeUnpackedToGray4(pixels.subarray(BUF_W * IMAGE_HEIGHT), IMAGE_WIDTH, IMAGE_HEIGHT, this.cachedBottomGray);
 
     return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopGray.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomGray.slice() }),
     ];
   }
 }

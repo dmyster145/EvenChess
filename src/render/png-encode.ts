@@ -1,7 +1,14 @@
 /**
- * Encode 1-bit monochrome pixels to 2-bit indexed PNG via UPNG.
- * cnum=4 (4 grey levels) is the minimum depth accepted by the G2 display.
- * cnum=2 (1-bit) renders solid green on device — do not use.
+ * Encode B&W pixels to 4-bit indexed PNG via UPNG (SDK contract: "raw pixel
+ * data in 4-bit greyscale"). We pass cnum=16 so UPNG's palette can grow up to
+ * 16 entries — matching the 4-bit depth that the G2 firmware expects.
+ *
+ * NOTE: For purely 2-color input UPNG quantizes to a 2-entry palette and the
+ * resulting IHDR bit-depth is still 2 (or 1). The firmware empirically accepts
+ * ≥2-bit PNGs (previous cnum=4 path worked in production); 1-bit PNGs render
+ * solid green and are considered a failure — we log a one-shot warning if the
+ * encoder produces one so it's visible in device logs.
+ *
  * Encodes are serialized to avoid contention on device WebViews.
  */
 
@@ -97,10 +104,40 @@ function recordPngEncodePerf(width: number, height: number, totalMs: number, byt
   );
 }
 
+// ── IHDR bit-depth diagnostic ────────────────────────────────────────────
+//
+// Byte layout of a PNG signature + IHDR chunk:
+//   [0..7]   signature
+//   [8..11]  IHDR chunk length (= 13)
+//   [12..15] "IHDR"
+//   [16..19] width
+//   [20..23] height
+//   [24]     bit depth  ← we sniff this
+//   [25]     color type
+//   ...
+// We only READ byte 24 for a diagnostic warning; we never patch it, since
+// changing it without re-encoding the IDAT chunk would corrupt the PNG.
+
+const PNG_IHDR_BIT_DEPTH_OFFSET = 24;
+let ihdrBitDepthWarningShown = false;
+
+function checkPngBitDepth(png: Uint8Array, label: string): void {
+  if (ihdrBitDepthWarningShown || png.length <= PNG_IHDR_BIT_DEPTH_OFFSET) return;
+  const bd = png[PNG_IHDR_BIT_DEPTH_OFFSET];
+  if (bd === 1) {
+    ihdrBitDepthWarningShown = true;
+    console.warn(
+      `[PngEncode] ${label}: UPNG produced a 1-bit PNG (IHDR bd=1). ` +
+        `This renders solid green on G2 firmware. Increase palette diversity or ` +
+        `fall back to raw 4-bit greyscale.`,
+    );
+  }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Encode unpacked 1-bit pixels (1 byte per pixel, 0 or 1) to a 2-bit indexed PNG.
+ * Encode unpacked B&W pixels (1 byte per pixel, 0 or 1) to a 4-bit indexed PNG.
  * Used by the board renderer. _slot is unused (kept for API compatibility).
  */
 export async function encodePixelsToPng(
@@ -113,8 +150,9 @@ export async function encodePixelsToPng(
   return enqueueSerializedPngEncode(() => {
     try {
       const rgba = pixelsToRGBA(pixels, width * height);
-      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 4);
+      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 16);
       const png = new Uint8Array(arrayBuffer);
+      if (png.length > 0) checkPngBitDepth(png, 'encodePixelsToPng');
       if (PERF_LOG_ENABLED && png.length > 0) recordPngEncodePerf(width, height, perfNowMs() - startMs, png.length);
       return png;
     } catch {
@@ -124,8 +162,8 @@ export async function encodePixelsToPng(
 }
 
 /**
- * Encode bit-packed 1-bit pixels (8 pixels per byte, MSB first) to a 2-bit indexed PNG.
- * Used by the branding renderer.
+ * Encode bit-packed B&W pixels (8 pixels per byte, MSB first) to a 4-bit
+ * indexed PNG. Used by the branding renderer.
  */
 export async function encodePackedPixelsToPng(
   pixels: Uint8Array,
@@ -135,8 +173,10 @@ export async function encodePackedPixelsToPng(
   return enqueueSerializedPngEncode(() => {
     try {
       const rgba = packedPixelsToRGBA(pixels, width, height);
-      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 4);
-      return new Uint8Array(arrayBuffer);
+      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 16);
+      const png = new Uint8Array(arrayBuffer);
+      if (png.length > 0) checkPngBitDepth(png, 'encodePackedPixelsToPng');
+      return png;
     } catch {
       return EMPTY_PNG_BYTES;
     }

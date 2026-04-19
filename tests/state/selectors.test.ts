@@ -458,10 +458,13 @@ describe('selectors', () => {
   // ── Menu Display Text Tests ─────────────────────────────────────────────────
 
   describe('getMenuDisplayText', () => {
-    it('shows MENU header', () => {
+    it('renders the menu options (top-level menu has no header by design)', () => {
+      // The top-level menu intentionally omits a header string; submenus
+      // (DIFFICULTY, BOARD MARKERS, etc.) are the ones that include headers.
       const state = createTestState({ phase: 'menu' });
       const text = getMenuDisplayText(state);
-      expect(text).toContain('MENU');
+      expect(text).toContain('Mode');
+      expect(text).not.toContain('MENU');
     });
 
     it('highlights selected option with >', () => {
@@ -784,9 +787,11 @@ describe('selectors', () => {
 
   describe('getCombinedDisplayText', () => {
     it('returns menu display text for menu phase', () => {
+      // Top-level menu has no header; assert a menu option is present instead.
       const state = createTestState({ phase: 'menu' });
       const text = getCombinedDisplayText(state);
-      expect(text).toContain('MENU');
+      expect(text).toContain('Mode');
+      expect(text).toContain('View Log');
     });
 
     it('returns difficulty display text for difficultySelect', () => {
