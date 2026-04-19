@@ -1,13 +1,16 @@
 /**
- * Encode B&W pixels to 4-bit indexed PNG via UPNG (SDK contract: "raw pixel
- * data in 4-bit greyscale"). We pass cnum=16 so UPNG's palette can grow up to
- * 16 entries — matching the 4-bit depth that the G2 firmware expects.
+ * Encode B&W pixels to indexed PNG via UPNG for the SDK's `updateImageRawData`
+ * fast path. The SDK documents the contract as "raw pixel data in 4-bit
+ * greyscale"; in practice the native bridge also accepts PNG and decodes it to
+ * gray4 on-device (see `ImageRawDataUpdateResult.imageToGray4Failed`).
  *
- * NOTE: For purely 2-color input UPNG quantizes to a 2-entry palette and the
- * resulting IHDR bit-depth is still 2 (or 1). The firmware empirically accepts
- * ≥2-bit PNGs (previous cnum=4 path worked in production); 1-bit PNGs render
- * solid green and are considered a failure — we log a one-shot warning if the
- * encoder produces one so it's visible in device logs.
+ * We pass `cnum=4` — the value empirically validated in production. UPNG
+ * quantizes pure 2-color input to a 2-entry palette, yielding IHDR bit-depth 2.
+ * Higher `cnum` values (e.g. 16) can let UPNG pick bit-depth 1 for the same
+ * 2-color content; 1-bit PNGs render **solid green** on G2 firmware. We log a
+ * one-shot warning if the encoder ever produces a 1-bit PNG so the regression
+ * is visible in device logs — the raw 4-bit gray fallback (see `./gray4.ts`)
+ * covers that case.
  *
  * Encodes are serialized to avoid contention on device WebViews.
  */
@@ -150,7 +153,7 @@ export async function encodePixelsToPng(
   return enqueueSerializedPngEncode(() => {
     try {
       const rgba = pixelsToRGBA(pixels, width * height);
-      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 16);
+      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 4);
       const png = new Uint8Array(arrayBuffer);
       if (png.length > 0) checkPngBitDepth(png, 'encodePixelsToPng');
       if (PERF_LOG_ENABLED && png.length > 0) recordPngEncodePerf(width, height, perfNowMs() - startMs, png.length);
@@ -173,7 +176,7 @@ export async function encodePackedPixelsToPng(
   return enqueueSerializedPngEncode(() => {
     try {
       const rgba = packedPixelsToRGBA(pixels, width, height);
-      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 16);
+      const arrayBuffer = UPNG.encode([rgba.buffer as ArrayBuffer], width, height, 4);
       const png = new Uint8Array(arrayBuffer);
       if (png.length > 0) checkPngBitDepth(png, 'encodePackedPixelsToPng');
       return png;

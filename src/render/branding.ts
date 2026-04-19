@@ -1,8 +1,5 @@
 /**
- * Branding image generator — renders the "CHESS" logo / CHECK / CHECKMATE
- * badges as 4-bit indexed PNG (raw packed 4-bit greyscale fallback when the
- * PNG encode is unavailable). Output format matches the Even Hub SDK's
- * `updateImageRawData` contract ("raw pixel data in 4-bit greyscale").
+ * Branding image generator — renders "Chess" logo as 1-bit PNG (BMP fallback if compression unavailable).
  */
 
 import { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
@@ -13,17 +10,18 @@ import {
   BRAND_HEIGHT,
 } from './composer';
 import { PIECE_SILHOUETTES, PIECE_SIZE } from './pieces';
-import { encodePackedToGray4 } from './gray4';
+import {
+  BMP_HEADER_SIZE,
+  BMP_SIGNATURE,
+  getBmpRowBytes,
+  getBmpRowStride,
+  getBmpFileSize,
+} from './bmp-constants';
 import { encodePackedPixelsToPng } from './png-encode';
-
-/** Bytes per bit-packed row (8 pixels per byte, MSB first). Matches the
- * intermediate buffer shape consumed by both `encodePackedPixelsToPng` and
- * `encodePackedToGray4`. */
-const PACKED_ROW_BYTES = (BRAND_WIDTH + 7) >> 3;
 
 function setPixel(pixels: Uint8Array, x: number, y: number, on: number): void {
   if (x < 0 || x >= BRAND_WIDTH || y < 0 || y >= BRAND_HEIGHT) return;
-  const byteIndex = y * PACKED_ROW_BYTES + Math.floor(x / 8);
+  const byteIndex = y * Math.ceil(BRAND_WIDTH / 8) + Math.floor(x / 8);
   const bitIndex = 7 - (x % 8);
   const current = pixels[byteIndex] ?? 0;
   if (on) {
@@ -295,10 +293,47 @@ function drawKnightIcon(pixels: Uint8Array, x: number, y: number): void {
   }
 }
 
+function create1BitBmp(pixels: Uint8Array): Uint8Array {
+  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
+  const rowPadded = getBmpRowStride(BRAND_WIDTH);
+  const fileSize = getBmpFileSize(BRAND_WIDTH, BRAND_HEIGHT);
+
+  const bmp = new Uint8Array(fileSize);
+
+  bmp[0] = BMP_SIGNATURE[0]; bmp[1] = BMP_SIGNATURE[1];
+  bmp[2] = fileSize & 0xff;
+  bmp[3] = (fileSize >> 8) & 0xff;
+  bmp[4] = (fileSize >> 16) & 0xff;
+  bmp[5] = (fileSize >> 24) & 0xff;
+  bmp[10] = BMP_HEADER_SIZE;
+
+  bmp[14] = 40;
+  bmp[18] = BRAND_WIDTH & 0xff;
+  bmp[19] = (BRAND_WIDTH >> 8) & 0xff;
+  bmp[22] = BRAND_HEIGHT & 0xff;
+  bmp[23] = (BRAND_HEIGHT >> 8) & 0xff;
+  bmp[26] = 1;
+  bmp[28] = 1;
+
+  bmp[54] = 0; bmp[55] = 0; bmp[56] = 0; bmp[57] = 0;
+  bmp[58] = 0; bmp[59] = 255; bmp[60] = 0; bmp[61] = 0;
+
+  for (let y = 0; y < BRAND_HEIGHT; y++) {
+    const srcRow = BRAND_HEIGHT - 1 - y;
+    const dstOffset = BMP_HEADER_SIZE + y * rowPadded;
+    for (let b = 0; b < rowBytes; b++) {
+      bmp[dstOffset + b] = pixels[srcRow * rowBytes + b] ?? 0;
+    }
+  }
+
+  return bmp;
+}
+
 // ── Pixel renderers (bit-packed, MSB first) ───────────────────────────────
 
 function makeBrandPixels(): Uint8Array {
-  const pixels = new Uint8Array(PACKED_ROW_BYTES * BRAND_HEIGHT);
+  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
+  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
   let xPos = 2;
   const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
   for (const ch of 'CHESS') {
@@ -309,11 +344,12 @@ function makeBrandPixels(): Uint8Array {
 }
 
 function makeBlankPixels(): Uint8Array {
-  return new Uint8Array(PACKED_ROW_BYTES * BRAND_HEIGHT);
+  return new Uint8Array(Math.ceil(BRAND_WIDTH / 8) * BRAND_HEIGHT);
 }
 
 function makeStatusPixels(text: string): Uint8Array {
-  const pixels = new Uint8Array(PACKED_ROW_BYTES * BRAND_HEIGHT);
+  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
+  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
   let totalWidth = 0;
   for (const ch of text) totalWidth += brandCharWidth(ch) + 2;
   if (text.length > 0) totalWidth -= 2;
@@ -327,14 +363,6 @@ function makeBrandingUpdate(imageData: Uint8Array | number[]): ImageRawDataUpdat
   return new ImageRawDataUpdate({ containerID: CONTAINER_ID_BRAND, containerName: CONTAINER_NAME_BRAND, imageData });
 }
 
-/** Convert a bit-packed brand buffer to the cached `number[]` payload. Per
- * the SDK README, `number[]` is the recommended `imageData` type — passing
- * `Uint8Array` forces the SDK to convert on every send. Pre-converting once
- * at cache-warm time avoids that cost for the CHECK/CHECKMATE hot path. */
-function packedToCachedNumberArray(packed: Uint8Array): number[] {
-  return Array.from(encodePackedToGray4(packed, BRAND_WIDTH, BRAND_HEIGHT));
-}
-
 // ── Caches ────────────────────────────────────────────────────────────────
 
 let cachedBrandImage: ImageRawDataUpdate | null = null;
@@ -342,39 +370,38 @@ let cachedBlankBrandImage: ImageRawDataUpdate | null = null;
 let cachedCheckBrandImage: ImageRawDataUpdate | null = null;
 let cachedCheckmateBrandImage: ImageRawDataUpdate | null = null;
 
-// ── Sync raw 4-bit render (fallback when PNG encode is unavailable) ────────
+// ── Sync BMP render (fallback) ────────────────────────────────────────────
 
 export function renderBrandingImage(): ImageRawDataUpdate {
   if (cachedBrandImage) return cachedBrandImage;
-  cachedBrandImage = makeBrandingUpdate(packedToCachedNumberArray(makeBrandPixels()));
+  cachedBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeBrandPixels())));
   return cachedBrandImage;
 }
 
 export function renderBlankBrandingImage(): ImageRawDataUpdate {
   if (cachedBlankBrandImage) return cachedBlankBrandImage;
-  cachedBlankBrandImage = makeBrandingUpdate(packedToCachedNumberArray(makeBlankPixels()));
+  cachedBlankBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeBlankPixels())));
   return cachedBlankBrandImage;
 }
 
 export function renderCheckBrandingImage(): ImageRawDataUpdate {
   if (cachedCheckBrandImage) return cachedCheckBrandImage;
-  cachedCheckBrandImage = makeBrandingUpdate(packedToCachedNumberArray(makeStatusPixels('CHECK!')));
+  cachedCheckBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeStatusPixels('CHECK!'))));
   return cachedCheckBrandImage;
 }
 
 export function renderCheckmateBrandingImage(): ImageRawDataUpdate {
   if (cachedCheckmateBrandImage) return cachedCheckmateBrandImage;
-  cachedCheckmateBrandImage = makeBrandingUpdate(packedToCachedNumberArray(makeStatusPixels('CHECKMATE!')));
+  cachedCheckmateBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeStatusPixels('CHECKMATE!'))));
   return cachedCheckmateBrandImage;
 }
 
 // ── PNG preload ───────────────────────────────────────────────────────────
 
 /**
- * Pre-encode all branding images as 4-bit indexed PNG and replace the raw
- * greyscale fallback caches. Call once at startup; runs in parallel with hub
- * init so PNG is ready before the first branding send. Silently keeps the
- * raw 4-bit fallbacks if PNG encoding is unavailable.
+ * Pre-encode all branding images as 1-bit PNG and replace the BMP caches.
+ * Call once at startup; runs in parallel with hub init so PNG is ready before first branding send.
+ * Silently keeps BMP fallbacks if PNG encoding is unavailable.
  */
 export async function preloadBrandingImages(): Promise<void> {
   const [brandPng, blankPng, checkPng, checkmatePng] = await Promise.all([
