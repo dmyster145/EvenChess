@@ -88,6 +88,14 @@ export class EvenHubBridge {
   private textSenderRunning = false;
   private cleared = false;
 
+  // Exit-dialog state. shutDownPageContainer(1)'s event polarity is INVERTED vs a real
+  // background: the SDK fires FOREGROUND_ENTER (sys=4) when the dialog APPEARS, FOREGROUND_EXIT
+  // (sys=5) when the user taps "No" (cancelled — keep running), SYSTEM_EXIT (sys=7) on "Yes".
+  // This flag is armed synchronously in requestSystemExit() so lifecycle.ts can disambiguate
+  // those events. Auto-cleared after a safety timeout in case neither sys=5 nor sys=7 arrives.
+  private exitDialogPending = false;
+  private exitDialogSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Image-sender runner sequence number. Each runImageSender invocation captures the current seq;
   // if forceResetImageTransport bumps the active seq mid-loop, the in-flight runner returns
   // without acting on its (possibly hung) SDK await result. Lets a stuck sender be replaced.
@@ -221,12 +229,15 @@ export class EvenHubBridge {
   async updatePage(container: RebuildPageContainer): Promise<boolean> {
     if (!this.bridge) return false;
     const bridge = this.bridge;
-    return await this.serializeBleCall(
+    const startMs = nowMs();
+    const ok = await this.serializeBleCall(
       'rebuildPageContainer',
       () => bridge.rebuildPageContainer(container),
       false,
       BLE_PAGE_TIMEOUT_MS,
     );
+    debugLog('rebuildPageContainer', { ok, ms: Math.round(nowMs() - startMs) }, 'BRG');
+    return ok;
   }
 
   // ---------------------------------------------------------------------------
@@ -460,17 +471,43 @@ export class EvenHubBridge {
 
   /**
    * Surface the system "End this feature?" confirmation dialog. Per ER guidance this is true
-   * fire-and-forget — no await, no timeout, no result inspection. The bridge does not own UX
-   * cooldowns; if double-firing becomes a problem the caller should debounce.
+   * fire-and-forget — no await, no result inspection. Arms `exitDialogPending` SYNCHRONOUSLY
+   * before the SDK call so lifecycle.ts can correctly interpret the inverted-polarity events
+   * that follow (sys=4 dialog-shown, sys=5 cancelled, sys=7 confirmed).
    */
   requestSystemExit(): void {
     if (!this.bridge) return;
+    this.armExitDialog();
     try {
       this.bridge.shutDownPageContainer(1).catch((err) => {
         console.error('[EvenHubBridge] shutDownPageContainer(1) rejected:', err);
       });
     } catch (err) {
       console.error('[EvenHubBridge] requestSystemExit synchronous error:', err);
+    }
+  }
+
+  private armExitDialog(): void {
+    this.exitDialogPending = true;
+    if (this.exitDialogSafetyTimer) clearTimeout(this.exitDialogSafetyTimer);
+    // Safety net: if neither sys=5 (cancel) nor sys=7 (confirm) arrives — shouldn't happen, but
+    // BLE is flaky — auto-clear so a genuine later background isn't misread as a dialog cancel.
+    this.exitDialogSafetyTimer = setTimeout(() => {
+      this.exitDialogPending = false;
+      this.exitDialogSafetyTimer = null;
+      debugLog('exit-dialog safety timeout — flag auto-cleared', {}, 'BRG');
+    }, 20000);
+  }
+
+  isExitDialogPending(): boolean {
+    return this.exitDialogPending;
+  }
+
+  clearExitDialog(): void {
+    this.exitDialogPending = false;
+    if (this.exitDialogSafetyTimer) {
+      clearTimeout(this.exitDialogSafetyTimer);
+      this.exitDialogSafetyTimer = null;
     }
   }
 

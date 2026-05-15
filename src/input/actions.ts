@@ -10,6 +10,7 @@ import {
   type Sys_ItemEvent,
 } from '@evenrealities/even_hub_sdk';
 import type { Action, GameState } from '../state/contracts';
+import { debugLog } from '../debug/logger';
 
 // G2 touch input can emit very short burst duplicates (raw event chatter + delayed duplicate swipes).
 // We use a two-stage filter:
@@ -74,6 +75,45 @@ export function extendTapCooldown(durationMs: number = TAP_COOLDOWN_MS): void {
 
 function isInTapCooldown(): boolean {
   return Date.now() < tapCooldownUntil;
+}
+
+// Per ER guidance: the G2 firmware emits DUPLICATE input events for one physical gesture
+// (~50–100ms apart). One physical tap → 2× CLICK; one physical double-tap → 2× DOUBLE_CLICK.
+// Dedup windows of 1–20ms are useless; use ~130ms for single taps and ~600ms for
+// state-changing double-tap actions. This dedup runs BEFORE any state-changing decision (the
+// menu double-tap → shutDownPageContainer(1) short-circuit in app.ts) — a duplicate
+// DOUBLE_CLICK that slipped through used to fire the exit dialog twice, corrupting the SDK's
+// page/dialog state so the board never came back after "No".
+const CLICK_DEDUP_MS = 130;
+const DOUBLE_CLICK_DEDUP_MS = 600;
+let lastAcceptedClickAt = 0;
+let lastAcceptedDoubleClickAt = 0;
+
+function isClickDuplicate(): boolean {
+  const now = Date.now();
+  const dt = now - lastAcceptedClickAt;
+  if (dt < CLICK_DEDUP_MS) {
+    debugLog('click dedup drop', { dtMs: dt }, 'EVT');
+    return true;
+  }
+  lastAcceptedClickAt = now;
+  return false;
+}
+
+function isDoubleClickDuplicate(): boolean {
+  const now = Date.now();
+  const dt = now - lastAcceptedDoubleClickAt;
+  if (dt < DOUBLE_CLICK_DEDUP_MS) {
+    debugLog('doubleclick dedup drop', { dtMs: dt }, 'EVT');
+    return true;
+  }
+  lastAcceptedDoubleClickAt = now;
+  return false;
+}
+
+export function resetInputDedup(): void {
+  lastAcceptedClickAt = 0;
+  lastAcceptedDoubleClickAt = 0;
 }
 
 /** Returns false if tap was suppressed by cooldown; otherwise records tap and returns true.
@@ -164,6 +204,7 @@ export function mapListEvent(event: List_ItemEvent, state: GameState): Action | 
       return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.CLICK_EVENT: {
+      if (isClickDuplicate()) return null;
       if (!tryConsumeTap('TAP')) return null;
       return {
         type: 'TAP',
@@ -173,6 +214,7 @@ export function mapListEvent(event: List_ItemEvent, state: GameState): Action | 
     }
 
     case OsEventTypeList.DOUBLE_CLICK_EVENT: {
+      if (isDoubleClickDuplicate()) return null;
       if (!tryConsumeTap('DOUBLE_TAP')) return null;
       return { type: 'DOUBLE_TAP' };
     }
@@ -198,11 +240,13 @@ export function mapTextEvent(event: Text_ItemEvent, state: GameState): Action | 
       return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.CLICK_EVENT: {
+      if (isClickDuplicate()) return null;
       if (!tryConsumeTap('TAP')) return null;
       return { type: 'TAP', selectedIndex: 0, selectedName: '' };
     }
 
     case OsEventTypeList.DOUBLE_CLICK_EVENT: {
+      if (isDoubleClickDuplicate()) return null;
       if (!tryConsumeTap('DOUBLE_TAP')) return null;
       return { type: 'DOUBLE_TAP' };
     }
@@ -227,11 +271,13 @@ export function mapSysEvent(event: Sys_ItemEvent, state: GameState): Action | nu
       return { type: 'SCROLL', direction: 'up' };
 
     case OsEventTypeList.CLICK_EVENT: {
+      if (isClickDuplicate()) return null;
       if (!tryConsumeTap('TAP')) return null;
       return { type: 'TAP', selectedIndex: 0, selectedName: '' };
     }
 
     case OsEventTypeList.DOUBLE_CLICK_EVENT: {
+      if (isDoubleClickDuplicate()) return null;
       if (!tryConsumeTap('DOUBLE_TAP')) return null;
       return { type: 'DOUBLE_TAP' };
     }

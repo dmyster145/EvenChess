@@ -1,16 +1,21 @@
 /**
- * lifecycle.ts — owns visibility, foreground/background, wearing, and exit signals.
+ * lifecycle.ts — owns foreground/background, exit-dialog, wearing, and visibility signals.
  *
- * Replaces the v1 sprawl: `setupVisibilityListener`, `triggerForegroundEnterRecoveryRefresh`,
- * `handleSystemLifecycleSysEvent`, `resetDeviceStatusOnResume`, `handleDeviceStatus`,
- * `startHeartbeat`/`stopHeartbeat`, `suspendBulletTimerForBackground`/`resumeBulletTimerFromBackground`,
- * `armTransportOnlyHangProbe`/`armLightweightHangProbe`, `fireEarlyShutdown`/`attemptBridgeReinit`,
- * `teardownAppLevelResources`, `pageReloadCount` machinery.
+ * CRITICAL: shutDownPageContainer(1)'s SDK event polarity is INVERTED vs a real background.
+ * After an exit request the SDK fires:
+ *   - FOREGROUND_ENTER (sys=4) when the dialog APPEARS (~100ms later). The page container is
+ *     cleared host-side at this point — this is the cue to rebuildPageContainer.
+ *   - FOREGROUND_EXIT  (sys=5) when the user taps "No" (dialog cancelled — KEEP RUNNING).
+ *   - SYSTEM_EXIT      (sys=7) when the user taps "Yes" (confirmed exit — clean up).
+ * So a FOREGROUND_EXIT right after an exit request means "cancelled, keep running" — NOT
+ * "backgrounded". Treating it as a background (suspend timers, recovery churn) is what froze the
+ * board after "No". The bridge arms `exitDialogPending` synchronously in requestSystemExit(); we
+ * branch on it here.
  *
- * The v2 model trusts iOS WKWebView's natural visibility events. On hide we drop pending bridge
- * payloads (so they don't try to deliver on a paused WebView) and pause the bullet timer; on show
- * we resume the timer and force one full-refresh flush. There is no heartbeat watchdog, no
- * hang-probe stack, no auto-reinit. Manual reinit is exposed by `bridge-reinit.ts`.
+ * Outside the exit-dialog window the events have normal meaning (sys=4 resume, sys=5 background).
+ *
+ * The firmware also emits DUPLICATE events for one physical transition (~50–100ms apart), so all
+ * sys events are deduped by (type, time) before any state-changing decision.
  */
 
 import type { Store } from '../state/store';
@@ -20,7 +25,10 @@ import type { BrandingController } from './branding';
 import type { BulletTimerController } from './bullet-timer';
 import type { AutosaveController } from './autosave';
 import { OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
+import { composePageForState } from '../render/composer';
 import { debugLog } from '../debug/logger';
+
+const SYS_EVENT_DEDUP_MS = 600;
 
 export interface DeviceStatusFlags {
   isWearingGlasses: boolean;
@@ -36,27 +44,17 @@ export interface LifecycleDeps {
   autosave: AutosaveController;
   /** Mutable read-write reference to the wearing/connected flags consumed by flush.ts. */
   deviceFlags: DeviceStatusFlags;
-  /** True once the page has been upgraded from text-only startup to the full layout. Lifecycle
-   *  uses this on resume to decide whether to rebuild the page (resetting SDK image-container
-   *  state after a `shutDownPageContainer(1)` exit-dialog cancellation). */
+  /** True once the text-only startup page has been upgraded to the full layout. */
   imageContainersActive: () => boolean;
 }
 
 export interface LifecycleController {
   attach(): void;
   detach(): void;
-  /** Forwarded from the SDK's `onEvenHubEvent`; lifecycle handles only the sysEvent lifecycle types. */
+  /** Forwarded from the SDK's `onEvenHubEvent`; handles only the sysEvent lifecycle types. */
   onHubEvent(event: EvenHubEvent): void;
   /** Forwarded from the SDK's `onDeviceStatusChanged`. */
   onDeviceStatusChanged(status: DeviceStatusUpdate): void;
-  /**
-   * Called by the input dispatcher whenever a real user-input action arrives. If we believe the
-   * app is currently "hidden" (because FG_EXIT fired but no FG_ENTER followed — observed on iOS
-   * after a `shutDownPageContainer(1)` exit-dialog cancellation), treat the input as an implicit
-   * foreground-enter and run the recovery path. Without this, onShow's force-reset + page rebuild
-   * is never triggered for the dialog-cancel case and the board stays frozen.
-   */
-  notifyInputReceived(): void;
 }
 
 export interface DeviceStatusUpdate {
@@ -67,39 +65,29 @@ export interface DeviceStatusUpdate {
   batteryLevel?: number;
 }
 
+const FOREGROUND_ENTER = OsEventTypeList.FOREGROUND_ENTER_EVENT;
+const FOREGROUND_EXIT = OsEventTypeList.FOREGROUND_EXIT_EVENT;
+const ABNORMAL_EXIT = (OsEventTypeList as unknown as { ABNORMAL_EXIT_EVENT?: number }).ABNORMAL_EXIT_EVENT ?? 6;
+const SYSTEM_EXIT = (OsEventTypeList as unknown as { SYSTEM_EXIT_EVENT?: number }).SYSTEM_EXIT_EVENT ?? 7;
+
 export function createLifecycle(deps: LifecycleDeps): LifecycleController {
   const subscriptions = new Set<() => void>();
   let attached = false;
-  // Tracks whether the app is currently considered "hidden" (backgrounded). The SDK has been
-  // observed to fire FOREGROUND_EXIT_EVENT and FOREGROUND_ENTER_EVENT *twice* per real transition
-  // (likely once per glasses ear, since each maintains its own BLE link). v1 absorbed the
-  // duplicate via its `pendingRecoveryRefreshTimeout` debounce; v2 dedupes by ignoring repeat
-  // hide-while-hidden and show-while-showing calls.
   let isHidden = false;
+
+  // Firmware emits duplicate sys events ~50–100ms apart for one physical transition. Dedupe
+  // identical consecutive sys events within 600ms before any state-changing decision.
+  let lastSysType = -1;
+  let lastSysAt = 0;
 
   function attach(): void {
     if (attached) return;
     attached = true;
-
-    if (typeof document !== 'undefined') {
-      const onVisibility = (): void => {
-        if (document.visibilityState === 'hidden') onHide('visibilitychange');
-        else if (document.visibilityState === 'visible') onShow('visibilitychange');
-      };
-      document.addEventListener('visibilitychange', onVisibility);
-      subscriptions.add(() => document.removeEventListener('visibilitychange', onVisibility));
-    }
-
-    if (typeof window !== 'undefined') {
-      // pagehide/pageshow fire on iOS BFCache pause/resume even when visibilitychange does not.
-      // Calling onHide/onShow twice is harmless (idempotent) — better double-coverage than a miss.
-      const onPagehide = (): void => onHide('pagehide');
-      const onPageshow = (): void => onShow('pageshow');
-      window.addEventListener('pagehide', onPagehide);
-      window.addEventListener('pageshow', onPageshow);
-      subscriptions.add(() => window.removeEventListener('pagehide', onPagehide));
-      subscriptions.add(() => window.removeEventListener('pageshow', onPageshow));
-    }
+    // NOTE: we intentionally do NOT wire browser visibilitychange/pagehide/pageshow listeners.
+    // The SDK's sys events (4/5/6/7) are the authoritative foreground/background/exit signal on
+    // G2; the browser events fire at unpredictable times in iOS WKWebView and racing them
+    // against the sys-event state machine was a source of the exit-dialog freeze. The reference
+    // weather/snake apps rely solely on sys events too.
   }
 
   function detach(): void {
@@ -114,6 +102,8 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     attached = false;
   }
 
+  // --- Genuine background / foreground (no exit dialog pending) ---
+
   function onHide(reason: string): void {
     if (isHidden) {
       debugLog('lifecycle hide ignored (already hidden)', { reason }, 'LCY');
@@ -121,15 +111,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
     isHidden = true;
     debugLog('lifecycle hide', { reason }, 'LCY');
-    // Per the weather-even-g2 reference and v1's notes: do MINIMAL work on FG_EXIT. We previously
-    // called bridge.clearPending() here to drop pending payloads, but that interacted badly with
-    // shutDownPageContainer(1)'s exit-dialog flow: the in-flight image send sometimes never
-    // resolved on iOS WKWebView, and clearing pending + setting the `cleared` flag added extra
-    // sender state churn that delayed recovery. The latest-wins map handles staleness on resume
-    // — onShow's force-flush overwrites any stale pending entries with fresh state. The
-    // The bridge's per-send timeout is what unsticks an actually-hung send.
     deps.bulletTimer.suspend();
-    // Force-flush deferred autosave so a backgrounded app doesn't lose the latest move.
     deps.autosave.flushNow();
   }
 
@@ -140,10 +122,6 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
     isHidden = false;
     debugLog('lifecycle show', { reason }, 'LCY');
-    // Optimistic device-status reset on resume (mirrors v1's resetDeviceStatusOnResume): WKWebView
-    // observably fires a final `connectType=disconnected` right as it pauses, which closes the
-    // wearing/connected gate; if the reconnect event after resume is delayed, the user comes back
-    // to a frozen display. Trust the next genuine device-status event to correct this.
     const wasWearing = deps.deviceFlags.isWearingGlasses;
     const wasConnected = deps.deviceFlags.isDeviceConnected;
     deps.deviceFlags.isWearingGlasses = true;
@@ -151,70 +129,123 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     if (!wasWearing || !wasConnected) {
       debugLog('lifecycle device-status reset', { reason, wasWearing, wasConnected }, 'LCY');
     }
-
     deps.bulletTimer.resume();
-    // Reset the bridge's image transport. After a `shutDownPageContainer(1)` exit-dialog
-    // cancellation, the SDK's image transport ends up in a wedged state — invalidate any stuck
-    // sender so a fresh runner can pick up the latest pending payload.
-    deps.bridge.forceResetImageTransport(`onShow:${reason}`);
     deps.flush.setForceFullRefresh();
     deps.branding.forceNextRefresh();
-
-    // Note: we deliberately do NOT call bridge.updatePage(rebuildPageContainer) here. A page
-    // rebuild on its own succeeds, but it replaces the live image containers with empty
-    // placeholders. The followup updateImageRawData fills come via a SEPARATE BLE call — and on
-    // iOS post-dialog those calls return `sendFailed`. Net result: rebuild + failed fill = blank
-    // board (worse than the pre-rebuild "frozen on last frame" state). The snake reference avoids
-    // this trap by baking text content into its rebuild config, but our image data must travel
-    // separately so we don't have that option. Best effort: keep the previously-displayed image
-    // content on screen and let the bridge retry sends; if the SDK transport recovers, the
-    // force-flush below repaints; if it doesn't, the user keeps seeing the last good frame.
     void deps.flush.flushNow({ force: true });
     deps.branding.syncNow();
+  }
+
+  // --- Exit-dialog handling (inverted polarity) ---
+
+  // NOTE: The exit-dialog handlers below are RUNTIME-DEAD while the dialog is suppressed in
+  // app.ts (isExitDialogEnabled() default off — ER SDK image-channel defect). They are kept,
+  // and written as the correct EvenRoads-style handling, so behavior is right the instant the
+  // dialog is re-enabled after ER ships an SDK fix. The earlier WebView-reload recovery was
+  // removed: on-device logs proved the host keeps the BLE session across location.reload(), so
+  // the image channel stayed dead AND the reload added a jarring ~2s blank — strictly worse.
+
+  /** sys=4 while exit dialog pending: dialog appeared, host cleared the page. Rebuild it. */
+  function onExitDialogShown(): void {
+    debugLog('exit-dialog shown (sys=4) — rebuilding page', {}, 'LCY');
+    if (!deps.imageContainersActive()) return;
+    void deps.bridge.updatePage(composePageForState(deps.store.getState()));
+  }
+
+  /** sys=5 while exit dialog pending: user tapped "No". Keep running; re-render. Do NOT pause. */
+  function onExitDialogCancelled(): void {
+    debugLog('exit-dialog cancelled (sys=5) — re-rendering, app stays alive', {}, 'LCY');
+    deps.bridge.clearExitDialog();
+    deps.flush.setForceFullRefresh();
+    deps.branding.forceNextRefresh();
+    void deps.flush.flushNow({ force: true });
+    deps.branding.syncNow();
+  }
+
+  function doSystemExitCleanup(reason: string): void {
+    debugLog('lifecycle system-exit cleanup', { reason }, 'LCY');
+    deps.bridge.clearExitDialog();
+    deps.flush.cancel();
+    deps.branding.cancel();
+    deps.autosave.flushNow();
+    void (async () => {
+      try {
+        await deps.bridge.shutdown();
+      } catch (err) {
+        console.error('[lifecycle] bridge.shutdown error', err);
+      }
+      detach();
+    })();
+  }
+
+  function doAbnormalExitCleanup(): void {
+    debugLog('lifecycle abnormal-exit cleanup', {}, 'LCY');
+    deps.bridge.clearExitDialog();
+    deps.bridge.clearPending();
+    deps.bulletTimer.suspend();
+    deps.autosave.flushNow();
   }
 
   function onHubEvent(event: EvenHubEvent): void {
     const sysEvent = event.sysEvent;
     if (!sysEvent) return;
-    const eventType = sysEvent.eventType;
-    if (eventType === undefined || eventType === null) return;
+    // Protobuf strips zero values: CLICK_EVENT (0) arrives as undefined. We only care about
+    // lifecycle types (4/5/6/7), all non-zero, so `?? 0` then a membership check is safe.
+    const eventType = sysEvent.eventType ?? 0;
+    if (
+      eventType !== FOREGROUND_ENTER &&
+      eventType !== FOREGROUND_EXIT &&
+      eventType !== ABNORMAL_EXIT &&
+      eventType !== SYSTEM_EXIT
+    ) {
+      return;
+    }
 
-    if (eventType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
+    // Dedupe duplicate firmware echoes (one physical transition → 2 events ~50–100ms apart).
+    const now = Date.now();
+    if (eventType === lastSysType && now - lastSysAt < SYS_EVENT_DEDUP_MS) {
+      debugLog('lifecycle dup sys event ignored', { eventType }, 'LCY');
+      return;
+    }
+    lastSysType = eventType;
+    lastSysAt = now;
+
+    // --- Exit-dialog path: inverted polarity ---
+    if (deps.bridge.isExitDialogPending()) {
+      if (eventType === FOREGROUND_ENTER) {
+        onExitDialogShown();
+        return;
+      }
+      if (eventType === FOREGROUND_EXIT) {
+        onExitDialogCancelled();
+        return;
+      }
+      if (eventType === SYSTEM_EXIT) {
+        doSystemExitCleanup('exit-dialog-confirmed');
+        return;
+      }
+      if (eventType === ABNORMAL_EXIT) {
+        doAbnormalExitCleanup();
+        return;
+      }
+      return;
+    }
+
+    // --- Normal lifecycle ---
+    if (eventType === FOREGROUND_EXIT) {
       onHide('foreground-exit');
       return;
     }
-    if (eventType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
+    if (eventType === FOREGROUND_ENTER) {
       onShow('foreground-enter');
       return;
     }
-
-    const abnormalExitType = (OsEventTypeList as unknown as { ABNORMAL_EXIT_EVENT?: number }).ABNORMAL_EXIT_EVENT;
-    if (typeof abnormalExitType === 'number' && eventType === abnormalExitType) {
-      debugLog('lifecycle abnormal-exit', {}, 'LCY');
-      // WebView is going away. Flush autosave and drop pending sends; do NOT await shutdown
-      // because the host has already torn down BLE.
-      deps.bridge.clearPending();
-      deps.bulletTimer.suspend();
-      deps.autosave.flushNow();
+    if (eventType === ABNORMAL_EXIT) {
+      doAbnormalExitCleanup();
       return;
     }
-
-    const systemExitType = (OsEventTypeList as unknown as { SYSTEM_EXIT_EVENT?: number }).SYSTEM_EXIT_EVENT;
-    if (typeof systemExitType === 'number' && eventType === systemExitType) {
-      debugLog('lifecycle system-exit', {}, 'LCY');
-      // User confirmed exit from the system "End this feature?" dialog. Properly await
-      // bridge.shutdown() — race #7 fix vs the v1 fire-and-forget `fireEarlyShutdown` path.
-      deps.flush.cancel();
-      deps.branding.cancel();
-      deps.autosave.flushNow();
-      void (async () => {
-        try {
-          await deps.bridge.shutdown();
-        } catch (err) {
-          console.error('[lifecycle] bridge.shutdown error', err);
-        }
-        detach();
-      })();
+    if (eventType === SYSTEM_EXIT) {
+      doSystemExitCleanup('system-exit');
       return;
     }
   }
@@ -240,9 +271,6 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     deps.deviceFlags.isDeviceConnected = connected;
 
     if ((wearingChanged && wearing) || (connectedChanged && connected)) {
-      // Resume / reconnect: force a refresh so the display catches up with whatever happened
-      // while flushes were skipped. Branding gets the same treatment so it doesn't show stale
-      // state when the user puts the glasses back on after a checkmate happened in the interim.
       deps.flush.setForceFullRefresh();
       deps.branding.forceNextRefresh();
       deps.flush.schedule();
@@ -250,15 +278,5 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
   }
 
-  function notifyInputReceived(): void {
-    // If we're "hidden" but a user input just arrived, the app is clearly back in the foreground —
-    // the SDK's FG_ENTER event didn't fire (a known iOS quirk after the exit-dialog dismiss).
-    // Treat this as an implicit foreground-enter and run the full recovery path.
-    if (isHidden) {
-      debugLog('lifecycle implicit foreground-enter from input', {}, 'LCY');
-      onShow('input-after-hidden');
-    }
-  }
-
-  return { attach, detach, onHubEvent, onDeviceStatusChanged, notifyInputReceived };
+  return { attach, detach, onHubEvent, onDeviceStatusChanged };
 }

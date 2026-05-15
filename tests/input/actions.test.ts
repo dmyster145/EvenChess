@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mapListEvent, mapTextEvent, mapSysEvent, resetScrollDebounce, resetTapCooldown, resetScrollSuppression } from '../../src/input/actions';
+import { mapListEvent, mapTextEvent, mapSysEvent, resetScrollDebounce, resetTapCooldown, resetScrollSuppression, resetInputDedup } from '../../src/input/actions';
 import { OsEventTypeList, List_ItemEvent, Text_ItemEvent, Sys_ItemEvent } from '@evenrealities/even_hub_sdk';
 
 describe('input/actions', () => {
@@ -7,6 +7,7 @@ describe('input/actions', () => {
     resetScrollDebounce();
     resetTapCooldown();
     resetScrollSuppression();
+    resetInputDedup();
   });
 
   describe('mapListEvent', () => {
@@ -120,6 +121,33 @@ describe('input/actions', () => {
       const action = mapSysEvent(event);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('FOREGROUND_EXIT');
+    });
+  });
+
+  describe('firmware duplicate-event dedup (ER point 3)', () => {
+    it('drops a duplicate DOUBLE_CLICK within the 600ms window', () => {
+      const ev = () => new Sys_ItemEvent({ eventType: OsEventTypeList.DOUBLE_CLICK_EVENT });
+      const first = mapSysEvent(ev());
+      expect(first?.type).toBe('DOUBLE_TAP');
+      // Firmware echoes the same physical double-tap ~50–100ms later — must be dropped so the
+      // menu→exit-dialog short-circuit only fires shutDownPageContainer(1) once.
+      const echo = mapSysEvent(ev());
+      expect(echo).toBeNull();
+    });
+
+    it('drops a duplicate CLICK within the 130ms window', () => {
+      const ev = () => new Sys_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT });
+      const first = mapSysEvent(ev());
+      expect(first?.type).toBe('TAP');
+      const echo = mapSysEvent(ev());
+      expect(echo).toBeNull();
+    });
+
+    it('dedup is cross-channel (list CLICK then text CLICK echo is dropped)', () => {
+      const listClick = mapListEvent(new List_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT }));
+      expect(listClick?.type).toBe('TAP');
+      const textEcho = mapTextEvent(new Text_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT }));
+      expect(textEcho).toBeNull();
     });
   });
 });

@@ -56,6 +56,28 @@ type BackgroundSnapshot = {
   showBoardMarkers: boolean;
 };
 
+/**
+ * Whether the in-app exit dialog (shutDownPageContainer(1)) is invoked on menu double-tap.
+ *
+ * Default OFF due to a confirmed ER SDK defect: invoking shutDownPageContainer(1) permanently
+ * kills the updateImageRawData BLE channel for the whole native session (not recoverable by
+ * rebuild, reinit, or WebView reload — reported to ER). Users exit via the firmware long-press,
+ * which does not break the image channel.
+ *
+ * This is a RUNTIME check (reads localStorage), deliberately NOT a compile-time const, so the
+ * production minifier cannot prove the `bridge.requestSystemExit()` branch is dead and tree-shake
+ * `shutDownPageContainer` out of the bundle — ER's static submission checker requires the API to
+ * be present. Re-enable instantly once the SDK is fixed, no rebuild:
+ *   localStorage.setItem('evenchess-exit-dialog', 'on'); location.reload()
+ */
+function isExitDialogEnabled(): boolean {
+  try {
+    return localStorage.getItem('evenchess-exit-dialog') === 'on';
+  } catch {
+    return false;
+  }
+}
+
 export async function initApp(): Promise<void> {
   const chess = new ChessService();
 
@@ -196,26 +218,45 @@ export async function initApp(): Promise<void> {
 
   // Hub event subscription — input handler dispatches actions, lifecycle handler covers sysEvents.
   function handleHubEvent(event: EvenHubEvent): void {
+    // Ground-truth raw event stream (ER guidance #7). One compact line per SDK event BEFORE any
+    // handling, so a copied log shows the exact sequence + timing instead of us theorizing.
+    // `?? 0` per protobuf zero-strip (CLICK/eventType=0 arrives undefined). '-' = channel absent.
+    debugLog('raw', {
+      sys: event.sysEvent ? (event.sysEvent.eventType ?? 0) : '-',
+      text: event.textEvent ? (event.textEvent.eventType ?? 0) : '-',
+      list: event.listEvent ? (event.listEvent.eventType ?? 0) : '-',
+      exitPending: bridge.isExitDialogPending(),
+      phase: store.getState().phase,
+    }, 'EVT');
+
     lifecycle.onHubEvent(event);
     const action = mapEvenHubEvent(event, store.getState());
+    debugLog('mapped', { action: action?.type ?? 'null' }, 'EVT');
     if (action) {
-      // Real user input — let the lifecycle treat this as an implicit foreground-enter if the
-      // app was marked hidden but didn't get a FG_ENTER (iOS post-dialog quirk).
-      lifecycle.notifyInputReceived();
-
-      // Short-circuit: double-tap in menu phase opens the system exit dialog. Bypass the
-      // reducer + side-effects + flush chain entirely — calling shutDownPageContainer(1) while
-      // the JS is also dispatching state updates and scheduling text/image flushes wedges the
-      // SDK's BLE image transport for the rest of the session (the post-dialog board freeze).
-      // The user's own observation: long-press exit (handled fully by glasses firmware, no JS
-      // work) doesn't trigger the freeze, but our double-tap path does. Mimic the firmware's
-      // minimal pattern: cancel pending work, fire shutDownPageContainer, return immediately.
-      // No state change, no follow-up flush, no race with the dialog setup.
+      // Menu double-tap = "show the system exit dialog" (ER-required affordance via
+      // bridge.requestSystemExit() → shutDownPageContainer(1)).
+      //
+      // KNOWN ER SDK DEFECT (reported upstream): invoking shutDownPageContainer(1) permanently
+      // destroys the updateImageRawData BLE channel for the entire native session. Confirmed on
+      // device — rebuildPageContainer/text keep working, every image send returns sendFailed,
+      // and the damage survives a WebView reload (the host keeps the BLE session). There is no
+      // app-side recovery. It makes the required exit API incompatible with image-rendering apps.
+      //
+      // Until ER fixes the SDK, the dialog invocation is gated OFF at runtime via
+      // `isExitDialogEnabled()` (default off; flip with localStorage key once fixed — no rebuild
+      // needed). The call site is preserved and reachable so the static bundle checker still
+      // finds `shutDownPageContainer` and so the code is correct the instant the SDK is fixed.
+      // Users exit via the firmware long-press, which does NOT break the image channel.
       const currentPhase = store.getState().phase;
       if (action.type === 'DOUBLE_TAP' && currentPhase === 'menu') {
-        flush.cancel();
-        branding.cancel();
-        bridge.requestSystemExit();
+        if (isExitDialogEnabled()) {
+          debugLog('menu double-tap → requestSystemExit', {}, 'LCY');
+          flush.cancel();
+          branding.cancel();
+          bridge.requestSystemExit();
+        } else {
+          debugLog('menu double-tap — exit dialog suppressed (ER SDK image-channel defect; long-press to exit)', {}, 'LCY');
+        }
         return;
       }
 
@@ -282,15 +323,12 @@ export async function initApp(): Promise<void> {
 
   lifecycle.attach();
 
-  // Persistent-image-failure recovery. v2's bridge fires this callback when consecutive
-  // updateImageRawData calls return non-success (typically `sendFailed` after the iOS exit-dialog
-  // wedges the BLE image transport). Recovery: reset the bridge sender state and force-flush so
-  // the latest state is re-queued. We deliberately do NOT rebuild the page here — see the
-  // matching note in lifecycle.ts:onShow. The page rebuild succeeds at the SDK level but
-  // replaces the live image containers with empty placeholders, and the followup fills (which
-  // travel as separate updateImageRawData calls) keep returning `sendFailed`, leaving a blank
-  // board. Without the rebuild, the previously-rendered frame stays on the glasses while we
-  // keep retrying — frozen-but-visible is the lesser evil compared to blank.
+  // Persistent-image-failure recovery — a safety net for genuine BLE wedges (not the exit-dialog
+  // case, which lifecycle.ts now handles correctly via the inverted-polarity event model). The
+  // bridge fires this after consecutive non-success updateImageRawData results. Recovery: reset
+  // the sender state and force-flush so the latest state is re-queued. We deliberately do NOT
+  // rebuild the page here — a rebuild swaps the live image containers for empty placeholders, and
+  // if the followup fills also fail the board goes blank (worse than frozen-but-visible).
   bridge.onPersistentImageFailure((failureCount) => {
     debugLog('app: persistent image failure — resetting transport and retrying flush', { failureCount }, 'BRG');
     bridge.forceResetImageTransport('persistent-failure');

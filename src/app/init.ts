@@ -103,8 +103,17 @@ export async function setupTextOnlyStartup(
   store: Store,
 ): Promise<boolean> {
   const state = store.getState();
-  const ok = await bridge.setupPage(composeTextOnlyStartupPage(state));
-  if (!ok) return false;
+  let ok = await bridge.setupPage(composeTextOnlyStartupPage(state));
+  if (!ok) {
+    // createStartUpPageContainer was rejected. This is expected on the exit-dialog-cancel
+    // recovery path: we `location.reload()` the WebView, but the Even Hub host keeps the BLE
+    // session alive across the reload, and createStartUpPageContainer is one-shot PER SESSION
+    // (not per WebView load). Fall back to rebuildPageContainer, which is valid mid-session and
+    // re-creates the page (with a fresh image channel from the reloaded JS context).
+    debugLog('setupPage rejected — falling back to rebuildPageContainer (post-reload path)', {}, 'INIT');
+    ok = await bridge.updatePage(composePageForState(state));
+    if (!ok) return false;
+  }
 
   void preloadBrandingImages();
   const text = getCombinedDisplayText(state, { boardReady: false });

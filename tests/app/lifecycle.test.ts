@@ -10,26 +10,44 @@ import type { AutosaveController } from '../../src/app/autosave';
 import type { EvenHubBridge } from '../../src/evenhub/bridge';
 import { OsEventTypeList } from '@evenrealities/even_hub_sdk';
 
+const SYSTEM_EXIT = (OsEventTypeList as unknown as { SYSTEM_EXIT_EVENT?: number }).SYSTEM_EXIT_EVENT ?? 7;
+
 interface BridgeRecorder {
   cleared: number;
   shutdownCalls: number;
   forceResets: number;
+  updatePages: number;
+  clearExitDialogCalls: number;
+  exitDialogPending: boolean;
   resolveShutdown: () => void;
 }
 
 function makeBridge(): EvenHubBridge & BridgeRecorder {
   let resolveShutdown = (): void => {};
   const recorder: Partial<EvenHubBridge> & BridgeRecorder = {
-    kind: 'v2',
     cleared: 0,
     shutdownCalls: 0,
     forceResets: 0,
+    updatePages: 0,
+    clearExitDialogCalls: 0,
+    exitDialogPending: false,
     resolveShutdown: () => resolveShutdown(),
     clearPending() {
       this.cleared += 1;
     },
     forceResetImageTransport() {
       this.forceResets += 1;
+    },
+    isExitDialogPending() {
+      return this.exitDialogPending;
+    },
+    clearExitDialog() {
+      this.clearExitDialogCalls += 1;
+      this.exitDialogPending = false;
+    },
+    async updatePage() {
+      this.updatePages += 1;
+      return true;
     },
     async shutdown() {
       this.shutdownCalls += 1;
@@ -106,6 +124,7 @@ describe('createLifecycle', () => {
   let deviceFlags: DeviceStatusFlags;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     chess = new ChessService();
     store = createStore(buildInitialState(chess));
     bridge = makeBridge();
@@ -117,11 +136,11 @@ describe('createLifecycle', () => {
   });
 
   afterEach(() => {
-    // No-op — tests that attach() also call detach() in cleanup.
+    vi.useRealTimers();
   });
 
   function makeLifecycle(opts?: { imageContainersActive?: boolean }): ReturnType<typeof createLifecycle> {
-    const imageContainersActive = opts?.imageContainersActive ?? false;
+    const imageContainersActive = opts?.imageContainersActive ?? true;
     return createLifecycle({
       bridge,
       store,
@@ -134,57 +153,92 @@ describe('createLifecycle', () => {
     });
   }
 
-  it('FOREGROUND_EXIT suspends timer + flushes autosave but does NOT clear bridge pending', () => {
-    // Per the iOS WKWebView fix: clearing the bridge's pending map on FG_EXIT interacted badly
-    // with shutDownPageContainer(1)'s exit-dialog flow (the SDK send sometimes never resolved
-    // and the `cleared` flag mechanism delayed recovery). Latest-wins handles staleness on resume.
+  // --- Normal lifecycle (no exit dialog pending) ---
+
+  it('FOREGROUND_EXIT (no exit dialog) suspends timer + flushes autosave', () => {
     const lifecycle = makeLifecycle();
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
-    expect(bridge.cleared).toBe(0);
     expect(bulletTimer.suspended).toBe(1);
     expect(autosave.flushes).toBe(1);
+    expect(bridge.cleared).toBe(0);
   });
 
-  it('FOREGROUND_ENTER forces a refresh and resumes timer (must follow a FOREGROUND_EXIT)', async () => {
+  it('FOREGROUND_ENTER (no exit dialog) resumes timer + force-refreshes, after a FG_EXIT', async () => {
     const lifecycle = makeLifecycle();
-    // The dedupe ignores show-while-already-showing; first put the app into hidden state.
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    // Advance past the sys-event dedup window so the ENTER isn't swallowed.
+    await vi.advanceTimersByTimeAsync(700);
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
     expect(bulletTimer.resumed).toBe(1);
     expect(flush.forces).toBeGreaterThanOrEqual(1);
-    expect(branding.forces).toBeGreaterThanOrEqual(1);
     expect(flush.flushNows).toBe(1);
   });
 
-  it('duplicate FOREGROUND_EXIT and FOREGROUND_ENTER events are deduped (SDK fires per ear)', () => {
+  it('duplicate sys events within 600ms are deduped', () => {
     const lifecycle = makeLifecycle();
-    // Two consecutive exits — second is ignored.
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
     expect(bulletTimer.suspended).toBe(1);
     expect(autosave.flushes).toBe(1);
+  });
 
-    // Two consecutive enters — second is ignored.
+  // --- Exit-dialog path (inverted polarity) ---
+
+  // The exit-dialog path is runtime-dead while the dialog is suppressed (ER SDK image-channel
+  // defect — see app.ts isExitDialogEnabled). These tests pin the EvenRoads-style handling that
+  // takes effect if/when the dialog is re-enabled after ER ships an SDK fix.
+
+  it('exit dialog: FOREGROUND_ENTER (sys=4) rebuilds the page, does NOT resume as a foreground', () => {
+    bridge.exitDialogPending = true;
+    const lifecycle = makeLifecycle({ imageContainersActive: true });
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
-    expect(bulletTimer.resumed).toBe(1);
+    // Host cleared the page when the dialog appeared — rebuild it (control channel works).
+    expect(bridge.updatePages).toBe(1);
+    // Must NOT run the normal foreground-resume path.
+    expect(bulletTimer.resumed).toBe(0);
+    expect(flush.flushNows).toBe(0);
+  });
+
+  it('exit dialog: FOREGROUND_EXIT (sys=5) = "No" — clears flag, re-renders, app stays alive (no pause, no reload)', () => {
+    bridge.exitDialogPending = true;
+    const lifecycle = makeLifecycle({ imageContainersActive: true });
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    expect(bridge.clearExitDialogCalls).toBe(1);
+    // Must NOT treat as background.
+    expect(bulletTimer.suspended).toBe(0);
+    // Re-renders to keep the app alive; no page rebuild here (sys=4 did that), no WebView reload.
+    expect(bridge.updatePages).toBe(0);
     expect(flush.flushNows).toBe(1);
   });
 
-  it('SYSTEM_EXIT awaits bridge.shutdown() then detaches', async () => {
+  it('exit dialog: SYSTEM_EXIT (sys=7) = "Yes" — cleans up and shuts down', async () => {
+    bridge.exitDialogPending = true;
     const lifecycle = makeLifecycle();
     lifecycle.attach();
-    const systemExitType = (OsEventTypeList as unknown as { SYSTEM_EXIT_EVENT?: number }).SYSTEM_EXIT_EVENT;
-    expect(typeof systemExitType).toBe('number');
-    lifecycle.onHubEvent({ sysEvent: { eventType: systemExitType } });
-    expect(bridge.shutdownCalls).toBe(1);
-    expect(autosave.flushes).toBe(1);
+    lifecycle.onHubEvent({ sysEvent: { eventType: SYSTEM_EXIT } });
+    expect(bridge.clearExitDialogCalls).toBe(1);
     expect(flush.cancels).toBe(1);
     expect(branding.cancels).toBe(1);
+    expect(autosave.flushes).toBe(1);
+    expect(bridge.shutdownCalls).toBe(1);
     bridge.resolveShutdown();
-    // Allow the awaited shutdown promise to resolve and detach to fire.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
   });
+
+  it('exit dialog cancel then a genuine later background works normally', async () => {
+    bridge.exitDialogPending = true;
+    const lifecycle = makeLifecycle({ imageContainersActive: true });
+    // "No" tapped — flag cleared.
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    expect(bridge.exitDialogPending).toBe(false);
+    expect(bulletTimer.suspended).toBe(0);
+    await vi.advanceTimersByTimeAsync(700);
+    // A genuine background later (no exit dialog pending) now suspends normally.
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    expect(bulletTimer.suspended).toBe(1);
+  });
+
+  // --- Device status ---
 
   it('onDeviceStatusChanged: wearing-resume forces a refresh', () => {
     const lifecycle = makeLifecycle();
@@ -206,29 +260,5 @@ describe('createLifecycle', () => {
     lifecycle.attach();
     lifecycle.attach();
     lifecycle.detach();
-  });
-
-  it('notifyInputReceived treats input-while-hidden as an implicit foreground-enter', () => {
-    const lifecycle = makeLifecycle();
-    // Put the app into hidden state.
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
-    expect(bulletTimer.suspended).toBe(1);
-
-    // Input arrives but no FG_ENTER fires (iOS post-dialog quirk). notifyInputReceived runs the
-    // recovery path.
-    lifecycle.notifyInputReceived();
-    expect(bulletTimer.resumed).toBe(1);
-    expect(flush.forces).toBeGreaterThanOrEqual(1);
-    expect(branding.forces).toBeGreaterThanOrEqual(1);
-    expect(flush.flushNows).toBe(1);
-    expect(bridge.forceResets).toBe(1);
-  });
-
-  it('notifyInputReceived is a no-op when not hidden', () => {
-    const lifecycle = makeLifecycle();
-    lifecycle.notifyInputReceived();
-    expect(bulletTimer.resumed).toBe(0);
-    expect(flush.forces).toBe(0);
-    expect(bridge.forceResets).toBe(0);
   });
 });
