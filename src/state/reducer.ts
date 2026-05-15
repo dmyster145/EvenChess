@@ -43,7 +43,7 @@ import { getRandomFamousGame, STARTING_FEN } from '../academy/pgn';
  * by the store subscriber layer in app.ts.
  */
 export function reduce(state: GameState, action: Action): GameState {
-  if (state.gameOver && action.type !== 'NEW_GAME' && action.type !== 'OPEN_MENU' && action.type !== 'CLOSE_MENU' && action.type !== 'DOUBLE_TAP') {
+  if (state.gameOver && action.type !== 'NEW_GAME' && action.type !== 'OPEN_MENU' && action.type !== 'CLOSE_MENU' && action.type !== 'DOUBLE_TAP' && action.type !== 'RESTORE_STATE') {
     return state;
   }
 
@@ -132,6 +132,24 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case 'CONFIRM_EXIT':
       return handleConfirmExit(state, action.save);
+
+    case 'CLEAR_SYSTEM_EXIT_REQUEST':
+      return state.pendingSystemExitDialog ? { ...state, pendingSystemExitDialog: false } : state;
+
+    case 'RESTORE_STATE':
+      // Replay state captured by background-state.ts before the host migrated us to a headless
+      // WebView. Reset transient flags that don't survive the move (engine work isn't actually
+      // running in this WebView yet; pending moves were lost). The chess service must be reloaded
+      // from action.state.fen by the caller before the next flush — done in the app subscriber.
+      return {
+        ...action.state,
+        engineThinking: false,
+        pendingMove: null,
+        pendingPromotionMove: null,
+        pendingSystemExitDialog: false,
+        // lastTickTime should be reset; the next TIMER_TICK will recompute elapsed from now.
+        lastTickTime: action.state.timerActive ? Date.now() : null,
+      };
 
     case 'LOAD_GAME':
       return {
@@ -717,7 +735,10 @@ function handleDoubleTap(state: GameState): GameState {
       return { ...state, phase: 'destSelect' };
 
     case 'menu':
-      return handleCloseMenu(state);
+      // Per ER guidance, double-tap in the settings menu surfaces the system "End this feature?"
+      // dialog. The app subscriber sees this flag and calls bridge.shutDownPageContainer(1).
+      // Stay in the menu phase: if the user cancels the system dialog the app is still on the menu.
+      return { ...state, pendingSystemExitDialog: true };
 
     case 'viewLog':
       return { ...state, phase: 'menu', menuSelectedIndex: 0 };
@@ -916,10 +937,11 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
       };
 
     case 'exit':
-      if (state.hasUnsavedChanges) {
-        return { ...state, phase: 'exitConfirm', menuSelectedIndex: 0 };
-      }
-      return { ...state, phase: 'idle', previousPhase: null };
+      // "Exit Menu" closes the settings menu and returns to the previous phase. Autosave handles
+      // state durability (debounced after every move), so there's no need for the prior
+      // "Save & Exit / Cancel" sub-dialog — it was misleading: the user wasn't exiting the app,
+      // just the menu. Use double-tap in the menu to exit the app via the ER system dialog.
+      return handleCloseMenu(state);
 
     default:
       return state;

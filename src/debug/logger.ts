@@ -88,11 +88,47 @@ export function getDebugLogText(): string {
 export function copyDebugLog(): boolean {
   const text = getDebugLogText();
   if (!text) return false;
+  // navigator.clipboard.writeText requires a secure context AND a fresh user-gesture permission
+  // grant. On iOS WKWebView hosting an Even Hub plugin neither is reliably available — the API
+  // exists but writeText() rejects silently (or the Promise never resolves), so the deprecated
+  // execCommand('copy') path is the durable fallback. Try the modern API first, fall through
+  // synchronously if it isn't usable.
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    void navigator.clipboard.writeText(text);
-    return true;
+    try {
+      const writePromise = navigator.clipboard.writeText(text);
+      // Attach a catch handler so a rejection doesn't bubble to an unhandled rejection. If the
+      // modern API fails, the fallback below has already run synchronously above.
+      Promise.resolve(writePromise).catch(() => {});
+    } catch {
+      // fall through to execCommand
+    }
   }
-  return false;
+  return fallbackExecCommandCopy(text);
+}
+
+function fallbackExecCommandCopy(text: string): boolean {
+  if (typeof document === 'undefined') return false;
+  let textarea: HTMLTextAreaElement | null = null;
+  try {
+    textarea = document.createElement('textarea');
+    textarea.value = text;
+    // Position off-screen but keep it in the layout tree; some browsers refuse to copy from
+    // display:none / visibility:hidden elements.
+    textarea.style.position = 'fixed';
+    textarea.style.left = '0';
+    textarea.style.top = '0';
+    textarea.style.opacity = '0';
+    textarea.setAttribute('readonly', '');
+    document.body.appendChild(textarea);
+    textarea.focus({ preventScroll: true });
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    if (textarea && textarea.parentNode) textarea.parentNode.removeChild(textarea);
+  }
 }
 
 export function clearDebugLog(): void {

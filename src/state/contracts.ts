@@ -135,6 +135,13 @@ export interface GameState {
   menuSelectedIndex: number;
   hasUnsavedChanges: boolean;
   previousPhase: UIPhase | null;
+  /**
+   * Set by the reducer when the user double-taps in the settings menu. The app subscriber observes
+   * the false→true transition and calls `bridge.shutDownPageContainer(1)` to surface the system's
+   * "End this feature?" confirmation dialog, then clears the flag. Per ER guidance, no app-side
+   * cleanup happens here — if the user confirms, cleanup runs in the SYSTEM_EXIT_EVENT handler.
+   */
+  pendingSystemExitDialog?: boolean;
   difficulty: DifficultyLevel;
   boardAlignment: BoardAlignment;
   boardSize: BoardSize;
@@ -170,6 +177,8 @@ export type Action =
   | { type: 'MENU_SELECT'; option: MenuOption }
   | { type: 'CLOSE_MENU' }
   | { type: 'CONFIRM_EXIT'; save: boolean }
+  | { type: 'CLEAR_SYSTEM_EXIT_REQUEST' }
+  | { type: 'RESTORE_STATE'; state: GameState }
   | { type: 'LOAD_GAME'; fen: string; history: string[]; turn: 'w' | 'b' }
   | { type: 'MARK_SAVED' }
   | { type: 'SET_DIFFICULTY'; level: DifficultyLevel }

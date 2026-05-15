@@ -143,10 +143,14 @@ export function mapEvenHubEvent(event: EvenHubEvent, state: GameState): Action |
   }
 }
 
-// Simulator sends clicks without eventType - just currentSelectItemIndex
+// Per ER skill: "Always use nullish coalescing: event.sysEvent.eventType ?? 0". Protobuf encodes
+// the zero value (CLICK_EVENT = 0) as `undefined` on the wire, so `?? CLICK_EVENT` at the top of
+// each mapper handles the protobuf-omitted-zero case in one place instead of a separate `default`
+// fallback per switch.
+
 export function mapListEvent(event: List_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
-  const eventType = event.eventType;
+  const eventType = event.eventType ?? OsEventTypeList.CLICK_EVENT;
 
   switch (eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
@@ -174,21 +178,13 @@ export function mapListEvent(event: List_ItemEvent, state: GameState): Action | 
     }
 
     default:
-      if (event.currentSelectItemIndex != null) {
-        if (!tryConsumeTap('TAP')) return null;
-        return {
-          type: 'TAP',
-          selectedIndex: event.currentSelectItemIndex,
-          selectedName: event.currentSelectItemName ?? '',
-        };
-      }
       return null;
   }
 }
 
 export function mapTextEvent(event: Text_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
-  const eventType = event.eventType;
+  const eventType = event.eventType ?? OsEventTypeList.CLICK_EVENT;
 
   switch (eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
@@ -212,19 +208,14 @@ export function mapTextEvent(event: Text_ItemEvent, state: GameState): Action | 
     }
 
     default:
-      // G2: SDK can normalize CLICK_EVENT (0) to undefined; treat as tap so menu clicks work on device
-      if (eventType == null) {
-        if (!tryConsumeTap('TAP')) return null;
-        return { type: 'TAP', selectedIndex: 0, selectedName: '' };
-      }
       return null;
   }
 }
 
-// Simulator sends clicks as empty sysEvents
 export function mapSysEvent(event: Sys_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
-  switch (event.eventType) {
+  const eventType = event.eventType ?? OsEventTypeList.CLICK_EVENT;
+  switch (eventType) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
       if (isScrollDebounced('down', state)) return null;
       if (isScrollSuppressed()) return null;
@@ -252,10 +243,6 @@ export function mapSysEvent(event: Sys_ItemEvent, state: GameState): Action | nu
       return { type: 'FOREGROUND_EXIT' };
 
     default:
-      if (event.eventType == null) {
-        if (!tryConsumeTap('TAP')) return null;
-        return { type: 'TAP', selectedIndex: 0, selectedName: '' };
-      }
       return null;
   }
 }

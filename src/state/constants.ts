@@ -6,7 +6,7 @@ import type { MenuOption, DifficultyLevel, GameMode, DrillType } from './contrac
 
 // Menu options and labels are parallel arrays
 export const MENU_OPTIONS: MenuOption[] = ['mode', 'boardMarkers', 'viewLog', 'difficulty', 'displayOptions', 'reset', 'exit'];
-export const MENU_LABELS: readonly string[] = ['Mode', 'Board Markers', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit'];
+export const MENU_LABELS: readonly string[] = ['Mode', 'Board Markers', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit Menu'];
 export const MENU_OPTION_COUNT = MENU_OPTIONS.length;
 
 export const MENU_INDEX = {

@@ -277,39 +277,12 @@ export class BoardRenderer {
     return this.render(state, chess, true);
   }
 
-  /**
-   * Sync internal highlight state to a state we displayed via cache.
-   * Call after sending cached images so the next render() has correct dirty detection.
-   */
-  setStateForCache(state: GameState): void {
-    const highlights = getHighlights(state);
-    this.currentHighlightKeys.clear();
-    for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
-    const tmp = this.prevHighlightKeys;
-    this.prevHighlightKeys = this.currentHighlightKeys;
-    this.currentHighlightKeys = tmp;
-  }
-
-  /**
-   * Copy rendering state from another instance so this renderer diffs from the same
-   * baseline. Used by the refill renderer to prevent it from corrupting the main
-   * renderer's prevHighlightKeys across sequential refill renders.
-   */
-  copyStateFrom(other: BoardRenderer): void {
-    this.basePixels.set(other.basePixels);
-    this.prevBasePixels.set(other.prevBasePixels);
-    this.lastFen = other.lastFen;
-    this.lastShowBoardMarkers = other.lastShowBoardMarkers;
-    this.prevHighlightKeys = new Set(other.prevHighlightKeys);
-    this.currentHighlightKeys = new Set(other.currentHighlightKeys);
-  }
 
   /**
    * Same as render() but encodes dirty halves as PNG for smaller BLE payload.
    * Returns [] in non-browser or if canvas fails (caller can fall back to render()).
-   * slotBase 0 = main flush (uses canvas slots 0,1); slotBase 2 = refill (uses 2,3) for parallel next+prev.
    */
-  async renderPngAsync(state: GameState, chess: ChessService, slotBase: 0 | 2 = 0, forceBothHalves = false): Promise<ImageRawDataUpdate[]> {
+  async renderPngAsync(state: GameState, chess: ChessService, forceBothHalves = false): Promise<ImageRawDataUpdate[]> {
     const fen = state.fen;
     const showBoardMarkers = this.largeGrid ? false : state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
@@ -351,8 +324,8 @@ export class BoardRenderer {
       const bottomPixels = this.workPixels.subarray(HALF_PIXELS);
       // Encode top/bottom in parallel on separate reusable canvas slots to reduce total encode time.
       const [topPng, bottomPng] = await Promise.all([
-        topDirty ? encodePixelsToPng(topPixels, IMAGE_WIDTH, IMAGE_HEIGHT, slotBase) : Promise.resolve(new Uint8Array(0)),
-        bottomDirty ? encodePixelsToPng(bottomPixels, IMAGE_WIDTH, IMAGE_HEIGHT, slotBase + 1) : Promise.resolve(new Uint8Array(0)),
+        topDirty ? encodePixelsToPng(topPixels, IMAGE_WIDTH, IMAGE_HEIGHT, 0) : Promise.resolve(new Uint8Array(0)),
+        bottomDirty ? encodePixelsToPng(bottomPixels, IMAGE_WIDTH, IMAGE_HEIGHT, 1) : Promise.resolve(new Uint8Array(0)),
       ]);
       if ((topDirty && topPng.length === 0) || (bottomDirty && bottomPng.length === 0)) {
         return this.render(state, chess, true);
@@ -376,10 +349,10 @@ export class BoardRenderer {
     // FEN/marker changes may dirty both halves; parallel PNG encode keeps CPU time small vs transport time.
     const [topPng, bottomPng] = await Promise.all([
       topDirty
-        ? encodePixelsToPng(this.workPixels.subarray(0, HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase)
+        ? encodePixelsToPng(this.workPixels.subarray(0, HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, 0)
         : Promise.resolve(new Uint8Array(0)),
       bottomDirty
-        ? encodePixelsToPng(this.workPixels.subarray(HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, slotBase + 1)
+        ? encodePixelsToPng(this.workPixels.subarray(HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, 1)
         : Promise.resolve(new Uint8Array(0)),
     ]);
     if ((topDirty && topPng.length === 0) || (bottomDirty && bottomPng.length === 0)) return this.render(state, chess, true);

@@ -1,1664 +1,322 @@
 /**
- * EvenChess — Application entry point.
+ * EvenChess — Application entry point (orchestrator).
  *
- * Wires all modules together:
- *   ChessService  →  Store  →  PageComposer  →  EvenHubBridge
- *                      ↑                            |
- *                  InputMapper  ←  SDK Events  ←────┘
+ *   ChessService  →  Store  →  flush.ts → bridge.updateImage/updateText → G2 glasses
+ *                       ↑                            |
+ *                  InputMapper  ←  SDK Events  ←─────┘
  *
- * Update strategy:
- *   - Initial setup → createStartUpPageContainer (once)
- *   - All subsequent updates → textContainerUpgrade + dirty board images
- *   - Text and images sent in parallel (independent containers)
- *   - Board render skipped when only text changed (engineThinking toggle)
+ * This file wires the modules together. Each concern lives in its own file under src/app/:
+ *   - flush.ts        — single render function, debounced 16ms, latest-wins per container
+ *   - branding.ts     — brand image (top of display) sync
+ *   - lifecycle.ts    — visibility/foreground/wearing handling
+ *   - bullet-timer.ts — TIMER_TICK interval suspend/resume
+ *   - autosave.ts     — deferred per-move localStorage writes
+ *   - side-effects.ts — non-render store-subscription effects
+ *   - init.ts         — startup helpers (load state, text-first setup, layout upgrade)
+ *   - bridge-reinit.ts — manual bridge reinit (debug-only, no auto-trigger)
+ *
+ * The bridge (src/evenhub/bridge.ts) is a single latest-wins per-container serial sender that
+ * routes every SDK call through one Promise chain. See that file for the design notes.
  */
 
 import { ChessService } from './chess/chessservice';
-import { Chess } from 'chess.js';
 import { createStore } from './state/store';
 import { buildInitialState } from './state/contracts';
-import type { GameState } from './state/contracts';
-import { mapEvenHubEvent, extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from './input/actions';
-import {
-  composeStartupPage,
-  composeTextOnlyStartupPage,
-  composePageForState,
-  CONTAINER_ID_TEXT,
-  CONTAINER_NAME_TEXT,
-  CONTAINER_ID_IMAGE_TOP,
-  CONTAINER_ID_IMAGE_BOTTOM,
-} from './render/composer';
-import { BoardRenderer, rankHalf } from './render/boardimage';
-import { getCombinedDisplayText, getSelectedPiece, getSelectedMove } from './state/selectors';
-import { renderBrandingImage, renderCheckBrandingImage, renderCheckmateBrandingImage, preloadBrandingImages } from './render/branding';
-import { EvenHubBridge } from './evenhub/bridge';
+import type { GameState, Action, BoardSize, BoardAlignment, DifficultyLevel } from './state/contracts';
+import { mapEvenHubEvent } from './input/actions';
+import { BoardRenderer } from './render/boardimage';
+import { type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 import { TurnLoop } from './engine/turnloop';
 import { PROFILE_BY_DIFFICULTY } from './engine/profiles';
-import { saveGame, loadGame, clearSave, saveDifficulty, loadDifficulty, saveBoardMarkers, loadBoardMarkers, saveBoardAlignment, loadBoardAlignment, saveBoardSize, loadBoardSize, initPersistence } from './storage/persistence';
-import { ImageRawDataUpdate, OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
-import { STARTING_FEN } from './academy/pgn';
-import { moveCursorAxis } from './academy/drills';
-import { getFileIndex, getRankIndex } from './chess/square-utils';
-import { perfLogLazyIfEnabled } from './perf/log';
-import { getLastPerfDispatchTrace, recordPerfDispatch } from './perf/dispatch-trace';
-import type { Action } from './state/contracts';
-import { debugLog, attachDebugCopyApi, markRunStart } from './debug/logger';
+import { initPersistence } from './storage/persistence';
+import { EvenHubBridge } from './evenhub/bridge';
+import { setBackgroundState, onBackgroundRestore } from './storage/background-state';
+import { attachDebugCopyApi, debugLog, markRunStart } from './debug/logger';
 import { activateKeepAlive, isKeepAliveActive } from './utils/keep-alive';
+import { recordPerfDispatch } from './perf/dispatch-trace';
+import { createFlush } from './app/flush';
+import { createBranding } from './app/branding';
+import { createBulletTimer } from './app/bullet-timer';
+import { createAutosave } from './app/autosave';
+import { createLifecycle, type DeviceStatusUpdate, type DeviceStatusFlags } from './app/lifecycle';
+import { createSideEffects } from './app/side-effects';
+import { createReinit } from './app/bridge-reinit';
+import { loadInitialAppState, setupTextOnlyStartup, upgradeToFullLayout, runStorageProbe } from './app/init';
 
-type BoardImageSendMeta = {
-  kind?: 'board' | 'branding' | 'other';
-  priority?: 'high' | 'low';
-  interruptProtected?: boolean;
+const BACKGROUND_STATE_KEY = 'evenchess';
+const BACKGROUND_STATE_VERSION = 2;
+
+type BackgroundSnapshot = {
+  version: typeof BACKGROUND_STATE_VERSION;
+  fen: string;
+  turn: 'w' | 'b';
+  difficulty: DifficultyLevel;
+  boardAlignment: BoardAlignment;
+  boardSize: BoardSize;
+  showBoardMarkers: boolean;
 };
-type BrandingMode = 'normal' | 'check' | 'checkmate';
-
-// Simple "send everything in order" helper used by correctness-first paths.
-// EvenHubBridge still serializes image transport internally because the SDK/device does not support parallel sends.
-async function sendImages(
-  hub: EvenHubBridge,
-  images: ImageRawDataUpdate[],
-  meta?: BoardImageSendMeta,
-): Promise<void> {
-  for (const img of images) {
-    await hub.updateBoardImage(img, meta);
-  }
-}
-
-// Speed-first helper for 2-half updates:
-// send the most important half now, then queue the rest as low-priority tail work.
-// This improves perceived responsiveness on G2 when one image send can take ~0.7–3s.
-async function sendImagesSpeedFirstTail(
-  hub: EvenHubBridge,
-  images: ImageRawDataUpdate[],
-  meta?: BoardImageSendMeta,
-): Promise<void> {
-  if (images.length === 0) return;
-  const first = images[0];
-  if (!first) return;
-  await hub.updateBoardImage(first, meta);
-  for (let i = 1; i < images.length; i++) {
-    const tail = images[i];
-    if (!tail) continue;
-    hub.updateBoardImage(tail, { ...meta, priority: 'low' }).catch((err) => {
-      console.error('[EvenChess] Low-priority tail image send failed:', err);
-    });
-  }
-}
-
-function perfNowMs(): number {
-  return typeof performance !== 'undefined' ? performance.now() : Date.now();
-}
-
-// Performance feature toggles kept as explicit flags so the behavior can be reused/tuned in other G2 apps.
-// These are intentional UX tradeoffs (perceived latency vs visual completeness).
-// Off by default for production use. Enable temporarily when profiling end-to-end input->render latency on G2.
-const PERF_FLUSH_LOGGING = false;
-const SPEED_FIRST_CROSS_HALF_SELECTION = true;
-const SPEED_FIRST_CROSS_HALF_MOVE_COMMIT = true;
-
-const SUSPENSION_GUARD_ENABLED = true;
-const HEARTBEAT_INTERVAL_MS = 1000;
-const HEARTBEAT_SUSPENSION_THRESHOLD_MS = 5000;
-const HEARTBEAT_BRIDGE_REINIT_THRESHOLD_MS = 30000;
-const FLUSH_TRANSPORT_ONLY_HANG_PROBE_MS = 1400;
-const FLUSH_TRANSPORT_ONLY_HANG_MIN_INFLIGHT_AGE_MS = 5000;
-const FLUSH_TRANSPORT_ONLY_HANG_MAX_QUEUE_DEPTH = 2;
-const DEAD_LINK_CONSECUTIVE_RESETS_FOR_REINIT = 3;
-const BRIDGE_REINIT_COOLDOWN_MS = 30000;
-const BRIDGE_REINIT_FAILED_COOLDOWN_MS = 2000;
-const BRIDGE_REINIT_MAX_CONSECUTIVE_FAILURES = 2;
-const BRIDGE_REINIT_MAX_PAGE_RELOADS = 2;
-const BRIDGE_REINIT_SLOW_RETRY_INTERVAL_MS = 8000;
-const BRIDGE_REINIT_SETUP_PAGE_TIMEOUT_MS = 3000;
-const BRIDGE_REINIT_SHUTDOWN_SETTLE_MS = 1500;
-const NON_OK_DEAD_LINK_THRESHOLD = 2;
-const VISIBILITY_RECENT_RECOVERY_WINDOW_MS = 10000;
-
-function getPgnPositionFen(_chess: ChessService, moves: string[]): string {
-  if (moves.length === 0) return STARTING_FEN;
-
-  const tempChess = new Chess();
-  for (const move of moves) {
-    try {
-      tempChess.move(move);
-    } catch {
-      break;
-    }
-  }
-  return tempChess.fen();
-}
-
-let pendingUpdateTimeout: ReturnType<typeof setTimeout> | null = null;
-let timerInterval: ReturnType<typeof setInterval> | null = null;
-let pendingRecoveryRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
-let pendingBoardSendRetryTimeout: ReturnType<typeof setTimeout> | null = null;
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 export async function initApp(): Promise<void> {
   const chess = new ChessService();
 
-  // Init bridge first so storageGet/storageSet use SDK-backed persistence in the installed app.
-  // Falls back to localStorage when running outside Even Hub (local dev via QR code).
-  const hub = new EvenHubBridge();
-  await hub.init();
+  const bridge = new EvenHubBridge();
+  await bridge.init();
   initPersistence(
-    (key) => hub.storageGet(key),
-    (key, value) => hub.storageSet(key, value),
+    (key) => bridge.storageGet(key),
+    (key, value) => bridge.storageSet(key, value),
   );
+  await runStorageProbe(bridge);
 
-  const [persistedDifficulty, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, savedGame] = await Promise.all([
-    loadDifficulty(),
-    loadBoardMarkers(),
-    loadBoardAlignment(),
-    loadBoardSize(),
-    loadGame(),
-  ]);
-
-  let initialState = buildInitialState(chess);
-  initialState = { ...initialState, difficulty: persistedDifficulty, showBoardMarkers: persistedBoardMarkers, boardAlignment: persistedBoardAlignment, boardSize: persistedBoardSize };
-
-  if (savedGame) {
-    console.log('[EvenChess] Restoring saved game...');
-    try {
-      chess.loadFen(savedGame.fen);
-      if (chess.isCheckmate()) {
-        // Finished games are a poor resume experience and can confuse startup branding/state restoration.
-        console.log('[EvenChess] Saved game was checkmate; starting a new game instead.');
-        chess.reset();
-        void clearSave();
-      } else {
-        initialState = {
-          ...initialState,
-          fen: savedGame.fen,
-          history: savedGame.history,
-          turn: savedGame.turn,
-          difficulty: savedGame.difficulty,
-          pieces: chess.getPiecesWithMoves(),
-          inCheck: chess.isInCheck(),
-          hasUnsavedChanges: false,
-        };
-      }
-    } catch (err) {
-      console.error('[EvenChess] Failed to restore saved game:', err);
-    }
-  }
-
+  const initialState = await loadInitialAppState(chess);
   const store = createStore(initialState);
-  let boardRenderer = new BoardRenderer({ largeGrid: initialState.boardSize === 'large' });
-  let boardRefillRenderer = new BoardRenderer({ largeGrid: initialState.boardSize === 'large' });
+  const rendererRef: { current: BoardRenderer } = {
+    current: new BoardRenderer({ largeGrid: initialState.boardSize === 'large' }),
+  };
   const initialProfile = PROFILE_BY_DIFFICULTY[initialState.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
   const turnLoop = new TurnLoop(chess, store, initialProfile);
 
-  attachDebugCopyApi();
-  markRunStart();
-  const versionEl = document.getElementById('app-version');
-  if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
-
-  let perfLastInputAtMs = 0;
-  let perfLastInputSeq = 0;
-  let perfLastInputLabel = '';
-  let startupFlushArmed = false;
-  let startupPendingFlush = false;
+  // Mutable flag: starts false (text-only startup), flips to true once upgradeToFullLayout
+  // succeeds. flush.ts reads it via the closure to decide whether to send board images and to
+  // key its text-cache against the right container width.
   let imageContainersActive = false;
-  let upgradeToFullLayoutPending = false;
 
-  // G2 image transport can take seconds; prevent overlapping flushes and replay only the newest state afterward.
-  let flushInProgress = false;
-  let pendingFlushState: GameState | null = null;
-  let forceNextDisplayRefresh = false;
-  // Set when board image was skipped due to queue busy; causes next flush to treat board as changed.
-  let boardSendPendingRetry = false;
-  let lastSentState = store.getState();
-  let lastSentText = '';
-
-  // Autosave is deferred so localStorage writes and MARK_SAVED state churn do not compete with board-image sends.
-  const AUTOSAVE_IDLE_DELAY_MS = 180;
-  let pendingAutosaveTimeout: ReturnType<typeof setTimeout> | null = null;
-  let pendingAutosaveSnapshot: Pick<GameState, 'fen' | 'history' | 'turn' | 'difficulty'> | null = null;
-  let lastQueuedBrandingMode: BrandingMode = 'normal';
-  let pendingBrandingMode: BrandingMode | null = null;
-  let forceNextBrandingRefresh = false;
-  const exitInProgress = false;
-  let transportHangProbe: ReturnType<typeof setTimeout> | null = null;
-  let transportHangProbeSeq = 0;
-  let visibilityListener: (() => void) | null = null;
-  let lastHeartbeatAtMs = 0;
-  let consecutiveForceResetsWithNoSends = 0;
-  let lastObservedSuccessfulSendAtMs = 0;
-  let bridgeReinitInProgress = false;
-  let lastBridgeReinitAtMs = 0;
-  let consecutiveBridgeReinitFailures = 0;
-  let inSlowRetryMode = false;
-  let pageReloadCount = (() => {
-    try {
-      const stored = sessionStorage.getItem('__ec_reload_count');
-      if (stored) return parseInt(stored, 10) || 0;
-    } catch {
-      // sessionStorage unavailable in some webviews.
-    }
-    try {
-      const match = window.name.match(/__ec_rc=(\d+)/);
-      const value = match?.[1];
-      if (value) return parseInt(value, 10) || 0;
-    } catch {
-      // window.name unavailable.
-    }
-    return 0;
-  })();
-  let recentHangRecoveryTimestamps: number[] = [];
-  let pendingForegroundRecovery = false;
-  let earlyShutdownFiredAtMs = 0;
-  let earlyShutdownSettled = false;
-  let earlyShutdownInFlight = false;
-
-  function rememberHangRecovery(): void {
-    const now = perfNowMs();
-    recentHangRecoveryTimestamps.push(now);
-    while (
-      recentHangRecoveryTimestamps.length > 0 &&
-      now - (recentHangRecoveryTimestamps[0] ?? 0) > VISIBILITY_RECENT_RECOVERY_WINDOW_MS
-    ) {
-      recentHangRecoveryTimestamps.shift();
-    }
-  }
-
-  function refreshSuccessfulSendCounters(): void {
-    const snapshot = hub.getImageTransportSnapshot();
-    if (snapshot.lastSuccessfulSendAtMs > lastObservedSuccessfulSendAtMs) {
-      lastObservedSuccessfulSendAtMs = snapshot.lastSuccessfulSendAtMs;
-      consecutiveForceResetsWithNoSends = 0;
-    }
-  }
-
-  function persistReloadCount(count: number): void {
-    try {
-      sessionStorage.setItem('__ec_reload_count', String(count));
-    } catch {
-      // noop
-    }
-    try {
-      window.name = `__ec_rc=${count}`;
-    } catch {
-      // noop
-    }
-  }
-
-  function clearReloadCountPersistence(): void {
-    try {
-      sessionStorage.removeItem('__ec_reload_count');
-    } catch {
-      // noop
-    }
-    try {
-      window.name = '';
-    } catch {
-      // noop
-    }
-  }
+  // Mutable device flags shared with lifecycle.ts (it owns the writers, flush.ts reads).
+  const deviceFlags: DeviceStatusFlags = {
+    isWearingGlasses: true,
+    isDeviceConnected: true,
+  };
 
   function dispatchWithPerfSource(source: 'input' | 'timer' | 'app', action: Action): void {
     recordPerfDispatch(source, action);
     store.dispatch(action);
   }
 
-  function desiredBrandingModeForState(state: GameState): BrandingMode {
-    if (state.gameOver?.toLowerCase() === 'checkmate') return 'checkmate';
-    if (state.inCheck) return 'check';
-    return 'normal';
-  }
+  // Module wiring. Order matters only by reference: each createX returns plain objects with no
+  // active timers / subscriptions until the relevant trigger (subscribe, attach, etc.).
+  const autosave = createAutosave({ store, dispatch: (a) => dispatchWithPerfSource('app', a) });
+  const bulletTimer = createBulletTimer({
+    store,
+    onTick: () => dispatchWithPerfSource('timer', { type: 'TIMER_TICK' }),
+  });
+  const flush = createFlush({
+    bridge,
+    store,
+    chess,
+    getRenderer: () => rendererRef.current,
+    isWearingGlasses: () => deviceFlags.isWearingGlasses,
+    isDeviceConnected: () => deviceFlags.isDeviceConnected,
+    imageContainersActive: () => imageContainersActive,
+  });
+  const branding = createBranding({
+    bridge,
+    store,
+    imageContainersActive: () => imageContainersActive,
+  });
+  const lifecycle = createLifecycle({
+    bridge,
+    store,
+    flush,
+    branding,
+    bulletTimer,
+    autosave,
+    deviceFlags,
+    imageContainersActive: () => imageContainersActive,
+  });
+  const sideEffects = createSideEffects({
+    store,
+    chess,
+    turnLoop,
+    bridge,
+    flush,
+    branding,
+    bulletTimer,
+    autosave,
+    rendererRef,
+  });
 
-  function renderBrandingMode(mode: BrandingMode): ImageRawDataUpdate {
-    switch (mode) {
-      case 'checkmate':
-        return renderCheckmateBrandingImage();
-      case 'check':
-        return renderCheckBrandingImage();
-      default:
-        return renderBrandingImage();
-    }
-  }
-
-  function sendBrandingMode(mode: BrandingMode): void {
-    if (!imageContainersActive) return;
-    pendingBrandingMode = null;
-    lastQueuedBrandingMode = mode;
-    hub.updateBoardImage(renderBrandingMode(mode), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) => {
-      const label = mode === 'checkmate' ? 'checkmate' : mode === 'check' ? 'check' : 'normal';
-      console.error(`[EvenChess] Failed to update ${label} branding:`, err);
-    });
-  }
-
-  function trySyncBrandingMode(state: GameState): void {
-    if (!imageContainersActive) return;
-    const desiredMode = desiredBrandingModeForState(state);
-    const brandingHealth = hub.getBoardSendHealth();
-    // Branding is non-critical compared with board images. We only suppress entering CHECK! while the link is busy/degraded.
-    // CHECKMATE and restoring to normal are treated as correctness/clarity-critical.
-    const suppressNonCriticalBranding =
-      desiredMode === 'check' && (brandingHealth.degraded || brandingHealth.boardBusy);
-
-    // Drop stale pending branding targets (e.g. delayed CHECK! after state already returned to normal).
-    if (pendingBrandingMode && pendingBrandingMode !== desiredMode) {
-      pendingBrandingMode = null;
-    }
-
-    const forceRefresh = forceNextBrandingRefresh;
-    forceNextBrandingRefresh = false;
-
-    if (forceRefresh || desiredMode !== lastQueuedBrandingMode) {
-      if (suppressNonCriticalBranding) {
-        pendingBrandingMode = desiredMode;
-        return;
-      }
-      sendBrandingMode(desiredMode);
+  // Background-state shim. Trimmed to 6 fields per the rework plan — the prior full GameState
+  // snapshot blocked the JS thread on background transitions for long games (race #8). The move
+  // log is recovered from saveGame() on cold start; mid-session background restore preserves the
+  // current position only, which is the right tradeoff for the phone-pickup-and-look-at-glasses
+  // workflow this shim exists for.
+  setBackgroundState(BACKGROUND_STATE_KEY, () => {
+    const s = store.getState();
+    return {
+      version: BACKGROUND_STATE_VERSION,
+      fen: s.fen,
+      turn: s.turn,
+      difficulty: s.difficulty,
+      boardAlignment: s.boardAlignment,
+      boardSize: s.boardSize,
+      showBoardMarkers: s.showBoardMarkers,
+    } satisfies BackgroundSnapshot;
+  });
+  onBackgroundRestore(BACKGROUND_STATE_KEY, (saved) => {
+    const snap = saved as Partial<BackgroundSnapshot> | undefined;
+    if (!snap || snap.version !== BACKGROUND_STATE_VERSION || !snap.fen) {
+      debugLog('background-restore skipped', { reason: 'version-or-shape', version: snap?.version }, 'BG');
       return;
     }
-
-    if (
-      pendingBrandingMode &&
-      pendingBrandingMode !== lastQueuedBrandingMode &&
-      (
-        pendingBrandingMode !== 'check' ||
-        (!brandingHealth.degraded && !brandingHealth.boardBusy)
-      )
-    ) {
-      sendBrandingMode(pendingBrandingMode);
-    }
-  }
-
-  function clearDeferredAutosave(): void {
-    pendingAutosaveSnapshot = null;
-    if (pendingAutosaveTimeout) {
-      clearTimeout(pendingAutosaveTimeout);
-      pendingAutosaveTimeout = null;
-    }
-  }
-
-  function scheduleDeferredAutosave(delayMs = AUTOSAVE_IDLE_DELAY_MS): void {
-    if (pendingAutosaveTimeout) return;
-    pendingAutosaveTimeout = setTimeout(() => {
-      pendingAutosaveTimeout = null;
-      flushDeferredAutosave();
-    }, delayMs);
-  }
-
-  function queueDeferredAutosave(state: GameState): void {
-    if (state.history.length === 0) return;
-    pendingAutosaveSnapshot = {
-      fen: state.fen,
-      history: [...state.history],
-      turn: state.turn,
-      difficulty: state.difficulty,
-    };
-    scheduleDeferredAutosave();
-  }
-
-  function flushDeferredAutosave(options?: { dispatchMarkSaved?: boolean; force?: boolean }): void {
-    const snapshot = pendingAutosaveSnapshot;
-    if (!snapshot) return;
-    if (!options?.force && (flushInProgress || pendingFlushState || hub.hasPendingBoardImageWork())) {
-      scheduleDeferredAutosave(120);
-      return;
-    }
-
-    pendingAutosaveSnapshot = null;
-    void saveGame(snapshot.fen, snapshot.history, snapshot.turn, snapshot.difficulty);
-
-    if (options?.dispatchMarkSaved === false) return;
-
-    const current = latestState;
-    const savedCurrentState =
-      current.fen === snapshot.fen &&
-      current.turn === snapshot.turn &&
-      current.difficulty === snapshot.difficulty &&
-      current.history.length === snapshot.history.length &&
-      current.history.every((move, idx) => move === snapshot.history[idx]);
-
-    if (savedCurrentState && current.hasUnsavedChanges) {
-      dispatchWithPerfSource('app', { type: 'MARK_SAVED' });
-      return;
-    }
-
-    if (current.hasUnsavedChanges && current.history.length > 0) {
-      queueDeferredAutosave(current);
-    }
-  }
-
-  function formatSysEventName(eventType: number | null | undefined): string {
-    if (eventType == null) return 'undefined';
-    const enumMap = OsEventTypeList as unknown as Record<number, string>;
-    return enumMap[eventType] ?? String(eventType);
-  }
-
-  function clearTransportHangProbe(): void {
-    if (transportHangProbe) {
-      clearTimeout(transportHangProbe);
-      transportHangProbe = null;
-    }
-    transportHangProbeSeq += 1;
-  }
-
-  async function sendInitialDisplaySnapshot(state: GameState): Promise<void> {
-    const initialImages = boardRenderer.renderFull(state, chess);
-    await hub.updateBoardImages(initialImages, { kind: 'board', priority: 'high', interruptProtected: true });
-    const mode = desiredBrandingModeForState(state);
-    pendingBrandingMode = null;
-    lastQueuedBrandingMode = mode;
-    hub.updateBoardImage(renderBrandingMode(mode), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) =>
-      console.error('[EvenChess] Branding image failed:', err),
-    );
-  }
-
-  function fireEarlyShutdown(reason: string): void {
-    if (earlyShutdownInFlight || earlyShutdownSettled || exitInProgress) return;
-    earlyShutdownInFlight = true;
-    earlyShutdownFiredAtMs = perfNowMs();
-    if (PERF_FLUSH_LOGGING) {
-      perfLogLazyIfEnabled?.(() => `[Perf][Heartbeat][EarlyShutdown] fired reason=${reason}`);
-    }
-    void (async () => {
-      try {
-        await hub.shutdown();
-      } catch {
-        // Keep reinit progressing even if shutdown fails.
-      }
-      setTimeout(() => {
-        earlyShutdownSettled = true;
-        earlyShutdownInFlight = false;
-        if (PERF_FLUSH_LOGGING) {
-          perfLogLazyIfEnabled?.(() => `[Perf][Heartbeat][EarlyShutdown] settled reason=${reason}`);
-        }
-      }, BRIDGE_REINIT_SHUTDOWN_SETTLE_MS);
-    })();
-  }
-
-  async function attemptBridgeReinit(reason: string): Promise<void> {
-    if (bridgeReinitInProgress || exitInProgress) return;
-    const now = perfNowMs();
-    const effectiveCooldown = inSlowRetryMode
-      ? BRIDGE_REINIT_SLOW_RETRY_INTERVAL_MS
-      : consecutiveBridgeReinitFailures > 0
-        ? BRIDGE_REINIT_FAILED_COOLDOWN_MS
-        : BRIDGE_REINIT_COOLDOWN_MS;
-    if (lastBridgeReinitAtMs > 0 && now - lastBridgeReinitAtMs < effectiveCooldown) {
-      if (PERF_FLUSH_LOGGING) {
-        perfLogLazyIfEnabled?.(
-          () =>
-            `[Perf][Heartbeat][Reinit] cooldown reason=${reason} elapsed=${(now - lastBridgeReinitAtMs).toFixed(1)}ms ` +
-            `effective=${effectiveCooldown}ms failures=${consecutiveBridgeReinitFailures}`,
-        );
-      }
-      return;
-    }
-
-    bridgeReinitInProgress = true;
-    lastBridgeReinitAtMs = now;
-    if (PERF_FLUSH_LOGGING) {
-      perfLogLazyIfEnabled?.(
-        () =>
-          `[Perf][Heartbeat][Reinit] start reason=${reason} attempt=${consecutiveBridgeReinitFailures + 1}/${BRIDGE_REINIT_MAX_CONSECUTIVE_FAILURES}`,
-      );
-    }
-
     try {
-      if (pendingUpdateTimeout) {
-        clearTimeout(pendingUpdateTimeout);
-        pendingUpdateTimeout = null;
-      }
-      clearTransportHangProbe();
-      flushInProgress = false;
-
-      if (earlyShutdownSettled) {
-        // Settled already, nothing to wait.
-      } else if (earlyShutdownInFlight) {
-        const elapsedSinceShutdown = perfNowMs() - earlyShutdownFiredAtMs;
-        const remainingMs = Math.max(0, BRIDGE_REINIT_SHUTDOWN_SETTLE_MS - elapsedSinceShutdown);
-        await new Promise<void>((resolve) => setTimeout(resolve, remainingMs));
-      } else {
-        try {
-          await hub.shutdown();
-        } catch {
-          // Ignore shutdown errors and continue.
-        }
-        await new Promise<void>((resolve) => setTimeout(resolve, BRIDGE_REINIT_SHUTDOWN_SETTLE_MS));
-      }
-      earlyShutdownFiredAtMs = 0;
-      earlyShutdownSettled = false;
-      earlyShutdownInFlight = false;
-
-      await hub.init();
-      hub.subscribeEvents(handleHubEvent);
-
-      const startupPage = imageContainersActive
-        ? composeStartupPage(store.getState())
-        : composeTextOnlyStartupPage(store.getState());
-      const setupOk = await Promise.race<boolean>([
-        hub.setupPage(startupPage),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), BRIDGE_REINIT_SETUP_PAGE_TIMEOUT_MS)),
-      ]);
-      if (!setupOk) {
-        consecutiveBridgeReinitFailures += 1;
-        if (consecutiveBridgeReinitFailures >= BRIDGE_REINIT_MAX_CONSECUTIVE_FAILURES) {
-          const snap = hub.getImageTransportSnapshot();
-          const transportAlive =
-            snap.lastSuccessfulSendAtMs > 0 &&
-            (perfNowMs() - snap.lastSuccessfulSendAtMs) < 10000;
-          if (transportAlive || pageReloadCount >= BRIDGE_REINIT_MAX_PAGE_RELOADS) {
-            consecutiveBridgeReinitFailures = 0;
-            inSlowRetryMode = true;
-            bridgeReinitInProgress = false;
-            setTimeout(() => {
-              void attemptBridgeReinit(`slow-retry-${reason}`);
-            }, BRIDGE_REINIT_SLOW_RETRY_INTERVAL_MS);
-            return;
-          }
-          pageReloadCount += 1;
-          persistReloadCount(pageReloadCount);
-          bridgeReinitInProgress = false;
-          window.location.reload();
-          return;
-        }
-
-        bridgeReinitInProgress = false;
-        setTimeout(() => {
-          void attemptBridgeReinit(`retry-${reason}`);
-        }, BRIDGE_REINIT_FAILED_COOLDOWN_MS);
-        return;
-      }
-
-      consecutiveBridgeReinitFailures = 0;
-      inSlowRetryMode = false;
-      pageReloadCount = 0;
-      clearReloadCountPersistence();
-      consecutiveForceResetsWithNoSends = 0;
-      recentHangRecoveryTimestamps = [];
-      if (imageContainersActive) {
-        await sendInitialDisplaySnapshot(store.getState());
-      }
-      forceNextDisplayRefresh = true;
-      latestState = store.getState();
-      scheduleDisplayFlush();
+      chess.loadFen(snap.fen);
     } catch (err) {
-      console.error('[EvenChess] Bridge reinit failed:', err);
-      consecutiveBridgeReinitFailures += 1;
-      if (consecutiveBridgeReinitFailures >= BRIDGE_REINIT_MAX_CONSECUTIVE_FAILURES) {
-        if (pageReloadCount >= BRIDGE_REINIT_MAX_PAGE_RELOADS) {
-          consecutiveBridgeReinitFailures = 0;
-          inSlowRetryMode = true;
-          bridgeReinitInProgress = false;
-          setTimeout(() => {
-            void attemptBridgeReinit(`slow-retry-${reason}`);
-          }, BRIDGE_REINIT_SLOW_RETRY_INTERVAL_MS);
-          return;
-        }
-        pageReloadCount += 1;
-        persistReloadCount(pageReloadCount);
-        bridgeReinitInProgress = false;
-        window.location.reload();
-        return;
-      }
-      bridgeReinitInProgress = false;
-      setTimeout(() => {
-        void attemptBridgeReinit(`retry-${reason}`);
-      }, BRIDGE_REINIT_FAILED_COOLDOWN_MS);
+      console.error('[app] background-restore loadFen failed', err);
       return;
-    } finally {
-      bridgeReinitInProgress = false;
     }
-  }
-
-  function armTransportOnlyHangProbe(reason: string): void {
-    if (transportHangProbe || exitInProgress || bridgeReinitInProgress) return;
-    const probeSeq = transportHangProbeSeq;
-    transportHangProbe = setTimeout(() => {
-      if (probeSeq !== transportHangProbeSeq) return;
-      transportHangProbe = null;
-      refreshSuccessfulSendCounters();
-      const health = hub.getBoardSendHealth();
-      const transport = hub.getImageTransportSnapshot();
-      const blockedByAppFlow = exitInProgress || bridgeReinitInProgress;
-      const transportOnlyCandidate =
-        !blockedByAppFlow &&
-        health.interrupted &&
-        transport.busy &&
-        transport.queueDepth <= FLUSH_TRANSPORT_ONLY_HANG_MAX_QUEUE_DEPTH;
-      const stuckByAge =
-        transport.hasInFlight && transport.inFlightAgeMs >= FLUSH_TRANSPORT_ONLY_HANG_MIN_INFLIGHT_AGE_MS;
-      const shouldRecover = transportOnlyCandidate && (transport.wedged || stuckByAge);
-
-      if (shouldRecover) {
-        hub.forceResetImageTransport(`transport-only-${reason}`);
-        rememberHangRecovery();
-        consecutiveForceResetsWithNoSends += 1;
-        forceNextDisplayRefresh = true;
-        latestState = store.getState();
-        scheduleDisplayFlush();
-      }
-
-      if (
-        !blockedByAppFlow &&
-        (
-          transport.consecutiveNonOkSends >= NON_OK_DEAD_LINK_THRESHOLD ||
-          consecutiveForceResetsWithNoSends >= DEAD_LINK_CONSECUTIVE_RESETS_FOR_REINIT
-        )
-      ) {
-        fireEarlyShutdown('transport-dead-link');
-        void attemptBridgeReinit('transport-dead-link');
-        return;
-      }
-
-      if (!blockedByAppFlow && health.interrupted && transport.busy) {
-        armTransportOnlyHangProbe(reason);
-      }
-    }, FLUSH_TRANSPORT_ONLY_HANG_PROBE_MS);
-  }
-
-  /** Lightweight hang probe: only resets transport + forces refresh. No shutdown, no reinit. */
-  function armLightweightHangProbe(reason: string): void {
-    if (transportHangProbe || exitInProgress || bridgeReinitInProgress) return;
-    const probeSeq = transportHangProbeSeq;
-    transportHangProbe = setTimeout(() => {
-      if (probeSeq !== transportHangProbeSeq) return;
-      transportHangProbe = null;
-      const transport = hub.getImageTransportSnapshot();
-      const blockedByAppFlow = exitInProgress || bridgeReinitInProgress;
-      const stuckByAge =
-        transport.hasInFlight && transport.inFlightAgeMs >= FLUSH_TRANSPORT_ONLY_HANG_MIN_INFLIGHT_AGE_MS;
-      if (!blockedByAppFlow && (transport.wedged || stuckByAge)) {
-        hub.forceResetImageTransport(`lightweight-${reason}`);
-        forceNextDisplayRefresh = true;
-        forceNextBrandingRefresh = true;
-        latestState = store.getState();
-        scheduleDisplayFlush();
-      }
-      // Re-arm if still interrupted
-      if (!blockedByAppFlow && transport.busy) {
-        armLightweightHangProbe(reason);
-      }
-    }, FLUSH_TRANSPORT_ONLY_HANG_PROBE_MS);
-  }
-
-  function startHeartbeat(): void {
-    if (heartbeatTimer || !SUSPENSION_GUARD_ENABLED) return;
-    lastHeartbeatAtMs = perfNowMs();
-    heartbeatTimer = setInterval(() => {
-      const now = perfNowMs();
-      const elapsedMs = now - lastHeartbeatAtMs;
-      lastHeartbeatAtMs = now;
-
-      if (exitInProgress || bridgeReinitInProgress) return;
-      refreshSuccessfulSendCounters();
-
-      if (elapsedMs >= HEARTBEAT_SUSPENSION_THRESHOLD_MS) {
-        hub.notifySystemLifecycleEvent('foreground-enter');
-        hub.forceResetImageTransport('suspension-detected');
-        forceNextDisplayRefresh = true;
-        latestState = store.getState();
-        scheduleDisplayFlush();
-
-        const recentRecoveryCount = recentHangRecoveryTimestamps.filter(
-          (ts) => now - ts < VISIBILITY_RECENT_RECOVERY_WINDOW_MS,
-        ).length;
-
-        if (
-          elapsedMs >= HEARTBEAT_BRIDGE_REINIT_THRESHOLD_MS ||
-          recentRecoveryCount > 0 ||
-          consecutiveForceResetsWithNoSends >= DEAD_LINK_CONSECUTIVE_RESETS_FOR_REINIT
-        ) {
-          fireEarlyShutdown('heartbeat-suspension');
-          void attemptBridgeReinit('heartbeat-suspension');
-        }
-      }
-    }, HEARTBEAT_INTERVAL_MS);
-  }
-
-  function setupVisibilityListener(): void {
-    if (!SUSPENSION_GUARD_ENABLED || typeof document === 'undefined' || visibilityListener) return;
-    const onVisibilityChange = (): void => {
-      if (document.visibilityState === 'hidden') {
-        hub.notifySystemLifecycleEvent('foreground-exit');
-      } else if (document.visibilityState === 'visible') {
-        triggerForegroundEnterRecoveryRefresh('visibility-visible');
-      }
+    const fresh = buildInitialState(chess);
+    const restored: GameState = {
+      ...fresh,
+      fen: snap.fen,
+      turn: snap.turn ?? fresh.turn,
+      difficulty: snap.difficulty ?? fresh.difficulty,
+      boardAlignment: snap.boardAlignment ?? fresh.boardAlignment,
+      boardSize: snap.boardSize ?? fresh.boardSize,
+      showBoardMarkers: snap.showBoardMarkers ?? fresh.showBoardMarkers,
+      pieces: chess.getPiecesWithMoves(),
+      inCheck: chess.isInCheck(),
     };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    visibilityListener = () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }
-
-  function triggerForegroundEnterRecoveryRefresh(source: 'foreground-enter' | 'visibility-visible' | 'input-after-suspend'): void {
-    if (pendingRecoveryRefreshTimeout) return;
-    // Reset transport BEFORE notifying the lifecycle event so the bridge
-    // doesn't resume draining stale images that would desync with the
-    // recovery text/board flush that follows.
-    if (imageContainersActive) {
-      const transport = hub.getImageTransportSnapshot();
-      const needsReset = transport.wedged || transport.interrupted || transport.busy;
-      console.log(`[Sync] recovery source=${source} wedged=${transport.wedged} interrupted=${transport.interrupted} busy=${transport.busy} needsReset=${needsReset}`);
-      debugLog('recovery-enter', { source, wedged: transport.wedged, interrupted: transport.interrupted, busy: transport.busy, needsReset });
-      if (needsReset) {
-        hub.forceResetImageTransport(`recovery-${source}`);
-      }
+    if (rendererRef.current.largeGrid !== (restored.boardSize === 'large')) {
+      rendererRef.current = new BoardRenderer({ largeGrid: restored.boardSize === 'large' });
     }
-    hub.notifySystemLifecycleEvent('foreground-enter');
-    refreshSuccessfulSendCounters();
-    if (SUSPENSION_GUARD_ENABLED) {
-      const transport = hub.getImageTransportSnapshot();
-      const recentRecoveryCount = recentHangRecoveryTimestamps.filter(
-        (ts) => perfNowMs() - ts < VISIBILITY_RECENT_RECOVERY_WINDOW_MS,
-      ).length;
-      if (
-        transport.consecutiveNonOkSends >= 1 ||
-        recentRecoveryCount > 0 ||
-        consecutiveForceResetsWithNoSends >= DEAD_LINK_CONSECUTIVE_RESETS_FOR_REINIT
-      ) {
-        fireEarlyShutdown(`visibility-dead-link-${source}`);
-        void attemptBridgeReinit(`visibility-dead-link-${source}`);
-        return;
-      }
-    }
-    pendingRecoveryRefreshTimeout = setTimeout(() => {
-      pendingRecoveryRefreshTimeout = null;
-      // Force a full repaint of text + board after resume. This repairs stale/lost frames without changing layout.
-      forceNextDisplayRefresh = true;
-      latestState = store.getState();
-      scheduleDisplayFlush();
-    }, 0);
-    if (PERF_FLUSH_LOGGING) {
-      perfLogLazyIfEnabled?.(() => `[Perf][Bridge][Lifecycle] ${source} force-refresh=y`);
-    }
-  }
+    store.dispatch({ type: 'RESTORE_STATE', state: restored });
+    flush.setForceFullRefresh();
+    branding.forceNextRefresh();
+  });
 
-  function handleSystemLifecycleSysEvent(event: EvenHubEvent): void {
-    const sysEvent = event.sysEvent;
-    if (!sysEvent) return;
-    const rawType = sysEvent.eventType;
-    perfLogLazyIfEnabled?.(
-      () => `[Perf][SysEvent] eventType=${formatSysEventName(rawType)} raw=${rawType == null ? 'undefined' : String(rawType)}`,
-    );
+  attachDebugCopyApi();
+  markRunStart();
+  const versionEl = typeof document !== 'undefined' ? document.getElementById('app-version') : null;
+  if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
 
-    if (rawType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
-      hub.notifySystemLifecycleEvent('foreground-exit');
-      pendingForegroundRecovery = true;
-      // Flush any pending autosave immediately — the OS may kill the app before the deferred timer fires.
-      flushDeferredAutosave({ dispatchMarkSaved: false, force: true });
-      return;
-    }
+  // Subscribe to store changes — the side-effects module dispatches its own actions, then the
+  // flush + branding modules schedule themselves.
+  store.subscribe((state, prevState) => {
+    sideEffects.onStateChange(state, prevState);
+  });
 
-    const abnormalExitType = (OsEventTypeList as unknown as { ABNORMAL_EXIT_EVENT?: number }).ABNORMAL_EXIT_EVENT;
-    if (typeof abnormalExitType === 'number' && rawType === abnormalExitType) {
-      hub.notifySystemLifecycleEvent('abnormal-exit');
-      pendingForegroundRecovery = true;
-      // Flush any pending autosave immediately on abnormal exit.
-      flushDeferredAutosave({ dispatchMarkSaved: false, force: true });
-      return;
-    }
-
-    if (rawType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
-      pendingForegroundRecovery = false;
-      triggerForegroundEnterRecoveryRefresh('foreground-enter');
-    }
-  }
-
+  // Hub event subscription — input handler dispatches actions, lifecycle handler covers sysEvents.
   function handleHubEvent(event: EvenHubEvent): void {
-    handleSystemLifecycleSysEvent(event);
-    const eventReceivedAtMs = perfNowMs();
+    lifecycle.onHubEvent(event);
     const action = mapEvenHubEvent(event, store.getState());
     if (action) {
+      // Real user input — let the lifecycle treat this as an implicit foreground-enter if the
+      // app was marked hidden but didn't get a FG_ENTER (iOS post-dialog quirk).
+      lifecycle.notifyInputReceived();
+
+      // Short-circuit: double-tap in menu phase opens the system exit dialog. Bypass the
+      // reducer + side-effects + flush chain entirely — calling shutDownPageContainer(1) while
+      // the JS is also dispatching state updates and scheduling text/image flushes wedges the
+      // SDK's BLE image transport for the rest of the session (the post-dialog board freeze).
+      // The user's own observation: long-press exit (handled fully by glasses firmware, no JS
+      // work) doesn't trigger the freeze, but our double-tap path does. Mimic the firmware's
+      // minimal pattern: cancel pending work, fire shutDownPageContainer, return immediately.
+      // No state change, no follow-up flush, no race with the dialog setup.
+      const currentPhase = store.getState().phase;
+      if (action.type === 'DOUBLE_TAP' && currentPhase === 'menu') {
+        flush.cancel();
+        branding.cancel();
+        bridge.requestSystemExit();
+        return;
+      }
+
+      // First user input upgrades the layout from text-only to full. Async, doesn't block the
+      // dispatch — the next render after the upgrade picks up the new layout.
       if (!imageContainersActive) {
-        void upgradeToFullLayout('user-input');
+        void upgradeToFullLayout({
+          bridge,
+          store,
+          flush,
+          branding,
+          imageContainersActive: () => imageContainersActive,
+          setImageContainersActive: (v) => { imageContainersActive = v; },
+        });
       }
-      if (pendingForegroundRecovery) {
-        pendingForegroundRecovery = false;
-        triggerForegroundEnterRecoveryRefresh('input-after-suspend');
-      }
-      if (SUSPENSION_GUARD_ENABLED && !isKeepAliveActive()) {
+      if (!isKeepAliveActive()) {
         activateKeepAlive();
-      }
-      switch (action.type) {
-        case 'SCROLL':
-          perfLastInputAtMs = eventReceivedAtMs;
-          perfLastInputSeq++;
-          perfLastInputLabel = `SCROLL:${action.direction}`;
-          break;
-        case 'TAP':
-        case 'DOUBLE_TAP':
-          perfLastInputAtMs = eventReceivedAtMs;
-          perfLastInputSeq++;
-          perfLastInputLabel = action.type;
-          break;
       }
       dispatchWithPerfSource('input', action);
     }
   }
 
-  // Debounced to the next tick only: coalesces same-tick reducer churn while keeping input latency low.
-  const DISPLAY_DEBOUNCE_MS = 0;
-  let latestState = store.getState();
-
-  function scheduleDisplayFlush(): void {
-    if (exitInProgress || bridgeReinitInProgress) return;
-    if (!startupFlushArmed) {
-      startupPendingFlush = true;
-      return;
+  bridge.subscribeEvents(handleHubEvent);
+  let deviceStatusUnsubscribe: (() => void) | null = bridge.subscribeDeviceStatus((status) => {
+    lifecycle.onDeviceStatusChanged(status as DeviceStatusUpdate);
+  });
+  let launchSourceUnsubscribe: (() => void) | null = bridge.subscribeLaunchSource((source) => {
+    debugLog('launch-source', { source }, 'LCH');
+  });
+  void bridge.getDeviceInfo().then((info) => {
+    if (info) {
+      debugLog('device-info', { model: info.model, sn: info.sn, batteryLevel: info.status?.batteryLevel ?? null }, 'DEV');
     }
-    if (pendingUpdateTimeout !== null) return;
-    pendingUpdateTimeout = setTimeout(() => {
-      pendingUpdateTimeout = null;
-      void flushDisplayUpdate();
-    }, DISPLAY_DEBOUNCE_MS);
-  }
-
-  store.subscribe((state, prevState) => {
-    latestState = state;
-
-    // Execute pending move immediately (not debounced)
-    if (state.pendingMove && !prevState.pendingMove) {
-      const move = state.pendingMove;
-      queueMicrotask(async () => {
-        try {
-          await turnLoop.onPlayerMoved(move);
-        } catch (err) {
-          console.error('[EvenChess] TurnLoop error:', err);
-        }
-      });
-    }
-
-    if (state.history.length === 0 && prevState.history.length > 0) {
-      clearDeferredAutosave();
-    }
-
-    // Auto-save after moves
-    if (state.history.length > prevState.history.length && state.history.length > 0) {
-      queueDeferredAutosave(state);
-    }
-
-    if (state.difficulty !== prevState.difficulty) {
-      const profile = PROFILE_BY_DIFFICULTY[state.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
-      turnLoop.setProfile(profile);
-      void saveDifficulty(state.difficulty);
-      if (state.history.length > 0) {
-        void saveGame(state.fen, state.history, state.turn, state.difficulty);
-      }
-      console.log('[EvenChess] Difficulty changed to:', state.difficulty);
-    }
-
-    if (state.showBoardMarkers !== prevState.showBoardMarkers) {
-      void saveBoardMarkers(state.showBoardMarkers);
-      console.log('[EvenChess] Board markers changed to:', state.showBoardMarkers ? 'on' : 'off');
-    }
-
-    if (state.boardSize !== prevState.boardSize) {
-      void saveBoardSize(state.boardSize);
-      boardRenderer = new BoardRenderer({ largeGrid: state.boardSize === 'large' });
-      boardRefillRenderer = new BoardRenderer({ largeGrid: state.boardSize === 'large' });
-      if (imageContainersActive) {
-        const page = composePageForState(state);
-        void hub.updatePage(page);
-      }
-      forceNextDisplayRefresh = true;
-      forceNextBrandingRefresh = true;
-      console.log('[EvenChess] Board size changed to:', state.boardSize);
-    }
-
-    if (state.boardAlignment !== prevState.boardAlignment) {
-      void saveBoardAlignment(state.boardAlignment);
-      if (imageContainersActive) {
-        const page = composePageForState(state);
-        void hub.updatePage(page);
-      }
-      forceNextDisplayRefresh = true;
-      forceNextBrandingRefresh = true;
-      console.log('[EvenChess] Board alignment changed to:', state.boardAlignment);
-    }
-
-    // Rebuild page when entering/exiting viewLog in center alignment (board position shifts)
-    if (imageContainersActive && state.boardAlignment === 'center' &&
-        (state.phase === 'viewLog') !== (prevState.phase === 'viewLog')) {
-      const page = composePageForState(state);
-      void hub.updatePage(page);
-      forceNextBrandingRefresh = true;
-    }
-
-    // Force full board re-render when exiting viewLog (board may need to repaint after being off-screen)
-    if (prevState.phase === 'viewLog' && state.phase !== 'viewLog') {
-      forceNextDisplayRefresh = true;
-    }
-
-    // Extend tap cooldown for menu/destSelect to prevent accidental inputs
-    if (state.phase === 'menu' && prevState.phase !== 'menu') {
-      extendTapCooldown(TAP_COOLDOWN_MENU_MS);
-    }
-    if (state.phase === 'destSelect' && prevState.phase !== 'destSelect') {
-      extendTapCooldown(TAP_COOLDOWN_DESTSELECT_MS);
-    }
-    if (state.phase === 'promotionSelect' && prevState.phase !== 'promotionSelect') {
-      extendTapCooldown(TAP_COOLDOWN_DESTSELECT_MS);
-    }
-
-    // Branding is synced to desired state (normal/check/checkmate); non-critical updates may be deferred while busy.
-    trySyncBrandingMode(state);
-
-    handleMenuSideEffects(state, prevState, chess);
-
-    // Bullet mode timer
-    if (state.mode === 'bullet' && state.timerActive && !timerInterval) {
-      timerInterval = setInterval(() => {
-        dispatchWithPerfSource('timer', { type: 'TIMER_TICK' });
-      }, 100);
-    } else if ((!state.timerActive || state.mode !== 'bullet') && timerInterval) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-    }
-
-    // Schedule debounced display update
-    scheduleDisplayFlush();
   });
 
-  hub.subscribeImageInterruption((active) => {
+  void turnLoop.init();
+
+  // Reinit controller is exposed via the debug menu only. Holds references to the unsubscribe
+  // setters so it can replace them after a reinit without leaking listeners.
+  const reinit = createReinit({
+    bridge,
+    store,
+    flush,
+    branding,
+    lifecycle,
+    imageContainersActive: () => imageContainersActive,
+    setImageContainersActive: (v) => { imageContainersActive = v; },
+    hubEventHandler: handleHubEvent,
+    deviceStatusHandler: (status) => lifecycle.onDeviceStatusChanged(status),
+    setDeviceStatusUnsubscribe: (fn) => {
+      deviceStatusUnsubscribe?.();
+      deviceStatusUnsubscribe = fn;
+    },
+    setLaunchSourceUnsubscribe: (fn) => {
+      launchSourceUnsubscribe?.();
+      launchSourceUnsubscribe = fn;
+    },
+  });
+  // Surface for debug menu: window.__evenchess_reinit('reason')
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __evenchess_reinit: (reason?: string) => Promise<void> }).__evenchess_reinit =
+      (reason = 'manual') => reinit.reinit(reason);
+  }
+
+  lifecycle.attach();
+
+  // Persistent-image-failure recovery. v2's bridge fires this callback when consecutive
+  // updateImageRawData calls return non-success (typically `sendFailed` after the iOS exit-dialog
+  // wedges the BLE image transport). Recovery: reset the bridge sender state and force-flush so
+  // the latest state is re-queued. We deliberately do NOT rebuild the page here — see the
+  // matching note in lifecycle.ts:onShow. The page rebuild succeeds at the SDK level but
+  // replaces the live image containers with empty placeholders, and the followup fills (which
+  // travel as separate updateImageRawData calls) keep returning `sendFailed`, leaving a blank
+  // board. Without the rebuild, the previously-rendered frame stays on the glasses while we
+  // keep retrying — frozen-but-visible is the lesser evil compared to blank.
+  bridge.onPersistentImageFailure((failureCount) => {
+    debugLog('app: persistent image failure — resetting transport and retrying flush', { failureCount }, 'BRG');
+    bridge.forceResetImageTransport('persistent-failure');
     if (!imageContainersActive) return;
-    if (active) {
-      if (!SUSPENSION_GUARD_ENABLED) {
-        // Lightweight recovery: detect wedged transport without aggressive shutdown/reinit.
-        armLightweightHangProbe('image-interruption');
-        return;
-      }
-      const recentRecoveryCount = recentHangRecoveryTimestamps.filter(
-        (ts) => perfNowMs() - ts < VISIBILITY_RECENT_RECOVERY_WINDOW_MS,
-      ).length;
-      if (recentRecoveryCount > 0 && !bridgeReinitInProgress && !exitInProgress) {
-        fireEarlyShutdown('interrupt-after-recent-recovery');
-        void attemptBridgeReinit('interrupt-after-recent-recovery');
-        return;
-      }
-      armTransportOnlyHangProbe('image-interruption');
-      return;
-    }
-    clearTransportHangProbe();
-    forceNextDisplayRefresh = true;
-    forceNextBrandingRefresh = true;
-    latestState = store.getState();
-    scheduleDisplayFlush();
+    flush.setForceFullRefresh();
+    branding.forceNextRefresh();
+    void flush.flushNow({ force: true });
+    branding.syncNow();
   });
 
-  async function upgradeToFullLayout(trigger: string): Promise<void> {
-    if (imageContainersActive || upgradeToFullLayoutPending || bridgeReinitInProgress) return;
-    upgradeToFullLayoutPending = true;
-    console.log(`[EvenChess] Upgrading to full layout (trigger: ${trigger})`);
-    try {
-      void preloadBrandingImages();
-      const state = store.getState();
-      const page = composePageForState(state);
-      await hub.updatePage(page);
-      imageContainersActive = true;
-      upgradeToFullLayoutPending = false;
-      // Re-send branding immediately so it doesn't vanish while board images transfer.
-      const mode = desiredBrandingModeForState(state);
-      lastQueuedBrandingMode = mode;
-      pendingBrandingMode = null;
-      await hub.updateBoardImage(renderBrandingMode(mode), { priority: 'high', kind: 'branding', interruptProtected: true });
-      // Send full board snapshot for the current state.
-      latestState = store.getState();
-      await sendInitialDisplaySnapshot(latestState);
-      // Sync tracking state so the next user-driven flush doesn't trigger an unnecessary
-      // recovery re-send that congests the queue and causes the next swipe's images to be skipped.
-      lastSentState = latestState;
-      // Force text re-send at the new (narrower) container width, but skip image recovery.
-      lastSentText = '';
-      scheduleDisplayFlush();
-      console.log('[EvenChess] Full layout active');
-    } catch (err) {
-      console.error('[EvenChess] Full layout upgrade error:', err);
-      upgradeToFullLayoutPending = false;
-    }
-  }
-
-  try {
-    // Text-first startup: only text containers on the critical path.
-    // Image containers are deferred until first user interaction proves BLE link is live.
-    await hub.init();
-    hub.subscribeEvents(handleHubEvent);
-    void turnLoop.init();
-
-    const startupPage = composeTextOnlyStartupPage(store.getState());
-    const setupOk = await Promise.race<boolean>([
-      hub.setupPage(startupPage),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), BRIDGE_REINIT_SETUP_PAGE_TIMEOUT_MS)),
-    ]);
-    if (!setupOk) {
-      if (SUSPENSION_GUARD_ENABLED) {
-        fireEarlyShutdown('startup-setupPage-failed');
-        setTimeout(() => {
-          void attemptBridgeReinit('startup-setupPage-failed');
-        }, BRIDGE_REINIT_FAILED_COOLDOWN_MS);
-      }
-      return;
-    }
-
-    // Text-first: send text + branding. Board images deferred until upgradeToFullLayout().
-    void preloadBrandingImages();
-    latestState = store.getState();
-    const text = getCombinedDisplayText(latestState, { boardReady: false });
-    await hub.updateText(CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT, text);
-    lastSentText = text;
-    hub.updateBoardImage(renderBrandingImage(), { priority: 'low', kind: 'branding', interruptProtected: true }).catch((err) =>
-      console.error('[EvenChess] Startup branding image failed:', err),
-    );
-    // Auto-upgrade to full layout once the text-first frame is on screen.
-    void upgradeToFullLayout('startup-auto');
-  } catch (err) {
-    console.error('[EvenChess] Initialization failed:', err);
-  } finally {
-    if (SUSPENSION_GUARD_ENABLED) {
-      setupVisibilityListener();
-      startHeartbeat();
-    }
-    // Unconditional visibility listener: handles both text-first upgrade and recovery after system dialogs.
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          if (!imageContainersActive) {
-            void upgradeToFullLayout('visibility-visible');
-          } else {
-            triggerForegroundEnterRecoveryRefresh('visibility-visible');
-          }
-        }
-      });
-    }
-    startupFlushArmed = true;
-    if (startupPendingFlush) {
-      startupPendingFlush = false;
-      scheduleDisplayFlush();
-    }
-  }
-
-  /** Reducer handles state transitions; this handles external side effects. */
-  function handleMenuSideEffects(
-    state: GameState,
-    prevState: GameState,
-    chess: ChessService,
-  ): void {
-    if (prevState.phase === 'resetConfirm' && state.phase === 'idle') {
-      chess.reset();
-      void clearSave();
-      dispatchWithPerfSource('app', { type: 'NEW_GAME' });
-      dispatchWithPerfSource('app', {
-        type: 'REFRESH',
-        ...chess.getStateSnapshot(),
-      });
-      console.log('[EvenChess] Game reset');
-    }
-
-    if (prevState.gameOver && !state.gameOver) {
-      chess.reset();
-      dispatchWithPerfSource('app', {
-        type: 'REFRESH',
-        ...chess.getStateSnapshot(),
-      });
-    }
-
-    if (prevState.phase === 'bulletSetup' && state.phase === 'idle' && state.mode === 'bullet') {
-      chess.reset();
-      dispatchWithPerfSource('app', {
-        type: 'REFRESH',
-        ...chess.getStateSnapshot(),
-      });
-    }
-
-  }
-
-  /** Speculative cache: pre-rendered next/prev selection so scrolls can reuse already-encoded halves. */
-  function boardCacheKey(s: GameState): string {
-    return `${s.phase}:${s.fen}:${s.selectedPieceId}:${s.selectedMoveIndex}:${s.selectedPromotionIndex}`;
-  }
-  const boardCache: {
-    nextKey: string;
-    nextImages: ImageRawDataUpdate[];
-    prevKey: string;
-    prevImages: ImageRawDataUpdate[];
-  } = { nextKey: '', nextImages: [], prevKey: '', prevImages: [] };
-
-  function drillCacheKey(file: number, rank: number): string {
-    return `${file},${rank}`;
-  }
-  const drillCache: {
-    nextKey: string;
-    nextImages: ImageRawDataUpdate[];
-    prevKey: string;
-    prevImages: ImageRawDataUpdate[];
-  } = { nextKey: '', nextImages: [], prevKey: '', prevImages: [] };
-  let drillCacheRefillSeq = 0;
-  let boardCacheRefillSeq = 0;
-
-  // Drill cache refill runs opportunistically during idle time and drops stale work via sequence/state checks.
-  function scheduleDrillCacheRefill(state: GameState): void {
-    const academy = state.academyState;
-    if (state.phase !== 'coordinateDrill' || !academy) return;
-    const seq = ++drillCacheRefillSeq;
-    const f = academy.cursorFile;
-    const r = academy.cursorRank;
-    const axis = academy.navAxis;
-    const nextPos = moveCursorAxis(f, r, axis, 'down');
-    const prevPos = moveCursorAxis(f, r, axis, 'up');
-    const run = (): void => {
-      if (seq !== drillCacheRefillSeq || flushInProgress || state !== latestState) return;
-      drillCache.nextKey = drillCacheKey(nextPos.file, nextPos.rank);
-      drillCache.prevKey = drillCacheKey(prevPos.file, prevPos.rank);
-      drillCache.nextImages = boardRenderer.renderDrillBoard(nextPos.file, nextPos.rank);
-      drillCache.prevImages = boardRenderer.renderDrillBoard(prevPos.file, prevPos.rank);
-    };
-    if (typeof requestIdleCallback !== 'undefined') {
-      requestIdleCallback(run, { timeout: 80 });
-    } else {
-      setTimeout(run, 0);
-    }
-  }
-
-  /** For two-half updates in selection phases:
-   * - Usually send the half WITH the destination X first (faster perceived tap/scroll feedback).
-   * - On cross-half destination transitions, optionally send the clear half first to avoid transient double-X artifacts.
-   * - In pieceSelect (no destination X), send the selected-piece half first.
-   * - On cross-half piece selection transitions, optionally clear the old selection half first to avoid duplicate squares. */
-  function orderImagesSelectionFirst(
-    images: ImageRawDataUpdate[],
-    state: GameState,
-    clearMarkerHalfFirst = false,
-  ): ImageRawDataUpdate[] {
-    if (images.length !== 2) return images;
-    const topId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_TOP);
-    const bottomId = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
-    if (!topId || !bottomId) return images;
-    const piece = getSelectedPiece(state);
-    const move = getSelectedMove(state);
-    const destSquare =
-      (state.phase === 'promotionSelect' && state.pendingPromotionMove
-        ? state.pendingPromotionMove.to
-        : state.phase === 'destSelect'
-          ? move?.to
-          : null);
-    if (destSquare) {
-      const displayRank = 8 - parseInt(destSquare[1] ?? '1', 10);
-      const halfWithX = rankHalf(displayRank);
-      if (clearMarkerHalfFirst) {
-        // Cross-half destination change: clear the old-X half first to avoid transient double-X.
-        return halfWithX === 'top' ? [bottomId, topId] : [topId, bottomId];
-      }
-      // Normal case: show the new destination X as early as possible.
-      return halfWithX === 'top' ? [topId, bottomId] : [bottomId, topId];
-    }
-    const square = piece?.square ?? 'e4';
-    const displayRank = 8 - parseInt(square[1] ?? '1', 10);
-    const half = rankHalf(displayRank);
-    if (clearMarkerHalfFirst) {
-      // Cross-half selected-piece change: clear the old selection square first to avoid transient duplicates.
-      return half === 'top' ? [bottomId, topId] : [topId, bottomId];
-    }
-    return half === 'top' ? [topId, bottomId] : [bottomId, topId];
-  }
-
-  /** Menu / markers toggle: always send top half then bottom so both halves update in display order. */
-  function orderImagesTopFirst(images: ImageRawDataUpdate[]): ImageRawDataUpdate[] {
-    if (images.length !== 2) return images;
-    const top = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_TOP);
-    const bottom = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
-    if (!top || !bottom) return images;
-    return [top, bottom];
-  }
-
-  /** For 2-half move commits (player or engine), send the destination half first for faster perceived piece movement. */
-  function orderImagesMoveDestinationFirst(images: ImageRawDataUpdate[], state: GameState): ImageRawDataUpdate[] {
-    if (images.length !== 2) return images;
-    const lastMoveTo = state.lastMoveToSquare;
-    if (!lastMoveTo) return images;
-    const top = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_TOP);
-    const bottom = images.find((u) => u.containerID === CONTAINER_ID_IMAGE_BOTTOM);
-    if (!top || !bottom) return images;
-    const displayRank = 8 - parseInt(lastMoveTo[1] ?? '1', 10);
-    return rankHalf(displayRank) === 'top' ? [top, bottom] : [bottom, top];
-  }
-
-  /** True when destination X moved from one board half to the other (e.g. B5→B1). Device may show both X's during update. */
-  function isCrossHalfDestTransition(prev: GameState, state: GameState): boolean {
-    if (state.phase !== 'destSelect' && state.phase !== 'promotionSelect') return false;
-    const prevDest = prev.phase === 'destSelect' ? getSelectedMove(prev)?.to : prev.pendingPromotionMove?.to;
-    const currDest = state.phase === 'destSelect' ? getSelectedMove(state)?.to : state.pendingPromotionMove?.to;
-    if (!prevDest || !currDest || prevDest === currDest) return false;
-    const prevRank = 8 - parseInt(prevDest[1] ?? '1', 10);
-    const currRank = 8 - parseInt(currDest[1] ?? '1', 10);
-    const prevHalf = rankHalf(prevRank);
-    const currHalf = rankHalf(currRank);
-    return prevHalf !== currHalf;
-  }
-
-  /** True when selected piece highlight moved between board halves during piece selection. */
-  function isCrossHalfPieceSelectionTransition(prev: GameState, state: GameState): boolean {
-    if (prev.phase !== 'pieceSelect' || state.phase !== 'pieceSelect') return false;
-    const prevSquare = getSelectedPiece(prev)?.square;
-    const currSquare = getSelectedPiece(state)?.square;
-    if (!prevSquare || !currSquare || prevSquare === currSquare) return false;
-    const prevRank = 8 - parseInt(prevSquare[1] ?? '1', 10);
-    const currRank = 8 - parseInt(currSquare[1] ?? '1', 10);
-    return rankHalf(prevRank) !== rankHalf(currRank);
-  }
-
-  /** Hook for temporary artifact workarounds (kept as a no-op now for clarity/documentation). */
-  function maybeDuplicateClearHalf(
-    images: ImageRawDataUpdate[],
-    _state: GameState,
-    _prev: GameState,
-  ): ImageRawDataUpdate[] {
-    return images;
-  }
-
-  function scheduleBoardCacheRefill(state: GameState): void {
-    if (state.phase !== 'pieceSelect' && state.phase !== 'destSelect') return;
-    const seq = ++boardCacheRefillSeq;
-    const pieces = state.pieces;
-    if (pieces.length === 0) return;
-    const run = async (): Promise<void> => {
-      if (seq !== boardCacheRefillSeq || flushInProgress || state !== latestState) return;
-      let nextState: GameState;
-      let prevState: GameState;
-      if (state.phase === 'pieceSelect') {
-        const len = pieces.length;
-        const idx = Math.max(0, pieces.findIndex((p) => p.id === state.selectedPieceId));
-        const nextId = pieces[(idx + 1) % len]?.id ?? state.selectedPieceId;
-        const prevId = pieces[(idx - 1 + len) % len]?.id ?? state.selectedPieceId;
-        nextState = { ...state, selectedPieceId: nextId, selectedMoveIndex: 0 };
-        prevState = { ...state, selectedPieceId: prevId, selectedMoveIndex: 0 };
-      } else {
-        const piece = pieces.find((p) => p.id === state.selectedPieceId);
-        const moves = piece?.moves ?? [];
-        const len = moves.length;
-        if (len === 0) return;
-        nextState = { ...state, selectedMoveIndex: (state.selectedMoveIndex + 1) % len };
-        prevState = { ...state, selectedMoveIndex: (state.selectedMoveIndex - 1 + len) % len };
-      }
-      boardCache.nextKey = boardCacheKey(nextState);
-      boardCache.prevKey = boardCacheKey(prevState);
-      // Use a dedicated refill renderer so these renders never corrupt the main renderer's
-      // prevHighlightKeys. Re-sync before each render so both diffs start from the same baseline.
-      boardRefillRenderer.copyStateFrom(boardRenderer);
-      const nextImages = await boardRefillRenderer.renderPngAsync(nextState, chess, 2);
-      boardRefillRenderer.copyStateFrom(boardRenderer);
-      const prevImages = await boardRefillRenderer.renderPngAsync(prevState, chess, 2);
-      if (seq !== boardCacheRefillSeq) return;
-      boardRefillRenderer.copyStateFrom(boardRenderer);
-      boardCache.nextImages = nextImages.length > 0 ? nextImages : boardRefillRenderer.render(nextState, chess);
-      boardRefillRenderer.copyStateFrom(boardRenderer);
-      boardCache.prevImages = prevImages.length > 0 ? prevImages : boardRefillRenderer.render(prevState, chess);
-    };
-    if (typeof requestIdleCallback !== 'undefined') {
-      requestIdleCallback(run, { timeout: 80 });
-    } else {
-      setTimeout(run, 0);
-    }
-  }
-
-  async function flushDisplayUpdate(): Promise<void> {
-    if (exitInProgress || bridgeReinitInProgress) return;
-    // Flush is the hot path from reducer state to G2 containers.
-    // We serialize it because BLE/image transport is slow and out-of-order image sends cause visual artifacts.
-    if (flushInProgress) {
-      pendingFlushState = latestState;
-      return;
-    }
-    flushInProgress = true;
-
-    // #region agent log
-    const flushStartMs = perfNowMs();
-    debugLog('flush start', { queueDepth: hub.getImageQueueDepth() }, 'H4');
-    // #endregion
-
-    try {
-      const state = latestState;
-      const prev = lastSentState;
-      const forceRecoveryRefresh = forceNextDisplayRefresh;
-      console.log(`[Sync] flush phase=${state.phase} fen=${state.fen.slice(0,20)} pieceId=${state.selectedPieceId ?? 'none'} moveIdx=${state.selectedMoveIndex} force=${forceRecoveryRefresh} imgActive=${imageContainersActive}`);
-      const flushStartedAtMs = perfNowMs();
-      const perfInputAtMs = perfLastInputAtMs;
-      const perfInputSeq = perfLastInputSeq;
-      const perfInputLabel = perfLastInputLabel;
-      const perfDispatch = getLastPerfDispatchTrace();
-      const flushStartBoardHealth = hub.getBoardSendHealth();
-      let perfTextSendMs = 0;
-      let perfImageBuildMs = 0;
-      let perfImageSendMs = 0;
-      let perfImageCount = 0;
-      let perfImageSource = 'none';
-      let textChanged = false;
-      let perfLinkState = flushStartBoardHealth.degraded ? 'degraded' : 'healthy';
-      let perfBoardBusyState = flushStartBoardHealth.boardBusy ? 'y' : 'n';
-
-      // Display diff is intentionally broader than board/FEN changes because text-only updates (menus/timers/engine state)
-      // must not be dropped while a long image flush is in flight.
-      const displayChanged =
-        forceRecoveryRefresh ||
-        state.phase !== prev.phase ||
-        state.fen !== prev.fen ||
-        state.engineThinking !== prev.engineThinking ||
-        state.gameOver !== prev.gameOver ||
-        state.showBoardMarkers !== prev.showBoardMarkers ||
-        state.selectedPieceId !== prev.selectedPieceId ||
-        state.selectedMoveIndex !== prev.selectedMoveIndex ||
-        state.selectedPromotionIndex !== prev.selectedPromotionIndex ||
-        state.pendingPromotionMove !== prev.pendingPromotionMove ||
-        state.menuSelectedIndex !== prev.menuSelectedIndex ||
-        state.selectedTimeControlIndex !== prev.selectedTimeControlIndex ||
-        state.timers?.whiteMs !== prev.timers?.whiteMs ||
-        state.timers?.blackMs !== prev.timers?.blackMs ||
-        state.academyState?.targetSquare !== prev.academyState?.targetSquare ||
-        state.academyState?.score.total !== prev.academyState?.score.total ||
-        state.academyState?.cursorFile !== prev.academyState?.cursorFile ||
-        state.academyState?.cursorRank !== prev.academyState?.cursorRank ||
-        state.academyState?.navAxis !== prev.academyState?.navAxis ||
-        state.academyState?.feedback !== prev.academyState?.feedback ||
-        state.academyState?.pgnStudy?.currentMoveIndex !== prev.academyState?.pgnStudy?.currentMoveIndex ||
-        state.academyState?.pgnStudy?.gameName !== prev.academyState?.pgnStudy?.gameName;
-
-      if (!displayChanged) {
-        return;
-      }
-
-      const isCoordDrill = state.phase === 'coordinateDrill';
-      const isKnightDrill = state.phase === 'knightPathDrill';
-      const isTacticsDrill = state.phase === 'tacticsDrill' || state.phase === 'mateDrill';
-      const isPgnStudy = state.phase === 'pgnStudy';
-      const isDrillMode = isCoordDrill || isKnightDrill || isTacticsDrill || isPgnStudy;
-      const wasCoordDrill = prev.phase === 'coordinateDrill';
-      const wasKnightDrill = prev.phase === 'knightPathDrill';
-      const wasTacticsDrill = prev.phase === 'tacticsDrill' || prev.phase === 'mateDrill';
-      const wasPgnStudy = prev.phase === 'pgnStudy';
-      const wasDrillMode = wasCoordDrill || wasKnightDrill || wasTacticsDrill || wasPgnStudy;
-      const drillCursorChanged = isDrillMode && (
-        state.academyState?.cursorFile !== prev.academyState?.cursorFile ||
-        state.academyState?.cursorRank !== prev.academyState?.cursorRank ||
-        state.academyState?.knightPath?.currentSquare !== prev.academyState?.knightPath?.currentSquare ||
-        state.academyState?.tacticsPuzzle?.fen !== prev.academyState?.tacticsPuzzle?.fen ||
-        state.academyState?.pgnStudy?.currentMoveIndex !== prev.academyState?.pgnStudy?.currentMoveIndex ||
-        state.academyState?.pgnStudy?.gameName !== prev.academyState?.pgnStudy?.gameName
-      );
-      const boardMayHaveChanged =
-        boardSendPendingRetry ||
-        forceRecoveryRefresh ||
-        state.fen !== prev.fen ||
-        state.showBoardMarkers !== prev.showBoardMarkers ||
-        state.selectedPieceId !== prev.selectedPieceId ||
-        state.selectedMoveIndex !== prev.selectedMoveIndex ||
-        state.phase !== prev.phase ||
-        drillCursorChanged;
-
-      const text = getCombinedDisplayText(state, { boardReady: imageContainersActive });
-      let textPromise: Promise<boolean> | undefined;
-      const textChanged_reason = forceRecoveryRefresh ? 'force' : text !== lastSentText ? 'changed' : 'skip';
-      console.log(`[Sync] text reason=${textChanged_reason} phase=${state.phase} preview=${JSON.stringify(text.slice(0,60))}`);
-      debugLog('flush-text', { reason: textChanged_reason, phase: state.phase, preview: text.slice(0, 60) });
-      if (forceRecoveryRefresh || text !== lastSentText) {
-        lastSentText = text;
-        textChanged = true;
-        const textSendStartedAtMs = perfNowMs();
-        textPromise = hub.updateText(CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT, text).then(
-          (result) => {
-            perfTextSendMs = perfNowMs() - textSendStartedAtMs;
-            console.log(`[Sync] text send result=${result} ms=${perfTextSendMs.toFixed(0)}`);
-            // #region agent log
-            debugLog('flush text sent', { sendMs: perfTextSendMs }, 'H4b');
-            // #endregion
-            return result;
-          },
-          (err) => {
-            perfTextSendMs = perfNowMs() - textSendStartedAtMs;
-            throw err;
-          },
-        );
-      }
-
-      try {
-        // Check queue depth synchronously before going async, so we can set boardSendPendingRetry
-        // before lastSentState is updated — ensures next flush retries the board image.
-        const queueDepthBeforeSend = hub.getImageQueueDepth();
-        const skipImageDueToQueueBusy = boardMayHaveChanged && imageContainersActive && queueDepthBeforeSend > 0 && !forceRecoveryRefresh;
-        if (skipImageDueToQueueBusy) {
-          boardSendPendingRetry = true;
-          // Schedule a retry flush after the queue likely drains so the board catches up even if user is idle.
-          if (!pendingBoardSendRetryTimeout) {
-            pendingBoardSendRetryTimeout = setTimeout(() => {
-              pendingBoardSendRetryTimeout = null;
-              latestState = store.getState();
-              scheduleDisplayFlush();
-            }, 2500);
-          }
-        }
-        const imageSkipped = !boardMayHaveChanged || !imageContainersActive || skipImageDueToQueueBusy;
-        console.log(`[Sync] image skip=${imageSkipped} boardChanged=${boardMayHaveChanged} imgActive=${imageContainersActive} queueBusy=${skipImageDueToQueueBusy} phase=${state.phase} pieceId=${state.selectedPieceId ?? 'none'} moveIdx=${state.selectedMoveIndex}`);
-        debugLog('flush-image', { skip: imageSkipped, boardChanged: boardMayHaveChanged, phase: state.phase, pieceId: state.selectedPieceId ?? 'none', moveIdx: state.selectedMoveIndex });
-        const imagePromise = boardMayHaveChanged && imageContainersActive && !skipImageDueToQueueBusy
-          ? (async () => {
-              const imageBuildStartedAtMs = perfNowMs();
-              let dirtyImages: ImageRawDataUpdate[];
-              let crossHalfSelectionTransition = false;
-              if (forceRecoveryRefresh) {
-                perfImageSource = 'recovery-full';
-                dirtyImages = boardRenderer.renderFull(state, chess);
-              } else if (isCoordDrill && state.academyState) {
-                perfImageSource = 'drill-coord';
-                const cf = state.academyState.cursorFile;
-                const cr = state.academyState.cursorRank;
-                const key = drillCacheKey(cf, cr);
-                const useNext = drillCache.nextKey === key && drillCache.nextImages.length > 0;
-                const usePrev = drillCache.prevKey === key && drillCache.prevImages.length > 0;
-                if (useNext) {
-                  perfImageSource = 'drill-coord-cache-next';
-                  dirtyImages = drillCache.nextImages;
-                } else if (usePrev) {
-                  perfImageSource = 'drill-coord-cache-prev';
-                  dirtyImages = drillCache.prevImages;
-                } else {
-                  dirtyImages = boardRenderer.renderDrillBoard(cf, cr);
-                }
-                if (!useNext && !usePrev) scheduleDrillCacheRefill(state);
-              } else if (isKnightDrill && state.academyState?.knightPath) {
-                perfImageSource = 'drill-knight';
-                const kp = state.academyState.knightPath;
-                const knightFile = getFileIndex(kp.currentSquare);
-                const knightRank = getRankIndex(kp.currentSquare);
-                const targetFile = getFileIndex(kp.targetSquare);
-                const targetRank = getRankIndex(kp.targetSquare);
-                dirtyImages = boardRenderer.renderKnightPathBoard(
-                  knightFile,
-                  knightRank,
-                  targetFile,
-                  targetRank,
-                  state.academyState.cursorFile,
-                  state.academyState.cursorRank
-                );
-              } else if (isTacticsDrill && state.academyState?.tacticsPuzzle) {
-                perfImageSource = 'drill-fen';
-                dirtyImages = boardRenderer.renderFromFen(state.academyState.tacticsPuzzle.fen);
-              } else if (isPgnStudy && state.academyState?.pgnStudy) {
-                perfImageSource = 'pgn-fen';
-                const pgn = state.academyState.pgnStudy;
-                const pgnFen = getPgnPositionFen(chess, pgn.moves.slice(0, pgn.currentMoveIndex));
-                dirtyImages = boardRenderer.renderFromFen(pgnFen);
-              } else if (wasDrillMode && !isDrillMode) {
-                perfImageSource = 'drill-exit-full';
-                dirtyImages = boardRenderer.renderFull(state, chess);
-              } else {
-                const key = boardCacheKey(state);
-                const crossHalfDest = isCrossHalfDestTransition(prev, state);
-                const crossHalfPieceSelection = isCrossHalfPieceSelectionTransition(prev, state);
-                // When cross-half, skip cache so we get both halves (cache/refill can have only the dirty half).
-                crossHalfSelectionTransition = crossHalfDest || crossHalfPieceSelection;
-                const useNext = !crossHalfSelectionTransition && boardCache.nextKey === key && boardCache.nextImages.length > 0;
-                const usePrev = !crossHalfSelectionTransition && boardCache.prevKey === key && boardCache.prevImages.length > 0;
-                const speedFirstCrossHalfSelection =
-                  SPEED_FIRST_CROSS_HALF_SELECTION &&
-                  crossHalfDest &&
-                  (state.phase === 'destSelect' || state.phase === 'promotionSelect');
-                if (useNext || usePrev) {
-                  perfImageSource = useNext ? 'board-cache-next' : 'board-cache-prev';
-                  dirtyImages = useNext ? boardCache.nextImages : boardCache.prevImages;
-                  boardRenderer.setStateForCache(state);
-                } else {
-                  if (speedFirstCrossHalfSelection) {
-                    perfImageSource = 'board-png-crosshalf-speed';
-                    dirtyImages = await boardRenderer.renderPngAsync(state, chess, 0);
-                  } else if (crossHalfSelectionTransition) {
-                    perfImageSource = 'board-bmp-force-both';
-                    // Use render with forceBothHalves (no buffer re-init) instead of renderFull for less delay.
-                    dirtyImages = boardRenderer.render(state, chess, true);
-                  } else {
-                    perfImageSource = 'board-png-live';
-                    // Prefer PNG for live board updates to reduce BLE payload; BoardRenderer falls back to BMP when needed.
-                    dirtyImages = await boardRenderer.renderPngAsync(state, chess, 0);
-                  }
-                }
-                // Fallback: if we still have only one image on cross-half (e.g. stale cache path), force both halves.
-                if (crossHalfSelectionTransition && !speedFirstCrossHalfSelection && dirtyImages.length === 1) {
-                  perfImageSource = 'board-bmp-force-both-fallback';
-                  dirtyImages = boardRenderer.render(state, chess, true);
-                }
-                if (state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect') {
-                  // Cross-half selection marker transitions (selected piece or destination X) must clear the old marker half first.
-                  dirtyImages = orderImagesSelectionFirst(dirtyImages, state, crossHalfSelectionTransition);
-                  dirtyImages = maybeDuplicateClearHalf(dirtyImages, state, prev);
-                } else {
-                  dirtyImages = orderImagesTopFirst(dirtyImages);
-                }
-                scheduleBoardCacheRefill(state);
-              }
-              perfImageCount = dirtyImages.length;
-              perfImageBuildMs = perfNowMs() - imageBuildStartedAtMs;
-              // #region agent log
-              debugLog('flush images built', { buildMs: perfImageBuildMs, imageCount: dirtyImages.length }, 'H4b');
-              // #endregion
-              const imageSendStartedAtMs = perfNowMs();
-              // Sample current transport health right before sending images. This drives adaptive tradeoffs below.
-              const boardSendHealth = hub.getBoardSendHealth();
-              const boardLinkDegraded = boardSendHealth.degraded;
-              perfLinkState = boardLinkDegraded ? 'degraded' : 'healthy';
-              perfBoardBusyState = boardSendHealth.boardBusy ? 'y' : 'n';
-              // Queue depth was already checked synchronously before this async closure.
-              // Clear the pending retry since we're about to send.
-              boardSendPendingRetry = false;
-              if (pendingBoardSendRetryTimeout !== null) {
-                clearTimeout(pendingBoardSendRetryTimeout);
-                pendingBoardSendRetryTimeout = null;
-              }
-              const boardSendMeta: BoardImageSendMeta = forceRecoveryRefresh
-                ? { kind: 'board', priority: 'high', interruptProtected: true }
-                : { kind: 'board', interruptProtected: true };
-              const isTwoHalfSelectionScroll =
-                perfDispatch.source === 'input' &&
-                perfDispatch.actionType === 'SCROLL' &&
-                (state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect') &&
-                dirtyImages.length === 2;
-              const selectionScrollBoardBusy = isTwoHalfSelectionScroll && boardSendHealth.boardBusy;
-              // Cross-half marker transitions are ordered "clear old half first"; head-only would hide the marker entirely.
-              const selectionScrollPreferHeadOnly =
-                isTwoHalfSelectionScroll &&
-                !crossHalfSelectionTransition &&
-                (selectionScrollBoardBusy || boardLinkDegraded);
-              // Cross-half destination X transitions benefit from "show new X half first", but only when not already congested.
-              const useSpeedFirstTail =
-                SPEED_FIRST_CROSS_HALF_SELECTION &&
-                isCrossHalfDestTransition(prev, state) &&
-                (state.phase === 'destSelect' || state.phase === 'promotionSelect') &&
-                dirtyImages.length === 2 &&
-                !selectionScrollPreferHeadOnly;
-              // Selection scrolls can use the same speed-first tail strategy when both halves changed.
-              const useSpeedFirstSelectionScrollTail =
-                isTwoHalfSelectionScroll &&
-                !selectionScrollPreferHeadOnly;
-              // When the link is busy/degraded, selection scrolls can send only the priority half (except cross-half marker moves).
-              const useSpeedFirstSelectionScrollHeadOnly =
-                isTwoHalfSelectionScroll &&
-                selectionScrollPreferHeadOnly;
-              // 2-half move commits (player/engine) send the destination half first to make the piece appear sooner.
-              const useSpeedFirstMoveCommit =
-                SPEED_FIRST_CROSS_HALF_MOVE_COMMIT &&
-                !boardLinkDegraded &&
-                state.phase === 'idle' &&
-                state.fen !== prev.fen &&
-                state.lastMoveToSquare !== prev.lastMoveToSquare &&
-                !!state.lastMoveToSquare &&
-                dirtyImages.length === 2;
-              if (useSpeedFirstMoveCommit) {
-                dirtyImages = orderImagesMoveDestinationFirst(dirtyImages, state);
-              }
-              if (useSpeedFirstSelectionScrollHeadOnly) {
-                const reason = selectionScrollBoardBusy ? 'busy' : 'degraded';
-                perfImageSource = `${perfImageSource}+head-only-${reason}`;
-                const [firstImage] = dirtyImages;
-                if (firstImage) {
-                  perfImageCount = 1;
-                  await sendImages(hub, [firstImage], boardSendMeta);
-                } else {
-                  perfImageCount = 0;
-                }
-              } else if (useSpeedFirstTail || useSpeedFirstSelectionScrollTail || useSpeedFirstMoveCommit) {
-                perfImageSource = `${perfImageSource}+tail-low`;
-                await sendImagesSpeedFirstTail(hub, dirtyImages, boardSendMeta);
-              } else {
-                await sendImages(hub, dirtyImages, boardSendMeta);
-              }
-              perfImageSendMs = perfNowMs() - imageSendStartedAtMs;
-              // #region agent log
-              debugLog('flush images sent', { sendMs: perfImageSendMs }, 'H4b');
-              // #endregion
-            })()
-          : Promise.resolve();
-
-        // Do not await text or image: when BLE is slow, blocking freezes the UI (scroll/tap only set
-        // pendingFlushState until the flush returns). Both are still sent in order; we just allow the next flush to run.
-        void imagePromise?.catch((err: unknown) => console.error('[EvenChess] Image send failed:', err));
-        if (textPromise) void textPromise.catch((err: unknown) => console.error('[EvenChess] Text send failed:', err));
-        lastSentState = state;
-        if (forceRecoveryRefresh) {
-          forceNextDisplayRefresh = false;
-        }
-
-        if (PERF_FLUSH_LOGGING && (boardMayHaveChanged || textChanged)) {
-          const flushEndedAtMs = perfNowMs();
-          const flushTotalMs = flushEndedAtMs - flushStartedAtMs;
-          const fromInputToFlushStartMs = perfInputAtMs > 0 ? flushStartedAtMs - perfInputAtMs : -1;
-          const fromInputToFlushEndMs = perfInputAtMs > 0 ? flushEndedAtMs - perfInputAtMs : -1;
-          perfLogLazyIfEnabled?.(
-            () =>
-              `[Perf][Flush] phase=${state.phase} board=${boardMayHaveChanged ? 'y' : 'n'} text=${textChanged ? 'y' : 'n'} ` +
-              `source=${perfDispatch.source} action=${perfDispatch.actionType} ` +
-              `link=${perfLinkState} boardBusy=${perfBoardBusyState} ` +
-              `deferred=n ` +
-              `imgSource=${perfImageSource} imgCount=${perfImageCount} imgBuild=${perfImageBuildMs.toFixed(1)}ms ` +
-              `imgSend=${perfImageSendMs.toFixed(1)}ms textSend=${perfTextSendMs.toFixed(1)}ms ` +
-              `flush=${flushTotalMs.toFixed(1)}ms input=${perfInputLabel || '-'}#${perfInputSeq} ` +
-              `input->flushStart=${fromInputToFlushStartMs.toFixed(1)}ms input->flushEnd=${fromInputToFlushEndMs.toFixed(1)}ms`,
-          );
-        }
-      } catch (err) {
-        console.error('[EvenChess] Display update failed:', err);
-      }
-    } finally {
-      flushInProgress = false;
-      refreshSuccessfulSendCounters();
-
-      // #region agent log
-      const flushDurationMs = perfNowMs() - flushStartMs;
-      debugLog('flush end', { durationMs: flushDurationMs, queueDepth: hub.getImageQueueDepth() }, 'H4');
-      // #endregion
-
-      // Retry any deferred branding sync after board/image work completes.
-      trySyncBrandingMode(latestState);
-
-      if (pendingFlushState) {
-        const pending = pendingFlushState;
-        pendingFlushState = null;
-        // Re-run for the newest state reference only; intermediate states are intentionally coalesced under slow transport.
-        if (pending !== lastSentState) {
-          latestState = pending;
-          void flushDisplayUpdate();
-        }
-      }
-    }
+  // Text-first startup: only text + brand containers on the critical path. Image containers are
+  // added by upgradeToFullLayout() once the SDK has demonstrated it can carry traffic (first
+  // input or auto-upgrade below).
+  const startupOk = await setupTextOnlyStartup(bridge, store);
+  if (!startupOk) {
+    console.error('[EvenChess] Initial setupPage failed; the app will retry via reinit on next user input.');
+  } else {
+    // Auto-upgrade after text-first startup so users who never tap still see the board.
+    void upgradeToFullLayout({
+      bridge,
+      store,
+      flush,
+      branding,
+      imageContainersActive: () => imageContainersActive,
+      setImageContainersActive: (v) => { imageContainersActive = v; },
+    });
   }
 
   console.log('[EvenChess] Initialized — ready to play.');

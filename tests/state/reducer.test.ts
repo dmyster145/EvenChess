@@ -379,16 +379,14 @@ describe('reducer', () => {
       expect(next.menuSelectedIndex).toBe(1); // Cancel selected by default
     });
 
-    it('navigates to exitConfirm when unsaved changes', () => {
-      const state = createTestState({ phase: 'menu', hasUnsavedChanges: true });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'exit' });
-      expect(next.phase).toBe('exitConfirm');
-    });
+    it('closes the menu regardless of unsaved changes (autosave handles durability)', () => {
+      const unsavedState = createTestState({ phase: 'menu', hasUnsavedChanges: true, previousPhase: 'idle' });
+      const unsavedNext = reduce(unsavedState, { type: 'MENU_SELECT', option: 'exit' });
+      expect(unsavedNext.phase).toBe('idle');
 
-    it('returns to idle on exit without unsaved changes', () => {
-      const state = createTestState({ phase: 'menu', hasUnsavedChanges: false });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'exit' });
-      expect(next.phase).toBe('idle');
+      const savedState = createTestState({ phase: 'menu', hasUnsavedChanges: false, previousPhase: 'idle' });
+      const savedNext = reduce(savedState, { type: 'MENU_SELECT', option: 'exit' });
+      expect(savedNext.phase).toBe('idle');
     });
   });
 
@@ -1043,10 +1041,59 @@ describe('reducer', () => {
       expect(next.phase).toBe('menu');
     });
 
-    it('closes menu and returns to previous phase', () => {
+    it('requests the system exit dialog from menu (sets pendingSystemExitDialog, stays in menu)', () => {
+      // Per ER guidance, double-tap in the settings menu surfaces the system "End this feature?"
+      // confirmation dialog rather than closing the menu. The app subscriber observes the flag and
+      // calls bridge.shutDownPageContainer(1).
       const state = createTestState({ phase: 'menu', previousPhase: 'pieceSelect' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
-      expect(next.phase).toBe('pieceSelect');
+      expect(next.phase).toBe('menu');
+      expect(next.pendingSystemExitDialog).toBe(true);
+    });
+
+    it('CLEAR_SYSTEM_EXIT_REQUEST clears the flag', () => {
+      const state = createTestState({ phase: 'menu', pendingSystemExitDialog: true });
+      const next = reduce(state, { type: 'CLEAR_SYSTEM_EXIT_REQUEST' });
+      expect(next.pendingSystemExitDialog).toBe(false);
+      expect(next.phase).toBe('menu');
+    });
+
+    it('RESTORE_STATE replays the saved state and resets transient flags', () => {
+      // Simulate the headless WebView migration: a fresh initial state, then host injects a
+      // snapshot that has an in-progress game with the engine "thinking."
+      const fresh = createTestState({ phase: 'idle' });
+      const saved = createTestState({
+        phase: 'destSelect',
+        selectedPieceId: 'w-n-g1',
+        history: ['e4', 'e5'],
+        fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        engineThinking: true,
+        pendingMove: { from: 'g1', to: 'f3', uci: 'g1f3', san: 'Nf3' } as never,
+        pendingPromotionMove: { from: 'e7', to: 'e8' },
+        pendingSystemExitDialog: true,
+      });
+      const next = reduce(fresh, { type: 'RESTORE_STATE', state: saved });
+      // Game state survived.
+      expect(next.phase).toBe('destSelect');
+      expect(next.history).toEqual(['e4', 'e5']);
+      expect(next.fen).toBe(saved.fen);
+      expect(next.selectedPieceId).toBe('w-n-g1');
+      // Transient flags reset — engine isn't actually thinking in the new WebView yet, and
+      // any pendingMove/pendingPromotionMove from before the migration is stale.
+      expect(next.engineThinking).toBe(false);
+      expect(next.pendingMove).toBeNull();
+      expect(next.pendingPromotionMove).toBeNull();
+      expect(next.pendingSystemExitDialog).toBe(false);
+    });
+
+    it('RESTORE_STATE works even from a game-over state (bypasses the gameOver guard)', () => {
+      // The reducer's gameOver guard blocks most actions; RESTORE_STATE must bypass it so a saved
+      // mid-game snapshot can overwrite a stale "game over" state.
+      const stale = createTestState({ phase: 'idle', gameOver: 'White wins on time!' });
+      const saved = createTestState({ phase: 'idle', gameOver: null, history: ['e4'] });
+      const next = reduce(stale, { type: 'RESTORE_STATE', state: saved });
+      expect(next.gameOver).toBeNull();
+      expect(next.history).toEqual(['e4']);
     });
 
     it('returns from difficultySelect to menu', () => {
