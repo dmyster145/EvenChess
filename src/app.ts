@@ -59,23 +59,24 @@ type BackgroundSnapshot = {
 /**
  * Whether the in-app exit dialog (shutDownPageContainer(1)) is invoked on menu double-tap.
  *
- * Default OFF due to a confirmed ER SDK defect: invoking shutDownPageContainer(1) permanently
- * kills the updateImageRawData BLE channel for the whole native session (not recoverable by
- * rebuild, reinit, or WebView reload — reported to ER). Users exit via the firmware long-press,
- * which does not break the image channel.
+ * ENABLED — this is the ER-required exit affordance: double-tap in the settings menu surfaces the
+ * system "End this feature?" dialog via `bridge.requestSystemExit()` → `shutDownPageContainer(1)`.
  *
- * This is a RUNTIME check (reads localStorage), deliberately NOT a compile-time const, so the
- * production minifier cannot prove the `bridge.requestSystemExit()` branch is dead and tree-shake
- * `shutDownPageContainer` out of the bundle — ER's static submission checker requires the API to
- * be present. Re-enable instantly once the SDK is fixed, no rebuild:
- *   localStorage.setItem('evenchess-exit-dialog', 'on'); location.reload()
+ * KNOWN ER SDK DEFECT (reported upstream, repro is this exact code path): invoking
+ * `shutDownPageContainer(1)` from the SDK's JS binding permanently destroys the
+ * `updateImageRawData` BLE channel for the entire native session — `rebuildPageContainer` and
+ * text keep working, every image send returns `sendFailed`, and the damage is not recoverable by
+ * rebuild, bridge reinit, or WebView reload (the host keeps the BLE session across a reload).
+ * The firmware's own long-press exit dialog shows the SAME dialog and does NOT break the image
+ * channel — same dialog, same "No", opposite outcome — so the defect is in the SDK's
+ * `shutDownPageContainer` binding, not the dialog. Apps cannot invoke the working (firmware)
+ * path programmatically, so this required API is currently incompatible with image-rendering
+ * apps. The lifecycle controller handles the inverted-polarity dialog events correctly
+ * (sys=4 rebuild / sys=5 cancel-keep-running / sys=7 confirm) — see lifecycle.ts — so the
+ * implementation is correct and ready the moment ER fixes the SDK binding.
  */
 function isExitDialogEnabled(): boolean {
-  try {
-    return localStorage.getItem('evenchess-exit-dialog') === 'on';
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 export async function initApp(): Promise<void> {
@@ -233,20 +234,17 @@ export async function initApp(): Promise<void> {
     const action = mapEvenHubEvent(event, store.getState());
     debugLog('mapped', { action: action?.type ?? 'null' }, 'EVT');
     if (action) {
-      // Menu double-tap = "show the system exit dialog" (ER-required affordance via
-      // bridge.requestSystemExit() → shutDownPageContainer(1)).
+      // Menu double-tap = "show the system exit dialog" — the ER-required exit affordance,
+      // invoked via bridge.requestSystemExit() → shutDownPageContainer(1). Short-circuit the
+      // reducer/side-effects/flush chain so JS work is minimal around the call (mirrors the
+      // firmware long-press path). requestSystemExit() arms the bridge's exitDialogPending flag
+      // synchronously, so lifecycle.ts interprets the inverted-polarity dialog events correctly
+      // (sys=4 dialog-shown / sys=5 cancel-keep-running / sys=7 confirm).
       //
-      // KNOWN ER SDK DEFECT (reported upstream): invoking shutDownPageContainer(1) permanently
-      // destroys the updateImageRawData BLE channel for the entire native session. Confirmed on
-      // device — rebuildPageContainer/text keep working, every image send returns sendFailed,
-      // and the damage survives a WebView reload (the host keeps the BLE session). There is no
-      // app-side recovery. It makes the required exit API incompatible with image-rendering apps.
-      //
-      // Until ER fixes the SDK, the dialog invocation is gated OFF at runtime via
-      // `isExitDialogEnabled()` (default off; flip with localStorage key once fixed — no rebuild
-      // needed). The call site is preserved and reachable so the static bundle checker still
-      // finds `shutDownPageContainer` and so the code is correct the instant the SDK is fixed.
-      // Users exit via the firmware long-press, which does NOT break the image channel.
+      // See isExitDialogEnabled() above for the known ER SDK defect this code path reproduces:
+      // shutDownPageContainer(1) permanently kills the updateImageRawData BLE channel for the
+      // native session. The implementation here is correct per ER's spec; the failure is in the
+      // SDK binding (the firmware's own long-press dialog does not exhibit it).
       const currentPhase = store.getState().phase;
       if (action.type === 'DOUBLE_TAP' && currentPhase === 'menu') {
         if (isExitDialogEnabled()) {
@@ -255,7 +253,7 @@ export async function initApp(): Promise<void> {
           branding.cancel();
           bridge.requestSystemExit();
         } else {
-          debugLog('menu double-tap — exit dialog suppressed (ER SDK image-channel defect; long-press to exit)', {}, 'LCY');
+          debugLog('menu double-tap — exit dialog disabled', {}, 'LCY');
         }
         return;
       }
