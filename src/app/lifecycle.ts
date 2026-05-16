@@ -257,6 +257,24 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
       status.connectType !== 'connectionFailed' &&
       status.connectType !== 'none';
 
+    // The SDK pushes one default/uninitialized DeviceStatus at startup with everything zeroed
+    // (connectType none/disconnected, batteryLevel 0) even though the device is connected —
+    // getDeviceInfo() returns a real battery moments earlier. Writing the flags from that
+    // spurious event latches the flush wearing/connected gate closed for the entire session
+    // (no further status event arrives), freezing all rendering while input still flows. A
+    // genuinely connected device always reports a nonzero battery; treat disconnected + no
+    // battery as "no information" and ignore it. A real disconnect that also reports zero
+    // battery is harmless to ignore here — failed sends are handled by the bridge's timeout
+    // and persistent-failure path, never a hard freeze.
+    const battery = status.batteryLevel ?? 0;
+    if (!connected && battery <= 0) {
+      debugLog('device-status ignored (spurious default: disconnected + no battery)', {
+        isWearing: status.isWearing ?? null,
+        connectType: status.connectType ?? null,
+      }, 'DEV');
+      return;
+    }
+
     debugLog('device-status', {
       wearing,
       connected,

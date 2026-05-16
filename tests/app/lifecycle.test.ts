@@ -255,6 +255,23 @@ describe('createLifecycle', () => {
     expect(deviceFlags.isWearingGlasses).toBe(false);
   });
 
+  it('onDeviceStatusChanged: spurious default (disconnected + battery 0) is ignored — gate stays open', () => {
+    // The SDK pushes one uninitialized DeviceStatus at startup (connectType none, battery 0)
+    // even though the device is connected. Trusting it latched both flags false for the whole
+    // session and froze all rendering. deviceFlags is seeded true/true in beforeEach.
+    const lifecycle = makeLifecycle();
+    lifecycle.onDeviceStatusChanged({ isWearing: false, isInCase: false, connectType: 'none', batteryLevel: 0 });
+    expect(deviceFlags.isWearingGlasses).toBe(true);
+    expect(deviceFlags.isDeviceConnected).toBe(true);
+  });
+
+  it('onDeviceStatusChanged: genuine not-wearing with a real battery still gates', () => {
+    const lifecycle = makeLifecycle();
+    lifecycle.onDeviceStatusChanged({ isWearing: false, isInCase: false, connectType: 'ble', batteryLevel: 72 });
+    expect(deviceFlags.isWearingGlasses).toBe(false);
+    expect(deviceFlags.isDeviceConnected).toBe(true);
+  });
+
   it('attach() is idempotent', () => {
     const lifecycle = makeLifecycle();
     lifecycle.attach();
