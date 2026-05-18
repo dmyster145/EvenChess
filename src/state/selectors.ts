@@ -782,10 +782,30 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
   const index = getCarouselSelectedIndex(state);
 
   switch (state.phase) {
-    case 'idle':
+    case 'idle': {
       lines.push('');
-      lines.push(boardReady ? `Scroll to begin ${ARROW_UPDOWN}` : 'Preparing board…');
+      const v = state.voice;
+      const statusActive =
+        !!v?.status && (v.statusExpiresAt == null || v.statusExpiresAt > Date.now());
+      if (v?.listening) {
+        lines.push(v.status ?? 'Listening… speak your move');
+        lines.push('Tap to cancel  (e.g. Knight to C3)');
+      } else if (statusActive && v) {
+        lines.push(v.status!);
+        if (boardReady) {
+          lines.push('Tap to speak');
+          lines.push(`Scroll to begin ${ARROW_UPDOWN}`);
+        } else {
+          lines.push('Preparing board…');
+        }
+      } else if (boardReady) {
+        lines.push('Tap to speak');
+        lines.push(`Scroll to begin ${ARROW_UPDOWN}`);
+      } else {
+        lines.push('Preparing board…');
+      }
       break;
+    }
 
     case 'rowSelect': {
       lines.push('');

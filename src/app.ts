@@ -41,6 +41,7 @@ import { createBulletTimer } from './app/bullet-timer';
 import { createAutosave } from './app/autosave';
 import { createLifecycle, type DeviceStatusUpdate, type DeviceStatusFlags } from './app/lifecycle';
 import { createSideEffects } from './app/side-effects';
+import { createVoiceController } from './voice/controller';
 import { createReinit } from './app/bridge-reinit';
 import { loadInitialAppState, setupTextOnlyStartup, upgradeToFullLayout, runStorageProbe } from './app/init';
 
@@ -159,6 +160,8 @@ export async function initApp(): Promise<void> {
     autosave,
     rendererRef,
   });
+  // Push-to-talk voice move input. Model is bundled (offline); see public/vosk/.
+  const voice = createVoiceController({ store, bridge, modelUrl: '/vosk/model.tar.gz' });
 
   // Background-state shim. Trimmed to 6 fields per the rework plan — the prior full GameState
   // snapshot blocked the JS thread on background transitions for long games (race #8). The move
@@ -238,6 +241,13 @@ export async function initApp(): Promise<void> {
       phase: store.getState().phase,
     }, 'EVT');
 
+    // Microphone PCM frames: route straight to the voice recognizer. No-op unless
+    // a push-to-talk session is active. Bypass the input mapper / lifecycle.
+    if (event.audioEvent && event.audioEvent.audioPcm != null) {
+      voice.feed(event.audioEvent.audioPcm);
+      return;
+    }
+
     lifecycle.onHubEvent(event);
     const action = mapEvenHubEvent(event, store.getState());
     debugLog('mapped', { action: action?.type ?? 'null' }, 'EVT');
@@ -281,6 +291,23 @@ export async function initApp(): Promise<void> {
       if (!isKeepAliveActive()) {
         activateKeepAlive();
       }
+
+      // Mic must not survive a background. FOREGROUND_EXIT still dispatches normally.
+      if (action.type === 'FOREGROUND_EXIT') {
+        voice.cancel();
+      }
+
+      // Push-to-talk. Tap-in-idle starts listening; scroll still opens the manual
+      // carousel and double-tap still opens the menu. Any input cancels an active
+      // listen. If voice can't run (model not ready / unavailable) start() returns
+      // false and the tap falls through to the carousel exactly as before.
+      if (voice.isListening()) {
+        voice.cancel();
+        if (action.type === 'TAP') return;
+      } else if (action.type === 'TAP' && currentPhase === 'idle' && voice.start()) {
+        return;
+      }
+
       dispatchWithPerfSource('input', action);
     }
   }
@@ -340,6 +367,12 @@ export async function initApp(): Promise<void> {
   if (typeof window !== 'undefined') {
     (window as unknown as { __evenchess_reinit: (reason?: string) => Promise<void> }).__evenchess_reinit =
       (reason = 'manual') => reinit.reinit(reason);
+    // Verification hook: drive a transcript straight through parse→resolve→dispatch
+    // (no audio), e.g. window.__evenchess_voice('knight to c3').
+    (window as unknown as { __evenchess_voice: (text: string) => void }).__evenchess_voice =
+      (text: string) => voice.injectTranscript(text);
+    // Safety net: never leave the glasses mic open if the webview is torn down.
+    window.addEventListener('pagehide', () => voice.dispose());
   }
 
   lifecycle.attach();
@@ -377,6 +410,10 @@ export async function initApp(): Promise<void> {
       setImageContainersActive: (v) => { imageContainersActive = v; },
     });
   }
+
+  // Warm the voice model off the critical path so the first push-to-talk tap is
+  // instant. Failure is non-fatal — tap-in-idle just falls back to the carousel.
+  voice.warm();
 
   console.log('[EvenChess] Initialized — ready to play.');
 }

@@ -13,13 +13,15 @@
     "lint": "eslint src/",
     "test": "vitest run",
     "test:watch": "vitest",
+    "fetch:voice-model": "node scripts/fetch-vosk-model.cjs",
     "postinstall": "node scripts/copy-stockfish.cjs"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.10",
     "chess.js": "^1.4.0",
     "stockfish.js": "^10.0.2",
-    "upng-js": "^2.1.0"
+    "upng-js": "^2.1.0",
+    "vosk-browser": "^0.0.8"
   },
   "devDependencies": {
     "@evenrealities/evenhub-simulator": "^0.7.3",

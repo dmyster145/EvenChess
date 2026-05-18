@@ -15,6 +15,12 @@ build/
 .cursor/rules/
 docs/
 
+# Vendored Vosk speech model (~40 MB) — fetched via `npm run fetch:voice-model`
+public/vosk/model.tar.gz
+
+# Packaged app artifact (reproducible via `npx evenhub pack`)
+*.ehpk
+
 # IDE and OS
 .idea/
 .vscode/

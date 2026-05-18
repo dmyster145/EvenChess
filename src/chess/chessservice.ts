@@ -86,9 +86,7 @@ export class ChessService {
       return this.cachedPieces;
     }
 
-    // #region agent log
     const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    // #endregion
 
     const moves = this.game.moves({ verbose: true }) as Move[];
     const bySquare = new Map<string, Move[]>();
@@ -156,10 +154,8 @@ export class ChessService {
 
     this.cachedPiecesFen = currentFen;
     this.cachedPieces = entries;
-    // #region agent log
     const durationMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
     debugLog('getPiecesWithMoves recompute', { durationMs, fenLen: currentFen.length }, 'H3');
-    // #endregion
     return entries;
   }
 
@@ -186,9 +182,7 @@ export class ChessService {
       });
       if (result) {
         this.invalidateCache();
-        // #region agent log
         debugLog('chess move', { internalHistoryLength: this.getHistory().length }, 'H1');
-        // #endregion
       }
       return result?.san ?? null;
     } catch {

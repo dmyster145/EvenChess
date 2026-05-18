@@ -463,13 +463,13 @@
             <p>Play chess on your G2 glasses. Take on the AI, race the clock in Bullet mode, or sharpen your skills in the Academy.</p>
             
             <h3>Launch</h3>
-            <p>Open Chess from Even Hub. You'll see the board on your glasses with "Scroll to begin" at the bottom.</p>
+            <p>Open Chess from Even Hub. You'll see the board on your glasses with a "Scroll to begin" prompt. Scroll to start selecting, or tap to speak your move.</p>
             
             <h3>Display</h3>
             <ul>
-              <li><strong>Top:</strong> Logo and game status</li>
-              <li><strong>Center:</strong> Board and pieces</li>
-              <li><strong>Bottom:</strong> Move info and prompts</li>
+              <li><strong>Left:</strong> Whose turn it is, move number, prompts, and the settings menu</li>
+              <li><strong>Right:</strong> The board and pieces</li>
+              <li><strong>Above the board:</strong> Captured pieces, so you can read material at a glance</li>
             </ul>
           </div>
         </details>
@@ -481,7 +481,7 @@
           <summary>Game Modes</summary>
           <div class="section-content">
             <h3>Play vs AI</h3>
-            <p>Classic chess against Stockfish. You play White.</p>
+            <p>Classic chess against Stockfish. Choose your side with <strong>Play As</strong> in the menu (White, Black, or Random). When you play Black the board flips to your side and the engine opens as White.</p>
             <ul>
               <li><strong>Easy:</strong> Lighter opponent with more varied play</li>
               <li><strong>Casual:</strong> Good for practice; forgiving AI</li>
@@ -521,36 +521,46 @@
         <details>
           <summary>Controls</summary>
           <div class="section-content">
-            <p>Three gestures on your G2 touchpad:</p>
-            
+            <p>Three gestures on your G2 touchpad, plus optional voice:</p>
+
             <div class="gesture-grid">
               <div class="gesture-card">
                 <strong>Scroll</strong>
-                Swipe up or down to browse pieces, moves, or menu items.
+                Swipe up or down to browse rows, pieces, moves, or menu items. Swipe up moves the highlight up the board.
               </div>
-              
+
               <div class="gesture-card">
                 <strong>Tap</strong>
-                Confirm your choice: pick a piece, make a move, or select a menu option.
+                Confirm your choice: pick a row, a piece, a move, or a menu option.
               </div>
-              
+
               <div class="gesture-card">
                 <strong>Double Tap</strong>
-                Go back one step, or open the menu from the idle screen.
+                Go back one step (move to piece to row), or open the menu from the idle screen.
+              </div>
+
+              <div class="gesture-card">
+                <strong>Speak (Voice)</strong>
+                From the idle screen, tap once to start listening, then say your move. Tap or scroll again to cancel. Works fully offline.
               </div>
             </div>
 
             <h3>Making a Move</h3>
+            <p>Selection is row-first: only rows and pieces that have a legal move are offered, so most pieces are just a few swipes away.</p>
             <ol>
-              <li><strong>Scroll</strong> to start selecting</li>
-              <li><strong>Scroll</strong> to your piece</li>
-              <li><strong>Tap</strong> to lock it in</li>
-              <li><strong>Scroll</strong> through your options</li>
-              <li><strong>Tap</strong> to make the move</li>
+              <li><strong>Scroll</strong> from idle to start selecting</li>
+              <li><strong>Scroll</strong> to the row your piece is on, then <strong>Tap</strong></li>
+              <li><strong>Scroll</strong> to your piece on that row, then <strong>Tap</strong></li>
+              <li><strong>Scroll</strong> through that piece's moves</li>
+              <li><strong>Tap</strong> to play the move</li>
             </ol>
-            
+            <p>The row you are choosing is framed with a bold outline so it is easy to see.</p>
+
+            <h3>Or Just Say It</h3>
+            <p>From the idle screen, tap once and speak your move, for example "e4", "knight to c3", "bishop takes f7", "castle kingside", or "e8 queen" to promote. It listens offline and plays the move if it is legal. If it cannot tell what you meant, it shows a short message so you can try again or fall back to scroll selection. Tap or scroll to cancel listening.</p>
+
             <div class="tip">
-              <strong>Tip:</strong> Double-tap anytime to go back a step.
+              <strong>Tip:</strong> Double-tap any time to back up a step.
             </div>
           </div>
         </details>
@@ -562,6 +572,9 @@
           <summary>Menu Options</summary>
           <div class="section-content">
             <p>Double-tap from idle to open the menu. Scroll to browse, tap to choose.</p>
+
+            <h3>Play As</h3>
+            <p>Choose which side you play: <strong>White</strong>, <strong>Black</strong>, or <strong>Random</strong>. Picking a side starts a new game; if a game is in progress you will be asked to confirm first. Black flips the board to your side and the engine opens as White. Random picks a fresh side every new game. Your choice is remembered between sessions.</p>
 
             <h3>Mode</h3>
             <p>Switch between Play vs AI, Bullet Blitz, and Academy.</p>
@@ -666,6 +679,8 @@
             <h3>Gameplay</h3>
             <ul>
               <li>Your piece and its possible moves light up on the board</li>
+              <li>The row you are selecting is framed with a bold outline</li>
+              <li>Captured pieces show in a strip above the board (yours and the engine's)</li>
               <li>"Check!" flashes when the king is threatened</li>
               <li>"Engine thinking..." means the AI is working on its reply</li>
               <li>In Bullet, watch your clock. Zero means game over</li>
@@ -674,9 +689,10 @@
 
             <h3>Navigation</h3>
             <ul>
-              <li>From idle, scroll or tap to start picking pieces</li>
+              <li>From idle, scroll to pick a piece, or tap to speak your move</li>
               <li>Double-tap from idle opens the menu</li>
-              <li>Difficulty and board markers save between sessions</li>
+              <li>Double-tap backs up one step (move to piece to row)</li>
+              <li>Difficulty, board markers, and your Play As side save between sessions</li>
               <li>Your game saves automatically when you exit</li>
             </ul>
 

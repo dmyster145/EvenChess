@@ -64,6 +64,37 @@ export function reduce(state: GameState, action: Action): GameState {
     case 'PLAYER_MOVE_SAN':
       return handlePlayerMoveSan(state, action.san);
 
+    case 'VOICE_LISTEN_START':
+      if (
+        state.phase !== 'idle' ||
+        state.gameOver ||
+        state.engineThinking ||
+        state.pendingMove ||
+        state.turn !== state.playerColor
+      ) {
+        return state;
+      }
+      return { ...state, voice: { listening: true, status: 'Listening… speak your move', statusExpiresAt: null } };
+
+    case 'VOICE_LISTEN_END':
+      return state.voice ? { ...state, voice: { ...state.voice, listening: false } } : state;
+
+    case 'VOICE_STATUS': {
+      const listening = action.keepListening ? (state.voice?.listening ?? false) : false;
+      const status = action.message ? action.message : null;
+      return {
+        ...state,
+        voice: {
+          listening,
+          status,
+          statusExpiresAt: status && action.durationMs ? Date.now() + action.durationMs : null,
+        },
+      };
+    }
+
+    case 'VOICE_MOVE_RESOLVED':
+      return handleVoiceMoveResolved(state, action.move);
+
     case 'ENGINE_THINKING':
       return { ...state, engineThinking: true };
 
@@ -819,9 +850,6 @@ function handleDoubleTap(state: GameState): GameState {
     case 'promotionSelect':
       return { ...state, phase: 'destSelect', pendingPromotionMove: null };
 
-    case 'confirm':
-      return { ...state, phase: 'destSelect' };
-
     case 'menu':
       // Per ER guidance, double-tap in the settings menu surfaces the system "End this feature?"
       // dialog. The app subscriber sees this flag and calls bridge.shutDownPageContainer(1).
@@ -934,6 +962,33 @@ function handlePlayerMoveSan(state: GameState, san: string): GameState {
   };
 }
 
+
+function handleVoiceMoveResolved(state: GameState, move: GameState['pendingMove']): GameState {
+  if (
+    !move ||
+    state.phase !== 'idle' ||
+    state.gameOver ||
+    state.engineThinking ||
+    state.pendingMove ||
+    state.turn !== state.playerColor
+  ) {
+    return state;
+  }
+  const newHistory = [...state.history, move.san].slice(-MAX_HISTORY_LENGTH);
+  return {
+    ...state,
+    phase: 'idle',
+    lastMove: move.san,
+    lastMoveToSquare: move.to,
+    playerLastMoveToSquare: move.to,
+    history: newHistory,
+    selectedPieceId: null,
+    selectedMoveIndex: 0,
+    pendingMove: move,
+    hasUnsavedChanges: true,
+    voice: { listening: false, status: `Played ${move.san}`, statusExpiresAt: Date.now() + 2500 },
+  };
+}
 
 function selectedPieceEntry(state: GameState): PieceEntry | null {
   if (!state.selectedPieceId) return null;

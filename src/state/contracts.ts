@@ -14,6 +14,15 @@ export interface CarouselMove {
   promotion?: string;
 }
 
+/** Transient UI state for push-to-talk voice move input. */
+export interface VoiceUiState {
+  listening: boolean;
+  /** Short message shown on the glasses (heard text, error, prompt). null = none. */
+  status: string | null;
+  /** Epoch ms after which `status` is stale; null = until next state change. */
+  statusExpiresAt: number | null;
+}
+
 export interface PieceEntry {
   id: PieceId;
   label: string;
@@ -23,7 +32,7 @@ export interface PieceEntry {
   moves: CarouselMove[];
 }
 
-export type GameMode = 'play' | 'ghost' | 'academy' | 'bullet';
+export type GameMode = 'play' | 'academy' | 'bullet';
 
 export type UIPhase =
   | 'idle'
@@ -31,7 +40,6 @@ export type UIPhase =
   | 'pieceSelect'
   | 'destSelect'
   | 'promotionSelect'
-  | 'confirm'
   | 'menu'
   | 'viewLog'
   | 'difficultySelect'
@@ -168,6 +176,8 @@ export interface GameState {
   selectedTimeControlIndex: number;
   academyState?: AcademyState;
   showBoardMarkers: boolean;
+  /** Push-to-talk voice input UI state. Absent until voice is first used. */
+  voice?: VoiceUiState;
 }
 
 export type Action =
@@ -202,7 +212,11 @@ export type Action =
   | { type: 'APPLY_INCREMENT'; color: 'w' | 'b' }
   | { type: 'START_DRILL'; drillType: DrillType }
   | { type: 'DRILL_ANSWER'; correct: boolean }
-  | { type: 'NEXT_DRILL_QUESTION' };
+  | { type: 'NEXT_DRILL_QUESTION' }
+  | { type: 'VOICE_LISTEN_START' }
+  | { type: 'VOICE_LISTEN_END' }
+  | { type: 'VOICE_STATUS'; message: string; durationMs?: number; keepListening?: boolean }
+  | { type: 'VOICE_MOVE_RESOLVED'; move: CarouselMove };
 
 export type StoreListener = (state: GameState, prevState: GameState) => void;
 

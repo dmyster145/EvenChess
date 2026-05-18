@@ -63,6 +63,7 @@ const BLE_STORAGE_TIMEOUT_MS = 4000;
 const BLE_PAGE_TIMEOUT_MS = 6000;
 const BLE_DEVICE_INFO_TIMEOUT_MS = 4000;
 const BLE_TEXT_TIMEOUT_MS = 4000;
+const BLE_AUDIO_CTRL_TIMEOUT_MS = 4000;
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -467,6 +468,23 @@ export class EvenHubBridge {
     if (!this.bridge) return null;
     const bridge = this.bridge;
     return await this.serializeBleCall('getDeviceInfo', () => bridge.getDeviceInfo(), null, BLE_DEVICE_INFO_TIMEOUT_MS);
+  }
+
+  /**
+   * Open (true) / close (false) the glasses microphone. While open, PCM arrives via the
+   * existing event subscription as `event.audioEvent.audioPcm` (s16le, 16 kHz, mono).
+   * Returns false if the SDK is unavailable or the request times out, so callers can
+   * gracefully fall back. Serialized on the BLE chain like other hardware commands.
+   */
+  async audioControl(isOpen: boolean): Promise<boolean> {
+    if (!this.bridge) return false;
+    const bridge = this.bridge;
+    return await this.serializeBleCall(
+      `audioControl(${isOpen})`,
+      () => bridge.audioControl(isOpen),
+      false,
+      BLE_AUDIO_CTRL_TIMEOUT_MS,
+    );
   }
 
   /**

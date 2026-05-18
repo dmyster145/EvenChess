@@ -60,7 +60,6 @@ const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'pieceSelect',
   'destSelect',
   'promotionSelect',
-  'confirm',
 ]);
 
 export interface SideEffectsDeps {
