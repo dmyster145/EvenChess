@@ -828,9 +828,10 @@ function handleDoubleTap(state: GameState): GameState {
       return handleOpenMenu(state);
 
     case 'rowSelect':
-      // Double-tap at the top gameplay level opens the settings menu (idle→rowSelect
-      // means a fused scroll+double-tap lands here; menu is the intended target anyway).
-      return handleOpenMenu(state);
+      // Back out to the idle "tap to speak / scroll to begin" screen. The settings
+      // menu is one more double-tap away (idle → menu), so swiping into row select
+      // by mistake no longer drops the user straight into settings.
+      return { ...state, phase: 'idle', selectedPieceId: null, selectedMoveIndex: 0 };
 
     case 'pieceSelect': {
       // Defensive: a fused scroll+double-tap now lands in rowSelect (handled above),

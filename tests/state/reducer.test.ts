@@ -261,11 +261,15 @@ describe('reducer', () => {
       expect(next.selectedPieceId).toBe('w-n-g1'); // kept so the row is preserved
     });
 
-    it('goes back to menu from rowSelect on double-tap', () => {
+    it('backs out to idle from rowSelect on double-tap, then to menu on a second', () => {
       const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1' });
-      const next = reduce(state, { type: 'DOUBLE_TAP' });
-      expect(next.phase).toBe('menu');
-      expect(next.previousPhase).toBe('rowSelect');
+      const backToIdle = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(backToIdle.phase).toBe('idle');
+      expect(backToIdle.selectedPieceId).toBeNull();
+      expect(backToIdle.selectedMoveIndex).toBe(0);
+      // A second double-tap from idle opens the settings menu.
+      const toMenu = reduce(backToIdle, { type: 'DOUBLE_TAP' });
+      expect(toMenu.phase).toBe('menu');
     });
 
     it('opens menu from pieceSelect within gesture disambiguation window', () => {
