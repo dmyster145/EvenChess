@@ -891,11 +891,11 @@ function drawPiece(
           const inSilhouette = row >= 0 && row < PIECE_SIZE && col >= 0 && col < PIECE_SIZE &&
             silhouette[row] !== undefined && (silhouette[row]! & (1 << (PIECE_SIZE - 1 - col)));
           if (inSilhouette) continue;
-          // Check if any neighbor is part of the silhouette
+          // Check if any neighbor is part of the silhouette (4-neighbour: thin ring, no chunky corners)
           let adjacentToSilhouette = false;
           for (let dr = -1; dr <= 1 && !adjacentToSilhouette; dr++) {
             for (let dc = -1; dc <= 1 && !adjacentToSilhouette; dc++) {
-              if (dr === 0 && dc === 0) continue;
+              if (Math.abs(dr) + Math.abs(dc) !== 1) continue;
               const nr = row + dr;
               const nc = col + dc;
               if (nr >= 0 && nr < PIECE_SIZE && nc >= 0 && nc < PIECE_SIZE &&
@@ -929,7 +929,7 @@ function drawPiece(
           let adjacentToSilhouette = false;
           for (let dr = -1; dr <= 1 && !adjacentToSilhouette; dr++) {
             for (let dc = -1; dc <= 1 && !adjacentToSilhouette; dc++) {
-              if (dr === 0 && dc === 0) continue;
+              if (Math.abs(dr) + Math.abs(dc) !== 1) continue;
               const nr = row + dr;
               const nc = col + dc;
               if (nr >= 0 && nr < PIECE_SIZE && nc >= 0 && nc < PIECE_SIZE &&
@@ -963,8 +963,7 @@ function drawPiece(
       for (let col = 0; col < PIECE_SIZE; col++) {
         if (bits & (1 << (PIECE_SIZE - 1 - col))) {
           const edge = isEdgePixel(silhouette, row, col);
-          const thickEdge = edge || isNearEdge(silhouette, row, col, 1);
-          setPixel(pixels, x0 + col, y0 + row, thickEdge ? outlineVal : fillVal);
+          setPixel(pixels, x0 + col, y0 + row, edge ? outlineVal : fillVal);
         }
       }
     }
@@ -994,21 +993,6 @@ function drawPiece(
       }
     }
   }
-}
-
-function isNearEdge(silhouette: number[], row: number, col: number, dist: number): boolean {
-  for (let dr = -dist; dr <= dist; dr++) {
-    for (let dc = -dist; dc <= dist; dc++) {
-      if (dr === 0 && dc === 0) continue;
-      const nr = row + dr;
-      const nc = col + dc;
-      if (nr < 0 || nr >= PIECE_SIZE || nc < 0 || nc >= PIECE_SIZE) return true;
-      const rowBits = silhouette[nr];
-      if (rowBits === undefined) return true;
-      if (!(rowBits & (1 << (PIECE_SIZE - 1 - nc)))) return true;
-    }
-  }
-  return false;
 }
 
 function squareToCoords(square: string, playerColor: 'w' | 'b' = 'w'): { file: number; rank: number } {

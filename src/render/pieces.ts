@@ -12,7 +12,7 @@ export const PIECE_SILHOUETTES: Record<string, number[]> = {
   // King: Crown with cross on top
   k: [
     0b0000000010000000000, // row 0:  cross top
-    0b0000000111000000000, // row 1:  cross horizontal
+    0b0000001111100000000, // row 1:  cross horizontal
     0b0000000010000000000, // row 2:  cross stem
     0b0000000010000000000, // row 3:  cross stem
     0b0000011111110000000, // row 4:  crown top
@@ -81,10 +81,10 @@ export const PIECE_SILHOUETTES: Record<string, number[]> = {
     0b0000000111000000000, // row 1:  tip
     0b0000001111100000000, // row 2:  head
     0b0000011111110000000, // row 3:  head
-    0b0000011101110000000, // row 4:  slit
+    0b0000011111110000000, // row 4:  slit
     0b0000111101111000000, // row 5:  slit
-    0b0000111101111000000, // row 6:  slit
-    0b0000111111111000000, // row 7:  head
+    0b0000111000111000000, // row 6:  slit
+    0b0000111101111000000, // row 7:  head
     0b0000011111110000000, // row 8:  neck
     0b0000011111110000000, // row 9:  neck
     0b0000001111100000000, // row 10: stem
@@ -101,13 +101,13 @@ export const PIECE_SILHOUETTES: Record<string, number[]> = {
   n: [
     0b0000011000000000000, // row 0:  ear tip
     0b0000111111100000000, // row 1:  ear
-    0b0000111111100000000, // row 2:  head top curve
+    0b0000111111000000000, // row 2:  head top curve
     0b0001111111111000000, // row 3:  forehead + back of head
-    0b0011111111111000000, // row 4:  eye area + mane curve
+    0b0011111111110000000, // row 4:  eye area + mane curve
     0b0111111111111110000, // row 5:  face + mane
-    0b0111111111111100000, // row 6:  muzzle + mane
-    0b0111111111111110000, // row 7:  nose + neck mane
-    0b0000001111111100000, // row 8:  nostril/mouth + mane
+    0b0111111111111000000, // row 6:  muzzle + mane
+    0b0111101111111110000, // row 7:  nose + neck mane
+    0b0000001111111000000, // row 8:  nostril/mouth + mane
     0b0000011111111100000, // row 9:  chin + mane
     0b0000111111111000000, // row 10: jaw line
     0b0000111111111000000, // row 11: throat
