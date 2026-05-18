@@ -42,6 +42,12 @@ export interface VoiceController {
   /** Abort listening (user tapped/scrolled away). */
   cancel(): void;
   isListening(): boolean;
+  /** A matched move is parked, waiting for the user to tap-confirm. */
+  hasPendingConfirm(): boolean;
+  /** Commit the parked move (user tapped to confirm). */
+  confirm(): void;
+  /** Discard the parked move (user double-tapped / navigated away). */
+  abort(): void;
   /** Debug/verification: run parse→resolve→dispatch on a transcript, no audio. */
   injectTranscript(text: string): void;
   /** Mic-off + recognizer teardown. Idempotent. Call on every exit path. */
@@ -98,10 +104,24 @@ export function createVoiceController(deps: VoiceControllerDeps): VoiceControlle
     const intent = parseVoiceCommand(text);
     const res = resolveVoiceMove(intent, store.getState());
     if (res.kind === 'move') {
-      store.dispatch({ type: 'VOICE_MOVE_RESOLVED', move: res.move });
+      // Park the match for explicit confirmation rather than playing it — guards
+      // against a misheard command. Tap confirms, double-tap aborts.
+      store.dispatch({ type: 'VOICE_MOVE_CANDIDATE', move: res.move });
     } else {
       store.dispatch({ type: 'VOICE_STATUS', message: res.message, durationMs: ERROR_STATUS_MS });
     }
+  }
+
+  function hasPendingConfirm(): boolean {
+    return !!store.getState().voice?.pendingConfirm;
+  }
+
+  function confirm(): void {
+    if (hasPendingConfirm()) store.dispatch({ type: 'VOICE_CONFIRM' });
+  }
+
+  function abort(): void {
+    if (hasPendingConfirm()) store.dispatch({ type: 'VOICE_ABORT' });
   }
 
   function handleTranscript(text: string): void {
@@ -212,6 +232,7 @@ export function createVoiceController(deps: VoiceControllerDeps): VoiceControlle
 
   function dispose(): void {
     endSession();
+    abort();
     recognizer?.dispose();
     recognizer = null;
   }
@@ -222,6 +243,9 @@ export function createVoiceController(deps: VoiceControllerDeps): VoiceControlle
     feed,
     cancel,
     isListening: () => listening,
+    hasPendingConfirm,
+    confirm,
+    abort,
     injectTranscript: resolveAndDispatch,
     dispose,
   };

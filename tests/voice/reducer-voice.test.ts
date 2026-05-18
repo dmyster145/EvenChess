@@ -38,21 +38,42 @@ describe('reducer — voice actions', () => {
     ).toBeUndefined();
   });
 
-  it('VOICE_MOVE_RESOLVED commits the move like a manual confirm', () => {
-    const next = reduce(createState(), { type: 'VOICE_MOVE_RESOLVED', move });
+  it('VOICE_MOVE_CANDIDATE parks the move for confirmation without playing it', () => {
+    const next = reduce(createState(), { type: 'VOICE_MOVE_CANDIDATE', move });
+    expect(next.pendingMove).toBeNull(); // NOT played yet
+    expect(next.history).toEqual([]);
+    expect(next.voice?.pendingConfirm).toEqual(move);
+    expect(next.voice?.listening).toBe(false);
+  });
+
+  it('VOICE_CONFIRM commits the parked move like a manual confirm', () => {
+    const parked = reduce(createState(), { type: 'VOICE_MOVE_CANDIDATE', move });
+    const next = reduce(parked, { type: 'VOICE_CONFIRM' });
     expect(next.pendingMove).toEqual(move);
     expect(next.history).toEqual(['Nc3']);
     expect(next.lastMove).toBe('Nc3');
     expect(next.lastMoveToSquare).toBe('c3');
     expect(next.hasUnsavedChanges).toBe(true);
-    expect(next.voice?.listening).toBe(false);
+    expect(next.voice?.pendingConfirm).toBeNull();
     expect(next.voice?.status).toContain('Nc3');
   });
 
-  it('VOICE_MOVE_RESOLVED is rejected when not the idle player turn', () => {
-    expect(reduce(createState({ engineThinking: true }), { type: 'VOICE_MOVE_RESOLVED', move }).pendingMove).toBeNull();
-    expect(reduce(createState({ turn: 'b' }), { type: 'VOICE_MOVE_RESOLVED', move }).pendingMove).toBeNull();
-    expect(reduce(createState({ pendingMove: move }), { type: 'VOICE_MOVE_RESOLVED', move: { ...move, uci: 'x' } }).pendingMove).toEqual(move);
+  it('VOICE_CONFIRM is a no-op when nothing is parked', () => {
+    expect(reduce(createState(), { type: 'VOICE_CONFIRM' }).pendingMove).toBeNull();
+  });
+
+  it('VOICE_ABORT discards the parked move without playing it', () => {
+    const parked = reduce(createState(), { type: 'VOICE_MOVE_CANDIDATE', move });
+    const next = reduce(parked, { type: 'VOICE_ABORT' });
+    expect(next.pendingMove).toBeNull();
+    expect(next.voice?.pendingConfirm).toBeNull();
+    expect(next.voice?.status).toBeNull();
+  });
+
+  it('VOICE_MOVE_CANDIDATE is rejected when not the idle player turn', () => {
+    expect(reduce(createState({ engineThinking: true }), { type: 'VOICE_MOVE_CANDIDATE', move }).voice).toBeUndefined();
+    expect(reduce(createState({ turn: 'b' }), { type: 'VOICE_MOVE_CANDIDATE', move }).voice).toBeUndefined();
+    expect(reduce(createState({ pendingMove: move }), { type: 'VOICE_MOVE_CANDIDATE', move }).voice).toBeUndefined();
   });
 
   it('VOICE_STATUS sets a message and ends listening; empty message clears', () => {
@@ -78,6 +99,6 @@ describe('reducer — voice actions', () => {
   it('does not act on voice once the game is over', () => {
     const over = createState({ gameOver: 'checkmate' });
     expect(reduce(over, { type: 'VOICE_LISTEN_START' }).voice).toBeUndefined();
-    expect(reduce(over, { type: 'VOICE_MOVE_RESOLVED', move }).pendingMove).toBeNull();
+    expect(reduce(over, { type: 'VOICE_MOVE_CANDIDATE', move }).voice).toBeUndefined();
   });
 });

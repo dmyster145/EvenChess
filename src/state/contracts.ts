@@ -21,6 +21,12 @@ export interface VoiceUiState {
   status: string | null;
   /** Epoch ms after which `status` is stale; null = until next state change. */
   statusExpiresAt: number | null;
+  /**
+   * A matched move awaiting explicit confirmation. While set, the idle screen shows
+   * a "tap to confirm" prompt; tap commits it, double-tap aborts. Guards against a
+   * misheard command being played automatically. null = nothing pending.
+   */
+  pendingConfirm: CarouselMove | null;
 }
 
 export interface PieceEntry {
@@ -216,7 +222,9 @@ export type Action =
   | { type: 'VOICE_LISTEN_START' }
   | { type: 'VOICE_LISTEN_END' }
   | { type: 'VOICE_STATUS'; message: string; durationMs?: number; keepListening?: boolean }
-  | { type: 'VOICE_MOVE_RESOLVED'; move: CarouselMove };
+  | { type: 'VOICE_MOVE_CANDIDATE'; move: CarouselMove }
+  | { type: 'VOICE_CONFIRM' }
+  | { type: 'VOICE_ABORT' };
 
 export type StoreListener = (state: GameState, prevState: GameState) => void;
 

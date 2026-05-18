@@ -74,7 +74,7 @@ export function reduce(state: GameState, action: Action): GameState {
       ) {
         return state;
       }
-      return { ...state, voice: { listening: true, status: 'Listening… speak your move', statusExpiresAt: null } };
+      return { ...state, voice: { listening: true, status: 'Listening… speak your move', statusExpiresAt: null, pendingConfirm: null } };
 
     case 'VOICE_LISTEN_END':
       return state.voice ? { ...state, voice: { ...state.voice, listening: false } } : state;
@@ -88,12 +88,21 @@ export function reduce(state: GameState, action: Action): GameState {
           listening,
           status,
           statusExpiresAt: status && action.durationMs ? Date.now() + action.durationMs : null,
+          pendingConfirm: null,
         },
       };
     }
 
-    case 'VOICE_MOVE_RESOLVED':
-      return handleVoiceMoveResolved(state, action.move);
+    case 'VOICE_MOVE_CANDIDATE':
+      return handleVoiceMoveCandidate(state, action.move);
+
+    case 'VOICE_CONFIRM':
+      return handleVoiceConfirm(state);
+
+    case 'VOICE_ABORT':
+      return state.voice
+        ? { ...state, voice: { listening: false, status: null, statusExpiresAt: null, pendingConfirm: null } }
+        : state;
 
     case 'ENGINE_THINKING':
       return { ...state, engineThinking: true };
@@ -964,17 +973,30 @@ function handlePlayerMoveSan(state: GameState, san: string): GameState {
 }
 
 
-function handleVoiceMoveResolved(state: GameState, move: GameState['pendingMove']): GameState {
-  if (
-    !move ||
-    state.phase !== 'idle' ||
-    state.gameOver ||
-    state.engineThinking ||
-    state.pendingMove ||
-    state.turn !== state.playerColor
-  ) {
-    return state;
-  }
+/** True only when a voice move may be staged/committed (idle, player's turn). */
+function voiceMoveAllowed(state: GameState): boolean {
+  return (
+    state.phase === 'idle' &&
+    !state.gameOver &&
+    !state.engineThinking &&
+    !state.pendingMove &&
+    state.turn === state.playerColor
+  );
+}
+
+/** A matched move is parked for explicit confirmation — not played yet. */
+function handleVoiceMoveCandidate(state: GameState, move: GameState['pendingMove']): GameState {
+  if (!move || !voiceMoveAllowed(state)) return state;
+  return {
+    ...state,
+    voice: { listening: false, status: null, statusExpiresAt: null, pendingConfirm: move },
+  };
+}
+
+/** User tapped to confirm the parked move — commit it like a manual move. */
+function handleVoiceConfirm(state: GameState): GameState {
+  const move = state.voice?.pendingConfirm;
+  if (!move || !voiceMoveAllowed(state)) return state;
   const newHistory = [...state.history, move.san].slice(-MAX_HISTORY_LENGTH);
   return {
     ...state,
@@ -987,7 +1009,7 @@ function handleVoiceMoveResolved(state: GameState, move: GameState['pendingMove'
     selectedMoveIndex: 0,
     pendingMove: move,
     hasUnsavedChanges: true,
-    voice: { listening: false, status: `Played ${move.san}`, statusExpiresAt: Date.now() + 2500 },
+    voice: { listening: false, status: `Played ${move.san}`, statusExpiresAt: Date.now() + 2500, pendingConfirm: null },
   };
 }
 

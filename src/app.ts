@@ -292,18 +292,32 @@ export async function initApp(): Promise<void> {
         activateKeepAlive();
       }
 
-      // Mic must not survive a background. FOREGROUND_EXIT still dispatches normally.
+      // Mic / pending suggestion must not survive a background. FOREGROUND_EXIT
+      // still dispatches normally.
       if (action.type === 'FOREGROUND_EXIT') {
         voice.cancel();
+        voice.abort();
       }
 
       // Push-to-talk. Tap-in-idle starts listening; scroll still opens the manual
-      // carousel and double-tap still opens the menu. Any input cancels an active
-      // listen. If voice can't run (model not ready / unavailable) start() returns
-      // false and the tap falls through to the carousel exactly as before.
+      // carousel and double-tap still opens the menu. A matched command is parked
+      // for confirmation (tap = play, double-tap = abort) so a misheard move is
+      // never auto-played. If voice can't run (model not ready / unavailable)
+      // start() returns false and the tap falls through to the carousel as before.
       if (voice.isListening()) {
         voice.cancel();
         if (action.type === 'TAP') return;
+      } else if (voice.hasPendingConfirm()) {
+        if (action.type === 'TAP') {
+          voice.confirm();
+          return;
+        }
+        if (action.type === 'DOUBLE_TAP') {
+          voice.abort();
+          return;
+        }
+        // Scroll: discard the suggestion and fall through to the manual carousel.
+        voice.abort();
       } else if (action.type === 'TAP' && currentPhase === 'idle' && voice.start()) {
         return;
       }

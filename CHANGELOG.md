@@ -5,8 +5,13 @@
 ### Added — Offline voice move input
 
 - **Push-to-talk voice moves.** Tap in the idle phase and speak a move (e.g.
-  "Knight to C3"); the move plays automatically. Scroll still opens the manual
-  carousel and double-tap still opens the menu.
+  "Knight to C3"). Scroll still opens the manual carousel and double-tap still
+  opens the menu.
+- **Tap-to-confirm safeguard.** A recognized move is shown for review
+  ("Heard: Knight c3") and is played only after you tap to confirm — double-tap
+  aborts it, scrolling discards it for the manual carousel. This prevents a
+  misheard command from being played. If nothing matches, the error is shown
+  and no confirmation step is needed.
 - **Fully on-device.** Speech is recognized locally via a bundled, grammar-
   constrained Vosk model — no server, no network, no API key. The mic uses the
   SDK `audioControl` PCM bridge (added `g2-microphone` permission).
