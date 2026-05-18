@@ -45,6 +45,8 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     lastTickTime: null,
     selectedTimeControlIndex: 2,
     showBoardMarkers: true,
+    playAs: 'white',
+    playerColor: 'w',
     ...overrides,
   };
 }
@@ -76,7 +78,7 @@ describe('dispatch', () => {
 
     store.dispatch({ type: 'SCROLL', direction: 'down' });
 
-    expect(store.getState().phase).toBe('pieceSelect');
+    expect(store.getState().phase).toBe('rowSelect');
   });
 
   it('notifies listeners when state changes', () => {
@@ -89,7 +91,7 @@ describe('dispatch', () => {
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith(
-      expect.objectContaining({ phase: 'pieceSelect' }),
+      expect.objectContaining({ phase: 'rowSelect' }),
       initialState
     );
   });
@@ -104,7 +106,7 @@ describe('dispatch', () => {
 
     const [newState, prevState] = listener.mock.calls[0];
     expect(prevState.phase).toBe('idle');
-    expect(newState.phase).toBe('pieceSelect');
+    expect(newState.phase).toBe('rowSelect');
   });
 
   it('does not notify listeners when state unchanged', () => {
@@ -244,21 +246,21 @@ describe('action sequence', () => {
     const initialState = createTestState({ phase: 'idle' });
     const store = createStore(initialState);
 
-    // Enter piece selection
+    // Enter row selection
     store.dispatch({ type: 'SCROLL', direction: 'down' });
-    expect(store.getState().phase).toBe('pieceSelect');
+    expect(store.getState().phase).toBe('rowSelect');
     expect(store.getState().selectedPieceId).toBe('w-n-g1');
 
-    // Confirm piece selection
+    // Descend into the row → piece selection
+    store.dispatch({ type: 'TAP', selectedIndex: 0, selectedName: 'Ng1' });
+    expect(store.getState().phase).toBe('pieceSelect');
+
+    // Confirm piece → destination selection
     store.dispatch({ type: 'TAP', selectedIndex: 0, selectedName: 'Ng1' });
     expect(store.getState().phase).toBe('destSelect');
 
-    // Go back to pieceSelect
+    // Double-tap backs out one level to pieceSelect (unconditional, no gesture window)
     store.dispatch({ type: 'DOUBLE_TAP' });
     expect(store.getState().phase).toBe('pieceSelect');
-
-    // Note: Double-tap from pieceSelect may open menu if within gesture
-    // disambiguation window (200ms). In a real scenario, enough time passes.
-    // For this test, we just verify state transitions work correctly.
   });
 });

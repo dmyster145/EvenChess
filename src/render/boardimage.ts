@@ -5,7 +5,7 @@
 
 import type { GameState } from '../state/contracts';
 import type { ChessService } from '../chess/chessservice';
-import { getSelectedPiece, getSelectedMove } from '../state/selectors';
+import { getSelectedPiece, getSelectedMove, getSelectedRow } from '../state/selectors';
 import { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
 import {
   CONTAINER_ID_IMAGE_TOP,
@@ -26,7 +26,7 @@ import {
   getBmpPixelDataSize,
   getBmpFileSize,
 } from './bmp-constants';
-import { squareToDisplayCoords } from '../chess/square-utils';
+import { squareToDisplayCoords, rankToDisplayRank } from '../chess/square-utils';
 import { encodePixelsToPng } from './png-encode';
 
 const BUF_W = IMAGE_WIDTH;
@@ -177,6 +177,7 @@ export class BoardRenderer {
   private workPixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private lastFen = '';
   private lastShowBoardMarkers = true;
+  private lastPlayerColor: 'w' | 'b' = 'w';
   private prevHighlightKeys = new Set<string>();
   private currentHighlightKeys = new Set<string>();
   private cachedTopBmp: Uint8Array = initBmpBuffer();
@@ -195,15 +196,17 @@ export class BoardRenderer {
     const showBoardMarkers = this.largeGrid ? false : state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
+    const playerColorChanged = state.playerColor !== this.lastPlayerColor;
     let baseTopDirty = false;
     let baseBottomDirty = false;
 
-    if (fenChanged || markersChanged) {
+    if (fenChanged || markersChanged || playerColorChanged) {
       this.prevBasePixels.set(this.basePixels);
-      this.rebuildBase(chess, showBoardMarkers);
+      this.rebuildBase(chess, showBoardMarkers, state.playerColor);
       this.lastFen = fen;
       this.lastShowBoardMarkers = showBoardMarkers;
-      if (markersChanged) {
+      this.lastPlayerColor = state.playerColor;
+      if (markersChanged || playerColorChanged) {
         baseTopDirty = true;
         baseBottomDirty = true;
       } else if (fenChanged) {
@@ -218,7 +221,7 @@ export class BoardRenderer {
     const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys, this.g);
 
     // Fast path: highlight-only changes use dirty tracking (skip when caller needs both halves)
-    if (!fenChanged && !markersChanged && !forceBothHalves) {
+    if (!fenChanged && !markersChanged && !playerColorChanged && !forceBothHalves) {
       const topDirty = highlightDirty.topDirty;
       const bottomDirty = highlightDirty.bottomDirty;
 
@@ -243,9 +246,9 @@ export class BoardRenderer {
       return dirty;
     }
 
-    // FEN/markers changed or caller forced both halves: encode only dirty halves when possible.
-    const topDirty = forceBothHalves || markersChanged || baseTopDirty || highlightDirty.topDirty;
-    const bottomDirty = forceBothHalves || markersChanged || baseBottomDirty || highlightDirty.bottomDirty;
+    // FEN/markers/perspective changed or caller forced both halves: encode dirty halves.
+    const topDirty = forceBothHalves || markersChanged || playerColorChanged || baseTopDirty || highlightDirty.topDirty;
+    const bottomDirty = forceBothHalves || markersChanged || playerColorChanged || baseBottomDirty || highlightDirty.bottomDirty;
     if (!topDirty && !bottomDirty) return [];
 
     const tmp = this.prevHighlightKeys;
@@ -263,6 +266,16 @@ export class BoardRenderer {
       dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
     }
     return dirty;
+  }
+
+  /**
+   * Debug-only: the fully composed board pixel buffer (base + highlights) for the
+   * current state, exactly as encoded for the glasses. Width = IMAGE_WIDTH, height =
+   * IMAGE_HEIGHT*2 (top half rows 0..H-1, bottom half rows H..2H-1). Values are 0/1.
+   */
+  snapshotPixels(state: GameState, chess: ChessService): { pixels: Uint8Array; width: number; height: number } {
+    this.renderFull(state, chess);
+    return { pixels: this.workPixels.slice(), width: BUF_W, height: BUF_H };
   }
 
   renderFull(state: GameState, chess: ChessService): ImageRawDataUpdate[] {
@@ -287,15 +300,17 @@ export class BoardRenderer {
     const showBoardMarkers = this.largeGrid ? false : state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
+    const playerColorChanged = state.playerColor !== this.lastPlayerColor;
     let baseTopDirty = false;
     let baseBottomDirty = false;
 
-    if (fenChanged || markersChanged) {
+    if (fenChanged || markersChanged || playerColorChanged) {
       this.prevBasePixels.set(this.basePixels);
-      this.rebuildBase(chess, showBoardMarkers);
+      this.rebuildBase(chess, showBoardMarkers, state.playerColor);
       this.lastFen = fen;
       this.lastShowBoardMarkers = showBoardMarkers;
-      if (markersChanged) {
+      this.lastPlayerColor = state.playerColor;
+      if (markersChanged || playerColorChanged) {
         baseTopDirty = true;
         baseBottomDirty = true;
       } else if (fenChanged) {
@@ -309,7 +324,7 @@ export class BoardRenderer {
     for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
     const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys, this.g);
 
-    if (!fenChanged && !markersChanged && !forceBothHalves) {
+    if (!fenChanged && !markersChanged && !playerColorChanged && !forceBothHalves) {
       const topDirty = highlightDirty.topDirty;
       const bottomDirty = highlightDirty.bottomDirty;
       if (!topDirty && !bottomDirty) return [];
@@ -337,8 +352,8 @@ export class BoardRenderer {
       return dirty;
     }
 
-    const topDirty = forceBothHalves || markersChanged || baseTopDirty || highlightDirty.topDirty;
-    const bottomDirty = forceBothHalves || markersChanged || baseBottomDirty || highlightDirty.bottomDirty;
+    const topDirty = forceBothHalves || markersChanged || playerColorChanged || baseTopDirty || highlightDirty.topDirty;
+    const bottomDirty = forceBothHalves || markersChanged || playerColorChanged || baseBottomDirty || highlightDirty.bottomDirty;
     if (!topDirty && !bottomDirty) return [];
 
     const tmpKeys = this.prevHighlightKeys;
@@ -366,9 +381,10 @@ export class BoardRenderer {
     return dirty;
   }
 
-  private rebuildBase(chess: ChessService, showBoardMarkers: boolean = true): void {
+  private rebuildBase(chess: ChessService, showBoardMarkers: boolean = true, playerColor: 'w' | 'b' = 'w'): void {
     const pixels = this.basePixels;
     const g = this.g;
+    const flip = playerColor === 'b';
     pixels.fill(0);
 
     for (let rank = 0; rank < 8; rank++) {
@@ -383,8 +399,8 @@ export class BoardRenderer {
 
     drawBorder(pixels, g);
     if (showBoardMarkers) {
-      drawFileLabels(pixels, g);
-      drawRankLabels(pixels, g);
+      drawFileLabels(pixels, g, flip);
+      drawRankLabels(pixels, g, flip);
     }
 
     const board = chess.getBoard();
@@ -394,7 +410,10 @@ export class BoardRenderer {
       for (let file = 0; file < 8; file++) {
         const piece = row[file];
         if (piece) {
-          drawPiece(pixels, file, rank, piece.color, piece.type, g);
+          // board[0] is chess rank 8 (display row 0 for White). Flip 180° for Black.
+          const dRow = flip ? 7 - rank : rank;
+          const dFile = flip ? 7 - file : file;
+          drawPiece(pixels, dFile, dRow, piece.color, piece.type, g);
         }
       }
     }
@@ -557,7 +576,7 @@ export function renderBoardImage(state: GameState, chess: ChessService): ImageRa
 interface Highlight {
   file: number;
   rank: number;
-  style: 'selected' | 'destination';
+  style: 'selected' | 'destination' | 'rowBand';
 }
 
 export function rankHalf(rank: number): 'top' | 'bottom' {
@@ -567,21 +586,42 @@ export function rankHalf(rank: number): 'top' | 'bottom' {
 function getHighlights(state: GameState): Highlight[] {
   const highlights: Highlight[] = [];
   const piece = getSelectedPiece(state);
+  const pc = state.playerColor;
 
   switch (state.phase) {
-    case 'pieceSelect':
-      if (piece) {
-        highlights.push({ ...squareToCoords(piece.square), style: 'selected' });
+    case 'rowSelect': {
+      const row = getSelectedRow(state);
+      if (row != null) {
+        const displayRank = rankToDisplayRank(row, pc);
+        for (let file = 0; file < 8; file++) {
+          highlights.push({ file, rank: displayRank, style: 'rowBand' });
+        }
       }
       break;
+    }
+
+    case 'pieceSelect': {
+      const row = getSelectedRow(state);
+      if (row != null) {
+        const displayRank = rankToDisplayRank(row, pc);
+        for (let file = 0; file < 8; file++) {
+          highlights.push({ file, rank: displayRank, style: 'rowBand' });
+        }
+      }
+      // Hashed outline drawn AFTER the band so it reads on top.
+      if (piece) {
+        highlights.push({ ...squareToCoords(piece.square, pc), style: 'selected' });
+      }
+      break;
+    }
 
     case 'destSelect': {
       if (piece) {
-        highlights.push({ ...squareToCoords(piece.square), style: 'selected' });
+        highlights.push({ ...squareToCoords(piece.square, pc), style: 'selected' });
       }
       const move = getSelectedMove(state);
       if (move) {
-        highlights.push({ ...squareToCoords(move.to), style: 'destination' });
+        highlights.push({ ...squareToCoords(move.to, pc), style: 'destination' });
       }
       break;
     }
@@ -589,8 +629,8 @@ function getHighlights(state: GameState): Highlight[] {
     case 'promotionSelect': {
       const pm = state.pendingPromotionMove;
       if (pm) {
-        highlights.push({ ...squareToCoords(pm.from), style: 'selected' });
-        highlights.push({ ...squareToCoords(pm.to), style: 'destination' });
+        highlights.push({ ...squareToCoords(pm.from, pc), style: 'selected' });
+        highlights.push({ ...squareToCoords(pm.to, pc), style: 'destination' });
       }
       break;
     }
@@ -639,13 +679,33 @@ function highlightCell(
   pixels: Uint8Array,
   file: number,
   rank: number,
-  style: 'selected' | 'destination',
+  style: 'selected' | 'destination' | 'rowBand',
   g: GridLayout,
 ): void {
   const x0 = cellX(file, g);
   const y0 = cellY(rank, g);
 
-  if (style === 'selected') {
+  if (style === 'rowBand') {
+    // Thick solid outline framing the whole rank: 3px top & bottom rails on every cell
+    // (cells abut → one continuous strip), plus 3px left/right end-caps only on the
+    // board-edge files so the row reads as a single bordered rectangle. No interior
+    // fill, so the piece silhouettes on the row stay clean.
+    const T = 3;
+    for (let dx = 0; dx < g.cell; dx++) {
+      for (let t = 0; t < T; t++) {
+        setPixel(pixels, x0 + dx, y0 + t, 1);
+        setPixel(pixels, x0 + dx, y0 + g.cell - 1 - t, 1);
+      }
+    }
+    if (file === 0 || file === 7) {
+      const ex = file === 0 ? 0 : g.cell - 1;
+      for (let dy = 0; dy < g.cell; dy++) {
+        for (let t = 0; t < T; t++) {
+          setPixel(pixels, x0 + (file === 0 ? ex + t : ex - t), y0 + dy, 1);
+        }
+      }
+    }
+  } else if (style === 'selected') {
     // Diagonal striped border (3px wide)
     const borderWidth = 3;
     for (let t = 0; t < borderWidth; t++) {
@@ -726,16 +786,16 @@ function drawBorder(pixels: Uint8Array, g: GridLayout): void {
   }
 }
 
-function drawFileLabels(pixels: Uint8Array, g: GridLayout): void {
-  const files = 'ABCDEFGH';
+function drawFileLabels(pixels: Uint8Array, g: GridLayout, flip = false): void {
+  const files = flip ? 'HGFEDCBA' : 'ABCDEFGH';
   for (let f = 0; f < 8; f++) {
     const lx = cellX(f, g) + Math.floor(g.cell / 2) - 2;
     drawChar(pixels, lx, g.labelY, files[f]!);
   }
 }
 
-function drawRankLabels(pixels: Uint8Array, g: GridLayout): void {
-  const ranks = '87654321';
+function drawRankLabels(pixels: Uint8Array, g: GridLayout, flip = false): void {
+  const ranks = flip ? '12345678' : '87654321';
   for (let r = 0; r < 8; r++) {
     const ly = cellY(r, g) + Math.floor(g.cell / 2) - 3;
     drawChar(pixels, 0, ly, ranks[r]!);
@@ -951,7 +1011,7 @@ function isNearEdge(silhouette: number[], row: number, col: number, dist: number
   return false;
 }
 
-function squareToCoords(square: string): { file: number; rank: number } {
-  const { file, displayRank } = squareToDisplayCoords(square);
+function squareToCoords(square: string, playerColor: 'w' | 'b' = 'w'): { file: number; rank: number } {
+  const { file, displayRank } = squareToDisplayCoords(square, playerColor);
   return { file, rank: displayRank };
 }

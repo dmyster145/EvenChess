@@ -11,8 +11,9 @@
 import type { Store } from '../state/store';
 import type { GameState } from '../state/contracts';
 import type { EvenHubBridge } from '../evenhub/bridge';
-import { renderBrandingImage, renderCheckBrandingImage, renderCheckmateBrandingImage } from '../render/branding';
+import { renderCapturedBrandingImage, renderCheckBrandingImage, renderCheckmateBrandingImage } from '../render/branding';
 import { CONTAINER_ID_BRAND, CONTAINER_NAME_BRAND } from '../render/composer';
+import { getCapturedCounts, CAPTURED_ORDER } from '../state/selectors';
 
 export type BrandingMode = 'normal' | 'check' | 'checkmate';
 
@@ -37,7 +38,7 @@ export interface BrandingController {
 
 export function createBranding(deps: BrandingDeps): BrandingController {
   let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastSentMode: BrandingMode | null = null;
+  let lastSentKey: string | null = null;
   let force = false;
 
   function schedule(): void {
@@ -69,30 +70,42 @@ export function createBranding(deps: BrandingDeps): BrandingController {
 
   function sync(): void {
     if (!deps.imageContainersActive()) return;
-    const desired = desiredBrandingMode(deps.store.getState());
-    const shouldSend = force || desired !== lastSentMode;
+    const state = deps.store.getState();
+    const mode = desiredBrandingMode(state);
+
+    if (mode === 'checkmate') {
+      send('checkmate', renderCheckmateBrandingImage());
+      return;
+    }
+    if (mode === 'check') {
+      send('check', renderCheckBrandingImage());
+      return;
+    }
+    // Normal: the strip shows captured pieces, so the cache key includes the material.
+    const { white, black } = getCapturedCounts(state);
+    const sig = capturedSignature(black, white);
+    send(`normal:${sig}`, renderCapturedBrandingImage(black, white, sig));
+  }
+
+  function send(key: string, payload: ReturnType<typeof renderCheckBrandingImage>): void {
+    const shouldSend = force || key !== lastSentKey;
     force = false;
     if (!shouldSend) return;
-    lastSentMode = desired;
-    deps.bridge.updateImage(CONTAINER_ID_BRAND, CONTAINER_NAME_BRAND, renderBrandingPayload(desired));
+    lastSentKey = key;
+    deps.bridge.updateImage(CONTAINER_ID_BRAND, CONTAINER_NAME_BRAND, payload);
   }
 
   return { schedule, syncNow, forceNextRefresh, cancel };
+}
+
+function capturedSignature(black: Record<string, number>, white: Record<string, number>): string {
+  const b = CAPTURED_ORDER.map((t) => black[t] ?? 0).join('');
+  const w = CAPTURED_ORDER.map((t) => white[t] ?? 0).join('');
+  return `${b}|${w}`;
 }
 
 function desiredBrandingMode(state: GameState): BrandingMode {
   if (state.gameOver?.toLowerCase() === 'checkmate') return 'checkmate';
   if (state.inCheck) return 'check';
   return 'normal';
-}
-
-function renderBrandingPayload(mode: BrandingMode) {
-  switch (mode) {
-    case 'checkmate':
-      return renderCheckmateBrandingImage();
-    case 'check':
-      return renderCheckBrandingImage();
-    default:
-      return renderBrandingImage();
-  }
 }

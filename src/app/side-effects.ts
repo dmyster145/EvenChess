@@ -21,7 +21,8 @@ import type { FlushController } from './flush';
 import type { BrandingController } from './branding';
 import type { BulletTimerController } from './bullet-timer';
 import type { AutosaveController } from './autosave';
-import { saveGame, saveDifficulty, saveBoardMarkers, saveBoardSize, saveBoardAlignment, clearSave } from '../storage/persistence';
+import { saveGame, saveDifficulty, saveBoardMarkers, saveBoardSize, saveBoardAlignment, savePlayAs, clearSave } from '../storage/persistence';
+import { resolvePlayerColor } from '../state/utils';
 import { PROFILE_BY_DIFFICULTY } from '../engine/profiles';
 import { extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from '../input/actions';
 import { composePageForState } from '../render/composer';
@@ -42,6 +43,7 @@ const SUBMENU_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'displayOptionsSelect',
   'boardAlignmentSelect',
   'boardSizeSelect',
+  'playAsSelect',
   'resetConfirm',
   'exitConfirm',
   'viewLog',
@@ -54,6 +56,7 @@ const SETTINGS_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
 
 const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'idle',
+  'rowSelect',
   'pieceSelect',
   'destSelect',
   'promotionSelect',
@@ -108,8 +111,12 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
       deps.turnLoop.setProfile(profile);
       void saveDifficulty(state.difficulty);
       if (state.history.length > 0) {
-        void saveGame(state.fen, state.history, state.turn, state.difficulty);
+        void saveGame(state.fen, state.history, state.turn, state.difficulty, state.playerColor);
       }
+    }
+
+    if (state.playAs !== prevState.playAs) {
+      void savePlayAs(state.playAs);
     }
 
     if (state.showBoardMarkers !== prevState.showBoardMarkers) {
@@ -185,7 +192,7 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
     deps.bulletTimer.onStateChange();
 
     // Menu / reset / mode-switch side effects (calls back into ChessService).
-    handleMenuSideEffects(state, prevState, deps.chess, (action) => deps.store.dispatch(action));
+    handleMenuSideEffects(state, prevState, deps.chess, deps.store, deps.turnLoop);
 
     // Branding state may have changed (gameOver, inCheck) — schedule a sync.
     deps.branding.schedule();
@@ -209,22 +216,52 @@ function handleMenuSideEffects(
   state: GameState,
   prevState: GameState,
   chess: ChessService,
-  dispatch: (action: Action) => void,
+  store: Store,
+  turnLoop: TurnLoop,
 ): void {
+  const dispatch = (action: Action): void => store.dispatch(action);
+
+  // After a fresh board exists (chess reset + NEW_GAME/REFRESH dispatched), resolve the
+  // human's color from the Play As preference ('random' re-rolls each new game). If the
+  // human is Black, the engine (White) makes the opening move.
+  const beginNewGame = (): void => {
+    const color = resolvePlayerColor(store.getState().playAs);
+    dispatch({ type: 'SET_PLAYER_COLOR', color });
+    if (color === 'b') {
+      void turnLoop.requestEngineMove().catch((err) => {
+        console.error('[side-effects] engine opening move failed:', err);
+      });
+    }
+  };
+
+  // resetConfirm→idle: triggered by the Reset menu AND by a Play As change while a game
+  // is in progress (playAsSelect routes through the reset confirmation).
   if (prevState.phase === 'resetConfirm' && state.phase === 'idle') {
     chess.reset();
     void clearSave();
     dispatch({ type: 'NEW_GAME' });
     dispatch({ type: 'REFRESH', ...chess.getStateSnapshot() });
+    beginNewGame();
+  }
+
+  // playAsSelect→idle: Play As changed on a fresh board (no moves) — apply immediately.
+  if (prevState.phase === 'playAsSelect' && state.phase === 'idle') {
+    chess.reset();
+    void clearSave();
+    dispatch({ type: 'NEW_GAME' });
+    dispatch({ type: 'REFRESH', ...chess.getStateSnapshot() });
+    beginNewGame();
   }
 
   if (prevState.gameOver && !state.gameOver) {
     chess.reset();
     dispatch({ type: 'REFRESH', ...chess.getStateSnapshot() });
+    beginNewGame();
   }
 
   if (prevState.phase === 'bulletSetup' && state.phase === 'idle' && state.mode === 'bullet') {
     chess.reset();
     dispatch({ type: 'REFRESH', ...chess.getStateSnapshot() });
+    beginNewGame();
   }
 }

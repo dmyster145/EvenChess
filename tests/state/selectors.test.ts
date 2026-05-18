@@ -21,7 +21,12 @@ import {
   getTacticsDisplayText,
   getPgnStudyDisplayText,
   getCombinedDisplayText,
+  getCandidateRows,
+  getPiecesOnRow,
+  getSelectedRow,
+  getCapturedDisplay,
 } from '../../src/state/selectors';
+import { MENU_INDEX } from '../../src/state/constants';
 import type { GameState, PieceEntry } from '../../src/state/contracts';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
@@ -77,6 +82,8 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     lastTickTime: null,
     selectedTimeControlIndex: 2,
     showBoardMarkers: true,
+    playAs: 'white',
+    playerColor: 'w',
     ...overrides,
   };
 }
@@ -113,15 +120,77 @@ describe('selectors', () => {
     });
   });
 
+  describe('row selectors', () => {
+    const multiRow: PieceEntry[] = [
+      { id: 'w-n-b1', label: 'Nb1', color: 'w', type: 'n', square: 'b1', moves: [{ uci: 'b1c3', san: 'Nc3', from: 'b1', to: 'c3' }] },
+      { id: 'w-n-g1', label: 'Ng1', color: 'w', type: 'n', square: 'g1', moves: [{ uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' }] },
+      { id: 'w-p-e2', label: 'Pe2', color: 'w', type: 'p', square: 'e2', moves: [{ uci: 'e2e4', san: 'e4', from: 'e2', to: 'e4' }] },
+    ];
+
+    it('getCandidateRows returns distinct ranks ascending, deduped', () => {
+      const state = createTestState({ pieces: multiRow });
+      expect(getCandidateRows(state)).toEqual([1, 2]);
+    });
+
+    it('getPiecesOnRow filters to the rank, preserving file order', () => {
+      const state = createTestState({ pieces: multiRow });
+      expect(getPiecesOnRow(state, 1).map((p) => p.id)).toEqual(['w-n-b1', 'w-n-g1']);
+      expect(getPiecesOnRow(state, 2).map((p) => p.id)).toEqual(['w-p-e2']);
+      expect(getPiecesOnRow(state, 5)).toEqual([]);
+    });
+
+    it('getSelectedRow derives the rank from the selected piece', () => {
+      expect(getSelectedRow(createTestState({ pieces: multiRow }))).toBeNull();
+      expect(getSelectedRow(createTestState({ pieces: multiRow, selectedPieceId: 'w-p-e2' }))).toBe(2);
+    });
+  });
+
+  describe('getCapturedDisplay', () => {
+    it('returns empty strings for the starting position (no captures)', () => {
+      const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      expect(getCapturedDisplay(createTestState({ fen: startFen }))).toEqual({ top: '', bottom: '' });
+    });
+
+    it('returns empty strings when the FEN is not a board placement', () => {
+      expect(getCapturedDisplay(createTestState({ fen: 'startpos' }))).toEqual({ top: '', bottom: '' });
+    });
+
+    it('lists captured pieces value-desc, lowercase=Black (top), uppercase=White (bottom), counts when >1', () => {
+      // White is missing the queen + 1 knight; Black is missing 1 rook + 3 pawns.
+      const fen = '1nbqkbnr/ppppp3/8/8/8/8/PPPPPPPP/R1B1KBNR w KQkq - 0 1';
+      const { top, bottom } = getCapturedDisplay(createTestState({ fen }));
+      // top = Black's losses (lowercase), value order Q R B N P
+      expect(top).toBe('r p3');
+      // bottom = White's losses (uppercase)
+      expect(bottom).toBe('Q N');
+    });
+  });
+
   describe('getCarouselItems', () => {
     it('returns empty for idle', () => {
       const state = createTestState();
       expect(getCarouselItems(state)).toEqual([]);
     });
 
-    it('returns piece labels for pieceSelect', () => {
+    it('returns "Row N (count)" labels for rowSelect', () => {
+      // d1 = rank 1, f3 = rank 3
+      const state = createTestState({ phase: 'rowSelect' });
+      expect(getCarouselItems(state)).toEqual(['Row 1 (1)', 'Row 3 (1)']);
+    });
+
+    it('returns all piece labels for pieceSelect when nothing selected', () => {
       const state = createTestState({ phase: 'pieceSelect' });
       expect(getCarouselItems(state)).toEqual(['Qd1', 'Nf3']);
+    });
+
+    it('returns only the active row\'s piece labels in pieceSelect', () => {
+      const rank1: PieceEntry[] = [
+        { id: 'w-q-d1', label: 'Qd1', color: 'w', type: 'q', square: 'd1', moves: [{ uci: 'd1d3', san: 'Qd3', from: 'd1', to: 'd3' }] },
+        { id: 'w-r-h1', label: 'Rh1', color: 'w', type: 'r', square: 'h1', moves: [{ uci: 'h1g1', san: 'Rg1', from: 'h1', to: 'g1' }] },
+        { id: 'w-n-f3', label: 'Nf3', color: 'w', type: 'n', square: 'f3', moves: [{ uci: 'f3e5', san: 'Ne5', from: 'f3', to: 'e5' }] },
+      ];
+      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-q-d1', pieces: rank1 });
+      expect(getCarouselItems(state)).toEqual(['Qd1', 'Rh1']); // rank 1 only, not Nf3
     });
 
     it('returns move SANs for destSelect', () => {
@@ -144,10 +213,16 @@ describe('selectors', () => {
       expect(getCarouselSelectedIndex(state)).toBe(0);
     });
 
-    it('returns the correct piece index', () => {
+    it('returns the correct piece index within the active row', () => {
+      // Two pieces on rank 1; pieceSelect is row-scoped so index is within that row.
+      const rank1: PieceEntry[] = [
+        { id: 'w-q-d1', label: 'Qd1', color: 'w', type: 'q', square: 'd1', moves: [{ uci: 'd1d3', san: 'Qd3', from: 'd1', to: 'd3' }] },
+        { id: 'w-r-h1', label: 'Rh1', color: 'w', type: 'r', square: 'h1', moves: [{ uci: 'h1g1', san: 'Rg1', from: 'h1', to: 'g1' }] },
+      ];
       const state = createTestState({
         phase: 'pieceSelect',
-        selectedPieceId: 'w-n-f3',
+        selectedPieceId: 'w-r-h1',
+        pieces: rank1,
       });
       expect(getCarouselSelectedIndex(state)).toBe(1);
     });
@@ -436,10 +511,22 @@ describe('selectors', () => {
       expect(getCarouselDisplayText(state)).toContain('Double-tap');
     });
 
-    it('shows piece selection with counter in pieceSelect', () => {
-      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-q-d1' });
+    it('shows piece selection with row-scoped counter in pieceSelect', () => {
+      const rank1: PieceEntry[] = [
+        { id: 'w-q-d1', label: 'Qd1', color: 'w', type: 'q', square: 'd1', moves: [{ uci: 'd1d3', san: 'Qd3', from: 'd1', to: 'd3' }] },
+        { id: 'w-r-h1', label: 'Rh1', color: 'w', type: 'r', square: 'h1', moves: [{ uci: 'h1g1', san: 'Rg1', from: 'h1', to: 'g1' }] },
+      ];
+      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-q-d1', pieces: rank1 });
       const text = getCarouselDisplayText(state);
       expect(text).toContain('Qd1');
+      expect(text).toContain('1/2');
+    });
+
+    it('shows row selection with counter in rowSelect', () => {
+      // d1 = rank 1, f3 = rank 3 → candidate rows [1, 3]; d1 selected → row 1 (index 0)
+      const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-q-d1' });
+      const text = getCarouselDisplayText(state);
+      expect(text).toContain('Row 1');
       expect(text).toContain('1/2');
     });
 
@@ -468,7 +555,7 @@ describe('selectors', () => {
     });
 
     it('highlights selected option with >', () => {
-      const state = createTestState({ phase: 'menu', menuSelectedIndex: 2 });
+      const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG });
       const text = getMenuDisplayText(state);
       const lines = text.split('\n');
       const viewLogLine = lines.find(l => l.includes('View Log'));

@@ -22,7 +22,7 @@
 import { ChessService } from './chess/chessservice';
 import { createStore } from './state/store';
 import { buildInitialState } from './state/contracts';
-import type { GameState, Action, BoardSize, BoardAlignment, DifficultyLevel } from './state/contracts';
+import type { GameState, Action, BoardSize, BoardAlignment, DifficultyLevel, PlayAs, PlayerColor } from './state/contracts';
 import { mapEvenHubEvent } from './input/actions';
 import { BoardRenderer } from './render/boardimage';
 import { type EvenHubEvent } from '@evenrealities/even_hub_sdk';
@@ -32,6 +32,7 @@ import { initPersistence } from './storage/persistence';
 import { EvenHubBridge } from './evenhub/bridge';
 import { setBackgroundState, onBackgroundRestore } from './storage/background-state';
 import { attachDebugCopyApi, debugLog, markRunStart } from './debug/logger';
+import { initBoardSnapshot } from './debug/board-snapshot';
 import { activateKeepAlive, isKeepAliveActive } from './utils/keep-alive';
 import { recordPerfDispatch } from './perf/dispatch-trace';
 import { createFlush } from './app/flush';
@@ -44,7 +45,7 @@ import { createReinit } from './app/bridge-reinit';
 import { loadInitialAppState, setupTextOnlyStartup, upgradeToFullLayout, runStorageProbe } from './app/init';
 
 const BACKGROUND_STATE_KEY = 'evenchess';
-const BACKGROUND_STATE_VERSION = 2;
+const BACKGROUND_STATE_VERSION = 3;
 
 type BackgroundSnapshot = {
   version: typeof BACKGROUND_STATE_VERSION;
@@ -54,6 +55,8 @@ type BackgroundSnapshot = {
   boardAlignment: BoardAlignment;
   boardSize: BoardSize;
   showBoardMarkers: boolean;
+  playAs: PlayAs;
+  playerColor: PlayerColor;
 };
 
 /**
@@ -172,6 +175,8 @@ export async function initApp(): Promise<void> {
       boardAlignment: s.boardAlignment,
       boardSize: s.boardSize,
       showBoardMarkers: s.showBoardMarkers,
+      playAs: s.playAs,
+      playerColor: s.playerColor,
     } satisfies BackgroundSnapshot;
   });
   onBackgroundRestore(BACKGROUND_STATE_KEY, (saved) => {
@@ -195,6 +200,8 @@ export async function initApp(): Promise<void> {
       boardAlignment: snap.boardAlignment ?? fresh.boardAlignment,
       boardSize: snap.boardSize ?? fresh.boardSize,
       showBoardMarkers: snap.showBoardMarkers ?? fresh.showBoardMarkers,
+      playAs: snap.playAs ?? fresh.playAs,
+      playerColor: snap.playerColor ?? fresh.playerColor,
       pieces: chess.getPiecesWithMoves(),
       inCheck: chess.isInCheck(),
     };
@@ -207,6 +214,7 @@ export async function initApp(): Promise<void> {
   });
 
   attachDebugCopyApi();
+  initBoardSnapshot({ getState: () => store.getState(), chess });
   markRunStart();
   const versionEl = typeof document !== 'undefined' ? document.getElementById('app-version') : null;
   if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
@@ -290,7 +298,22 @@ export async function initApp(): Promise<void> {
     }
   });
 
-  void turnLoop.init();
+  void turnLoop.init().then(() => {
+    // Cold start as Black: the engine (White) makes the opening move. Only for a fresh
+    // game (resumed saves keep their position; the engine isn't re-driven on restore).
+    const s = store.getState();
+    if (
+      s.history.length === 0 &&
+      !s.gameOver &&
+      s.turn === 'w' &&
+      s.playerColor === 'b' &&
+      (s.mode === 'play' || s.mode === 'bullet')
+    ) {
+      void turnLoop.requestEngineMove().catch((err) => {
+        console.error('[app] cold-start engine move failed:', err);
+      });
+    }
+  });
 
   // Reinit controller is exposed via the debug menu only. Holds references to the unsubscribe
   // setters so it can replace them after a reinit without leaking listeners.

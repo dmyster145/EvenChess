@@ -16,6 +16,8 @@ import {
   BOARD_ALIGNMENT_LABELS,
   BOARD_SIZE_OPTIONS,
   BOARD_SIZE_LABELS,
+  PLAY_AS_OPTIONS,
+  PLAY_AS_LABELS,
   MAX_MOVES_DISPLAY,
   MODE_LABELS,
   MODE_OPTIONS,
@@ -25,6 +27,7 @@ import {
 import { getMoveNumber } from './utils';
 import { formatTime } from '../bullet/clock';
 import { fileRankToSquare, getFileLetter, getRankNumber } from '../academy/drills';
+import { rankOfSquare } from '../chess/square-utils';
 
 // ── Unicode characters for visual hierarchy ────────────────────────────────
 // "White - Move 24" = 16 chars, but Unicode box chars are wider, so use fewer
@@ -46,10 +49,109 @@ export function getSelectedMove(state: GameState): CarouselMove | null {
   return piece.moves[state.selectedMoveIndex] ?? null;
 }
 
+/** Distinct chess ranks (1..8) with ≥1 movable side-to-move piece, ascending. */
+export function getCandidateRows(state: GameState): number[] {
+  const seen = new Set<number>();
+  for (const p of state.pieces) seen.add(rankOfSquare(p.square));
+  return [...seen].sort((a, b) => a - b);
+}
+
+/** Movable pieces on a chess rank, in state.pieces order (file a→h). */
+export function getPiecesOnRow(state: GameState, rank: number): PieceEntry[] {
+  return state.pieces.filter((p) => rankOfSquare(p.square) === rank);
+}
+
+/** Active row (chess rank 1..8) implied by selectedPieceId, or null. */
+export function getSelectedRow(state: GameState): number | null {
+  const p = getSelectedPiece(state);
+  return p ? rankOfSquare(p.square) : null;
+}
+
+const STARTING_COUNT: Record<string, number> = { p: 8, n: 2, b: 2, r: 2, q: 1 };
+
+// Captured-piece glyphs. The G2 firmware font does NOT include the chess Unicode block
+// (U+2654–265F) — its supported "Misc Symbols" run is U+2605–U+2667, which skips chess
+// (verified against the even-g2-notes glyph tables); out-of-font chars render blank.
+// So we use FEN-style letters: UPPERCASE = White pieces, lowercase = Black pieces.
+const CAPTURED_GLYPH: Record<string, string> = {
+  P: 'P', N: 'N', B: 'B', R: 'R', Q: 'Q',
+  p: 'p', n: 'n', b: 'b', r: 'r', q: 'q',
+};
+/** Captured-piece types in value order (queen first), for display iteration. */
+export const CAPTURED_ORDER = ['q', 'r', 'b', 'n', 'p'] as const;
+
+export interface CapturedCounts {
+  /** Captured White pieces, by type ('q'|'r'|'b'|'n'|'p'). */
+  white: Record<string, number>;
+  /** Captured Black pieces, by type. */
+  black: Record<string, number>;
+}
+
+/**
+ * Captured pieces as structured counts, derived from the FEN as a material diff
+ * (starting material minus what's on the board). Promotions skew it slightly —
+ * acceptable for a HUD. Returns all-zero counts if the FEN isn't a board placement.
+ */
+export function getCapturedCounts(state: GameState): CapturedCounts {
+  const empty = (): Record<string, number> => ({ p: 0, n: 0, b: 0, r: 0, q: 0 });
+  const placement = (state.fen || '').split(' ')[0] ?? '';
+  if (!placement.includes('/')) return { white: empty(), black: empty() };
+
+  const whiteOnBoard = empty();
+  const blackOnBoard = empty();
+  for (const ch of placement) {
+    const lower = ch.toLowerCase();
+    if (lower in STARTING_COUNT) {
+      if (ch === lower) blackOnBoard[lower] = (blackOnBoard[lower] ?? 0) + 1;
+      else whiteOnBoard[lower] = (whiteOnBoard[lower] ?? 0) + 1;
+    }
+  }
+  const white = empty();
+  const black = empty();
+  for (const t of CAPTURED_ORDER) {
+    white[t] = Math.max(0, (STARTING_COUNT[t] ?? 0) - (whiteOnBoard[t] ?? 0));
+    black[t] = Math.max(0, (STARTING_COUNT[t] ?? 0) - (blackOnBoard[t] ?? 0));
+  }
+  return { white, black };
+}
+
+function formatCaptured(counts: Record<string, number>, white: boolean): string {
+  const parts: string[] = [];
+  for (const t of CAPTURED_ORDER) {
+    const n = counts[t] ?? 0;
+    if (n <= 0) continue;
+    const glyph = CAPTURED_GLYPH[white ? t.toUpperCase() : t] ?? '?';
+    parts.push(n > 1 ? `${glyph}${n}` : glyph);
+  }
+  return parts.join(' ');
+}
+
+/**
+ * Captured pieces derived from the FEN as a material diff (starting material minus
+ * what's on the board). Promotions skew the count slightly — acceptable for a HUD.
+ * `top` = captured Black pieces (Black's side renders at the top of the board);
+ * `bottom` = captured White pieces.
+ */
+export function getCapturedDisplay(state: GameState): { top: string; bottom: string } {
+  const { white, black } = getCapturedCounts(state);
+  return {
+    top: formatCaptured(black, false),
+    bottom: formatCaptured(white, true),
+  };
+}
+
 export function getCarouselItems(state: GameState): string[] {
   switch (state.phase) {
-    case 'pieceSelect':
-      return state.pieces.map((p) => p.label);
+    case 'rowSelect': {
+      const rows = getCandidateRows(state);
+      return rows.map((r) => `Row ${r} (${getPiecesOnRow(state, r).length})`);
+    }
+
+    case 'pieceSelect': {
+      const sel = getSelectedPiece(state);
+      if (!sel) return state.pieces.map((p) => p.label);
+      return getPiecesOnRow(state, rankOfSquare(sel.square)).map((p) => p.label);
+    }
 
     case 'destSelect': {
       const piece = getSelectedPiece(state);
@@ -133,10 +235,19 @@ function expandMoveForLog(san: string): string {
 
 export function getCarouselSelectedIndex(state: GameState): number {
   switch (state.phase) {
+    case 'rowSelect': {
+      const rows = getCandidateRows(state);
+      const cur = getSelectedRow(state);
+      const i = cur != null ? rows.indexOf(cur) : 0;
+      return i >= 0 ? i : 0;
+    }
+
     case 'pieceSelect': {
-      if (!state.selectedPieceId) return 0;
-      const idx = state.pieces.findIndex((p) => p.id === state.selectedPieceId);
-      return idx >= 0 ? idx : 0;
+      const sel = getSelectedPiece(state);
+      if (!sel) return 0;
+      const rowPieces = getPiecesOnRow(state, rankOfSquare(sel.square));
+      const i = rowPieces.findIndex((p) => p.id === sel.id);
+      return i >= 0 ? i : 0;
     }
 
     case 'destSelect':
@@ -174,9 +285,14 @@ export function getStatusText(state: GameState): string {
     case 'idle':
       parts.push('Scroll to select piece');
       break;
-    case 'pieceSelect':
-      parts.push('Tap to choose piece');
+    case 'rowSelect':
+      parts.push('Tap to choose row');
       break;
+    case 'pieceSelect': {
+      const row = getSelectedRow(state);
+      parts.push(row != null ? `Row ${row}: tap to choose piece` : 'Tap to choose piece');
+      break;
+    }
     case 'destSelect': {
       const piece = getSelectedPiece(state);
       if (piece) {
@@ -206,6 +322,12 @@ export function getCarouselDisplayText(state: GameState): string {
   const index = getCarouselSelectedIndex(state);
 
   switch (state.phase) {
+    case 'rowSelect': {
+      if (items.length === 0) return 'No moves';
+      const current = items[index] ?? items[0];
+      return `< ${current} >  (${index + 1}/${items.length})`;
+    }
+
     case 'pieceSelect': {
       if (items.length === 0) return 'No pieces';
       const current = items[index] ?? items[0];
@@ -303,6 +425,18 @@ export function getBoardSizeDisplayText(state: GameState): string {
     const current = BOARD_SIZE_OPTIONS[i] === state.boardSize ? ' *' : '';
     const note = BOARD_SIZE_OPTIONS[i] === 'large' ? ' (no markers)' : '';
     lines.push(`${prefix}${label}${note}${current}`);
+  });
+
+  return lines.join('\n');
+}
+
+export function getPlayAsDisplayText(state: GameState): string {
+  const lines: string[] = ['', 'PLAY AS', ''];
+
+  PLAY_AS_LABELS.forEach((label, i) => {
+    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
+    const current = PLAY_AS_OPTIONS[i] === state.playAs ? ' *' : '';
+    lines.push(`${prefix}${label}${current}`);
   });
 
   return lines.join('\n');
@@ -582,6 +716,8 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
       return getBoardAlignmentDisplayText(state);
     case 'boardSizeSelect':
       return getBoardSizeDisplayText(state);
+    case 'playAsSelect':
+      return getPlayAsDisplayText(state);
     case 'resetConfirm':
       return getResetConfirmDisplayText(state);
     case 'exitConfirm':
@@ -651,13 +787,26 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
       lines.push(boardReady ? `Scroll to begin ${ARROW_UPDOWN}` : 'Preparing board…');
       break;
 
+    case 'rowSelect': {
+      lines.push('');
+      if (items.length > 0) {
+        const current = items[index] ?? items[0];
+        const innerContent = `${current} (${index + 1}/${items.length})`;
+        const selectionLine = `${innerContent} ${ARROW_UPDOWN}`;
+        lines.push('Select row:');
+        lines.push(selectionLine);
+      }
+      break;
+    }
+
     case 'pieceSelect': {
       lines.push('');
       if (items.length > 0) {
         const current = items[index] ?? items[0];
         const innerContent = `${current} (${index + 1}/${items.length})`;
         const selectionLine = `${innerContent} ${ARROW_UPDOWN}`;
-        lines.push('Select piece:');
+        const row = getSelectedRow(state);
+        lines.push(row != null ? `Select piece (Row ${row}):` : 'Select piece:');
         lines.push(selectionLine);
       }
       break;

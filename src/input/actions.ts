@@ -27,7 +27,7 @@ let lastAcceptedScrollTime = 0;
 let lastAcceptedScrollDirection: 'up' | 'down' | null = null;
 
 function isSelectionPhase(state: GameState): boolean {
-  return state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect';
+  return state.phase === 'rowSelect' || state.phase === 'pieceSelect' || state.phase === 'destSelect' || state.phase === 'promotionSelect';
 }
 
 function sameDirectionScrollDedupeMs(state: GameState): number {

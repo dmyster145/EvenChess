@@ -16,16 +16,33 @@ export function getRankIndex(square: string): number {
   return char ? RANKS.indexOf(char) : -1;
 }
 
+/** Chess rank number 1..8 from a square like "f3" → 3. */
+export function rankOfSquare(square: string): number {
+  return parseInt(square[1] ?? '1', 10);
+}
+
 export function squareToIndices(square: string): [number, number] {
   return [getFileIndex(square), getRankIndex(square)];
 }
 
-// Display rank is inverted for top-to-bottom rendering
-export function squareToDisplayCoords(square: string): { file: number; displayRank: number } {
-  return {
-    file: getFileIndex(square),
-    displayRank: 8 - parseInt(square[1] ?? '1', 10),
-  };
+/**
+ * Chess rank (1..8) → display row (0..7), perspective-aware.
+ * White at bottom: rank 8 → row 0 (top). Black at bottom (flipped 180°): rank 1 → row 0.
+ */
+export function rankToDisplayRank(rank: number, playerColor: 'w' | 'b' = 'w'): number {
+  return playerColor === 'b' ? rank - 1 : 8 - rank;
+}
+
+// Display coords for a square; flips both file and rank 180° when the human plays Black.
+export function squareToDisplayCoords(
+  square: string,
+  playerColor: 'w' | 'b' = 'w',
+): { file: number; displayRank: number } {
+  const file = getFileIndex(square);
+  const rank = parseInt(square[1] ?? '1', 10);
+  return playerColor === 'b'
+    ? { file: 7 - file, displayRank: rank - 1 }
+    : { file, displayRank: 8 - rank };
 }
 
 export function indicesToSquare(file: number, rank: number): string {

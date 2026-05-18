@@ -12,7 +12,7 @@ import { saveGame } from '../storage/persistence';
 
 const IDLE_DELAY_MS = 180;
 
-type Snapshot = Pick<GameState, 'fen' | 'history' | 'turn' | 'difficulty'>;
+type Snapshot = Pick<GameState, 'fen' | 'history' | 'turn' | 'difficulty' | 'playerColor'>;
 
 export interface AutosaveDeps {
   store: Store;
@@ -48,6 +48,7 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
       history: [...state.history],
       turn: state.turn,
       difficulty: state.difficulty,
+      playerColor: state.playerColor,
     };
     schedule();
   }
@@ -72,7 +73,7 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     const snapshot = pendingSnapshot;
     if (!snapshot) return;
     pendingSnapshot = null;
-    void saveGame(snapshot.fen, snapshot.history, snapshot.turn, snapshot.difficulty);
+    void saveGame(snapshot.fen, snapshot.history, snapshot.turn, snapshot.difficulty, snapshot.playerColor);
 
     const current = deps.store.getState();
     const sameAsSaved =

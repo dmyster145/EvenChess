@@ -26,8 +26,11 @@ const CONTAINER_NAME_BRAND = 'brand';
 
 // Shared constants (unchanged across layouts)
 const DISPLAY_HEIGHT = 288;
+// The brand container is repurposed as the captured-pieces strip directly above the
+// board: full board width, occupying the ~44px gap above the board. It still also
+// renders the brand mark and the CHECK!/CHECKMATE! banner.
 const BRAND_WIDTH = 200;
-const BRAND_HEIGHT = 24;
+const BRAND_HEIGHT = 40;
 
 // Small board dimensions (per half)
 const SMALL_IMAGE_WIDTH = 200;
@@ -160,7 +163,9 @@ function buildContainers(state: GameState): ContainerSet {
   const textObjects: TextContainerProperty[] = [];
   const imageObjects: ImageContainerProperty[] = [];
 
-  const TEXT_Y = BRAND_HEIGHT + 20 + 4; // below brand container (yPosition=20, height=24) + small gap
+  // The brand/captured strip moved above the board (right column), so the left text
+  // column's top is now free — start the HUD/menu near the top of the display.
+  const TEXT_Y = 8;
   textObjects.push(
     new TextContainerProperty({
       xPosition: 0,
@@ -196,14 +201,16 @@ function buildContainers(state: GameState): ContainerSet {
     }),
   );
 
-  // Brand: centered within the text container (0 to textWidth). Omit if it doesn't fit.
-  const brandX = Math.floor((textWidth - BRAND_WIDTH) / 2);
-  if (brandX >= 0) {
+  // Brand container, repurposed as the captured-pieces strip directly above the board:
+  // same x/width as the board, filling the gap between the top of the display and the
+  // board. Renders the brand mark + captured silhouettes (and the CHECK!/CHECKMATE!
+  // banner). Only placed when the gap can fit it.
+  if (boardTopY >= BRAND_HEIGHT + 2) {
     imageObjects.push(
       new ImageContainerProperty({
-        xPosition: brandX,
-        yPosition: 20,
-        width: BRAND_WIDTH,
+        xPosition: boardX,
+        yPosition: boardTopY - BRAND_HEIGHT,
+        width: imageWidth,
         height: BRAND_HEIGHT,
         containerID: CONTAINER_ID_BRAND,
         containerName: CONTAINER_NAME_BRAND,

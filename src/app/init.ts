@@ -22,26 +22,29 @@ import {
   loadBoardMarkers,
   loadBoardAlignment,
   loadBoardSize,
+  loadPlayAs,
   loadGame,
   clearSave,
 } from '../storage/persistence';
+import { resolvePlayerColor } from '../state/utils';
 import {
   composeTextOnlyStartupPage,
   composePageForState,
   CONTAINER_ID_TEXT,
   CONTAINER_NAME_TEXT,
 } from '../render/composer';
-import { renderBrandingImage, preloadBrandingImages } from '../render/branding';
+import { renderBlankBrandingImage, preloadBrandingImages } from '../render/branding';
 import { CONTAINER_ID_BRAND, CONTAINER_NAME_BRAND } from '../render/composer';
 import { getCombinedDisplayText } from '../state/selectors';
 import { debugLog } from '../debug/logger';
 
 export async function loadInitialAppState(chess: ChessService): Promise<GameState> {
-  const [persistedDifficulty, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, savedGame] = await Promise.all([
+  const [persistedDifficulty, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, persistedPlayAs, savedGame] = await Promise.all([
     loadDifficulty(),
     loadBoardMarkers(),
     loadBoardAlignment(),
     loadBoardSize(),
+    loadPlayAs(),
     loadGame(),
   ]);
 
@@ -52,6 +55,10 @@ export async function loadInitialAppState(chess: ChessService): Promise<GameStat
     showBoardMarkers: persistedBoardMarkers,
     boardAlignment: persistedBoardAlignment,
     boardSize: persistedBoardSize,
+    playAs: persistedPlayAs,
+    // Fresh start: resolve the human's color now ('random' rolls here). A resumed
+    // saved game overrides this below with its own persisted playerColor.
+    playerColor: resolvePlayerColor(persistedPlayAs),
   };
 
   if (savedGame) {
@@ -69,6 +76,7 @@ export async function loadInitialAppState(chess: ChessService): Promise<GameStat
           history: savedGame.history,
           turn: savedGame.turn,
           difficulty: savedGame.difficulty,
+          playerColor: savedGame.playerColor ?? 'w',
           pieces: chess.getPiecesWithMoves(),
           inCheck: chess.isInCheck(),
           hasUnsavedChanges: false,
@@ -118,7 +126,8 @@ export async function setupTextOnlyStartup(
   void preloadBrandingImages();
   const text = getCombinedDisplayText(state, { boardReady: false });
   void bridge.updateText(CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT, text);
-  bridge.updateImage(CONTAINER_ID_BRAND, CONTAINER_NAME_BRAND, renderBrandingImage());
+  // Branding disabled: blank strip at startup (captured pieces fill it once a capture happens).
+  bridge.updateImage(CONTAINER_ID_BRAND, CONTAINER_NAME_BRAND, renderBlankBrandingImage());
   return true;
 }
 

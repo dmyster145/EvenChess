@@ -4,7 +4,14 @@
  * Centralizes commonly repeated calculations to avoid duplication.
  */
 
-import type { UIPhase } from './contracts';
+import type { UIPhase, PlayAs, PlayerColor } from './contracts';
+
+/** Resolve the human's color for a new game from the Play As preference. */
+export function resolvePlayerColor(playAs: PlayAs): PlayerColor {
+  if (playAs === 'white') return 'w';
+  if (playAs === 'black') return 'b';
+  return Math.random() < 0.5 ? 'w' : 'b';
+}
 
 /**
  * Calculate the current move number from history length.

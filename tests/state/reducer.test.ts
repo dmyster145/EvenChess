@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reduce } from '../../src/state/reducer';
 import type { GameState, PieceEntry, Action } from '../../src/state/contracts';
-import { MAX_HISTORY_LENGTH, MENU_OPTION_COUNT, TIME_CONTROLS } from '../../src/state/constants';
+import { MAX_HISTORY_LENGTH, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX } from '../../src/state/constants';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -57,40 +57,80 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     lastTickTime: null,
     selectedTimeControlIndex: 2,
     showBoardMarkers: true,
+    playAs: 'white',
+    playerColor: 'w',
     ...overrides,
   };
 }
 
 describe('reducer', () => {
   describe('SCROLL', () => {
-    it('enters pieceSelect from idle on scroll', () => {
+    it('enters rowSelect from idle on scroll', () => {
       const state = createTestState();
       const next = reduce(state, { type: 'SCROLL', direction: 'down' });
-      expect(next.phase).toBe('pieceSelect');
-      expect(next.selectedPieceId).toBe('w-n-g1');
+      expect(next.phase).toBe('rowSelect');
+      expect(next.selectedPieceId).toBe('w-n-g1'); // pieces[0], rank 1 → first candidate row
     });
 
-    it('enters pieceSelect with playerLastMoveToSquare piece when set', () => {
+    it('enters rowSelect with playerLastMoveToSquare piece when set', () => {
       const piecesWithE4: PieceEntry[] = [
         { id: 'w-n-g1', label: 'Ng1', color: 'w', type: 'n', square: 'g1', moves: [{ uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' }] },
         { id: 'w-p-e4', label: 'Pe4', color: 'w', type: 'p', square: 'e4', moves: [{ uci: 'e4e5', san: 'e5', from: 'e4', to: 'e5' }] },
       ];
       const state = createTestState({ playerLastMoveToSquare: 'e4', pieces: piecesWithE4 });
       const next = reduce(state, { type: 'SCROLL', direction: 'down' });
-      expect(next.phase).toBe('pieceSelect');
-      expect(next.selectedPieceId).toBe('w-p-e4'); // piece on e4 (last moved to) is selected first
+      expect(next.phase).toBe('rowSelect');
+      expect(next.selectedPieceId).toBe('w-p-e4'); // piece on e4 (last moved to) selected → its row
     });
 
-    it('cycles pieces in pieceSelect', () => {
-      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
-      expect(next.selectedPieceId).toBe('w-p-e2');
+    // 3 candidate rows so direction polarity is unambiguous.
+    const threeRows: PieceEntry[] = [
+      { id: 'w-n-g1', label: 'Ng1', color: 'w', type: 'n', square: 'g1', moves: [{ uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' }] },
+      { id: 'w-p-e2', label: 'Pe2', color: 'w', type: 'p', square: 'e2', moves: [{ uci: 'e2e3', san: 'e3', from: 'e2', to: 'e3' }] },
+      { id: 'w-p-d4', label: 'Pd4', color: 'w', type: 'p', square: 'd4', moves: [{ uci: 'd4d5', san: 'd5', from: 'd4', to: 'd5' }] },
+    ];
+
+    it('cycles candidate rows: direction down = next-higher rank (band up the screen)', () => {
+      // candidate rows [1, 2, 4]; same convention as pieceSelect (down ⇒ +1)
+      const r1 = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1', pieces: threeRows });
+      const r2 = reduce(r1, { type: 'SCROLL', direction: 'down' });
+      expect(r2.selectedPieceId).toBe('w-p-e2'); // rank 1 → rank 2
+      const r4 = reduce(r2, { type: 'SCROLL', direction: 'down' });
+      expect(r4.selectedPieceId).toBe('w-p-d4'); // rank 2 → rank 4
+      const back = reduce(r4, { type: 'SCROLL', direction: 'up' });
+      expect(back.selectedPieceId).toBe('w-p-e2'); // rank 4 → rank 2
     });
 
-    it('wraps around in pieceSelect', () => {
-      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-p-e2' });
+    it('wraps around candidate rows in rowSelect', () => {
+      const r1 = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1', pieces: threeRows });
+      const wrapDown = reduce(r1, { type: 'SCROLL', direction: 'up' });
+      expect(wrapDown.selectedPieceId).toBe('w-p-d4'); // rank 1, down-list ⇒ wraps to highest rank 4
+      const top = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-p-d4', pieces: threeRows });
+      const wrapUp = reduce(top, { type: 'SCROLL', direction: 'down' });
+      expect(wrapUp.selectedPieceId).toBe('w-n-g1'); // rank 4 → wraps to rank 1
+    });
+
+    it('is a no-op in rowSelect when only one candidate row', () => {
+      const oneRow: PieceEntry[] = [
+        { id: 'w-n-b1', label: 'Nb1', color: 'w', type: 'n', square: 'b1', moves: [{ uci: 'b1c3', san: 'Nc3', from: 'b1', to: 'c3' }] },
+        { id: 'w-n-g1', label: 'Ng1', color: 'w', type: 'n', square: 'g1', moves: [{ uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' }] },
+      ];
+      const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-b1', pieces: oneRow });
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
+      expect(next.selectedPieceId).toBe('w-n-b1'); // single row → stays put
+    });
+
+    it('cycles pieces within the active row only in pieceSelect', () => {
+      const sameRow: PieceEntry[] = [
+        { id: 'w-n-b1', label: 'Nb1', color: 'w', type: 'n', square: 'b1', moves: [{ uci: 'b1c3', san: 'Nc3', from: 'b1', to: 'c3' }] },
+        { id: 'w-n-g1', label: 'Ng1', color: 'w', type: 'n', square: 'g1', moves: [{ uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' }] },
+        { id: 'w-p-e2', label: 'Pe2', color: 'w', type: 'p', square: 'e2', moves: [{ uci: 'e2e4', san: 'e4', from: 'e2', to: 'e4' }] },
+      ];
+      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-b1', pieces: sameRow });
       const next = reduce(state, { type: 'SCROLL', direction: 'down' });
-      expect(next.selectedPieceId).toBe('w-n-g1');
+      expect(next.selectedPieceId).toBe('w-n-g1'); // next piece on rank 1 (not the rank-2 pawn)
+      const wrapped = reduce(next, { type: 'SCROLL', direction: 'down' });
+      expect(wrapped.selectedPieceId).toBe('w-n-b1'); // wraps within row, never spills to rank 2
     });
 
     it('cycles destinations in destSelect (wrap-around)', () => {
@@ -124,10 +164,17 @@ describe('reducer', () => {
   });
 
   describe('TAP', () => {
-    it('enters pieceSelect from idle on tap', () => {
+    it('enters rowSelect from idle on tap', () => {
       const state = createTestState();
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.phase).toBe('rowSelect');
+    });
+
+    it('descends rowSelect → pieceSelect on tap, keeping the selected piece', () => {
+      const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-p-e2' });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
       expect(next.phase).toBe('pieceSelect');
+      expect(next.selectedPieceId).toBe('w-p-e2');
     });
 
     it('transitions from pieceSelect to destSelect using internal selection', () => {
@@ -202,7 +249,7 @@ describe('reducer', () => {
   });
 
   describe('DOUBLE_TAP', () => {
-    it('goes back to idle from pieceSelect (after gesture disambiguation window)', () => {
+    it('goes back to rowSelect from pieceSelect (after gesture disambiguation window)', () => {
       // phaseEnteredAt needs to be old enough to pass the gesture disambiguation
       const state = createTestState({
         phase: 'pieceSelect',
@@ -210,8 +257,15 @@ describe('reducer', () => {
         phaseEnteredAt: Date.now() - 500, // 500ms ago, past the 200ms window
       });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
-      expect(next.phase).toBe('idle');
-      expect(next.selectedPieceId).toBeNull();
+      expect(next.phase).toBe('rowSelect');
+      expect(next.selectedPieceId).toBe('w-n-g1'); // kept so the row is preserved
+    });
+
+    it('goes back to menu from rowSelect on double-tap', () => {
+      const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1' });
+      const next = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(next.phase).toBe('menu');
+      expect(next.previousPhase).toBe('rowSelect');
     });
 
     it('opens menu from pieceSelect within gesture disambiguation window', () => {
@@ -421,7 +475,7 @@ describe('reducer', () => {
 
   describe('menu tap selection', () => {
     it('tap in menu selects current option', () => {
-      const state = createTestState({ phase: 'menu', menuSelectedIndex: 2 }); // viewLog
+      const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG });
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
       expect(next.phase).toBe('viewLog');
     });
@@ -1118,6 +1172,65 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'academySelect' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('modeSelect');
+    });
+  });
+
+  describe('Play As', () => {
+    it('MENU_SELECT playAs opens playAsSelect at the current preference', () => {
+      const state = createTestState({ phase: 'menu', playAs: 'black' });
+      const next = reduce(state, { type: 'MENU_SELECT', option: 'playAs' });
+      expect(next.phase).toBe('playAsSelect');
+      expect(next.menuSelectedIndex).toBe(1); // ['white','black','random'] → black = 1
+    });
+
+    it('scroll cycles the three options', () => {
+      const s0 = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 0 });
+      const s1 = reduce(s0, { type: 'SCROLL', direction: 'down' });
+      const s2 = reduce(s1, { type: 'SCROLL', direction: 'down' });
+      const s3 = reduce(s2, { type: 'SCROLL', direction: 'down' });
+      expect([s1.menuSelectedIndex, s2.menuSelectedIndex, s3.menuSelectedIndex].every((i) => i >= 0 && i < 3)).toBe(true);
+      expect(s3.menuSelectedIndex).toBe(s0.menuSelectedIndex); // 3 steps wraps a 3-option list
+    });
+
+    it('tap on a fresh board applies immediately (→ idle) and sets the preference', () => {
+      const state = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 1, history: [] });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.playAs).toBe('black');
+      expect(next.phase).toBe('idle');
+    });
+
+    it('tap mid-game routes through the reset confirmation', () => {
+      const state = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 2, history: ['e4', 'e5'] });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.playAs).toBe('random');
+      expect(next.phase).toBe('resetConfirm');
+      expect(next.menuSelectedIndex).toBe(1); // default to Cancel
+    });
+
+    it('double-tap returns to the menu at the Play As item', () => {
+      const state = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 1 });
+      const next = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(next.phase).toBe('menu');
+      expect(next.menuSelectedIndex).toBe(MENU_INDEX.PLAY_AS);
+    });
+
+    it('SET_PLAYER_COLOR updates the resolved color', () => {
+      const state = createTestState({ playerColor: 'w' });
+      expect(reduce(state, { type: 'SET_PLAYER_COLOR', color: 'b' }).playerColor).toBe('b');
+    });
+
+    it('rowSelect swipe inverts for Black so swipe-up still moves the band up the screen', () => {
+      const threeRows: PieceEntry[] = [
+        { id: 'w-n-g1', label: 'Ng1', color: 'w', type: 'n', square: 'g1', moves: [{ uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' }] },
+        { id: 'w-p-e2', label: 'Pe2', color: 'w', type: 'p', square: 'e2', moves: [{ uci: 'e2e3', san: 'e3', from: 'e2', to: 'e3' }] },
+        { id: 'w-p-d4', label: 'Pd4', color: 'w', type: 'p', square: 'd4', moves: [{ uci: 'd4d5', san: 'd5', from: 'd4', to: 'd5' }] },
+      ];
+      // White: SCROLL down = next-higher rank (rank 1 → rank 2)
+      const w = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1', pieces: threeRows, playerColor: 'w' });
+      expect(reduce(w, { type: 'SCROLL', direction: 'down' }).selectedPieceId).toBe('w-p-e2');
+      // Black (flipped): SCROLL down must invert → previous (wraps rank 1 → rank 4)
+      const b = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1', pieces: threeRows, playerColor: 'b' });
+      expect(reduce(b, { type: 'SCROLL', direction: 'down' }).selectedPieceId).toBe('w-p-d4');
     });
   });
 });

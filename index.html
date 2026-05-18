@@ -715,6 +715,22 @@
         </details>
       </section>
 
+      <!-- Board snapshot (capture current glasses frame from real hardware) -->
+      <section class="section" id="board-snapshot">
+        <details open>
+          <summary>Board snapshot (capture what's on the glasses)</summary>
+          <div class="section-content">
+            <p style="margin-top:8px;">
+              <button type="button" id="board-snapshot-btn" style="padding:8px 16px;border-radius:6px;background:var(--accent);border:none;font-weight:500;cursor:pointer;">Capture board</button>
+              <button type="button" id="board-snapshot-download" hidden style="padding:8px 16px;border-radius:6px;background:var(--bg-secondary);border:none;margin-left:8px;cursor:pointer;">View fullscreen</button>
+            </p>
+            <p id="board-snapshot-status" style="margin-top:8px;font-weight:500;color:var(--tc-green);"></p>
+            <img id="board-snapshot-output" alt="Current glasses frame" hidden style="margin-top:8px;max-width:100%;border:1px solid var(--border);border-radius:6px;background:#000;image-rendering:pixelated;" />
+            <small id="board-snapshot-caps" style="display:block;margin-top:6px;color:var(--text-secondary);font-size:10px;word-break:break-all;"></small>
+          </div>
+        </details>
+      </section>
+
       <!-- Debug log (sync investigation) -->
       <section class="section" id="debug-log">
         <details>

@@ -4,8 +4,22 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getMoveNumber, isMenuPhase, isConfirmPhase } from '../../src/state/utils';
+import { getMoveNumber, isMenuPhase, isConfirmPhase, resolvePlayerColor } from '../../src/state/utils';
 import type { UIPhase } from '../../src/state/contracts';
+
+describe('resolvePlayerColor', () => {
+  it('maps white→w and black→b', () => {
+    expect(resolvePlayerColor('white')).toBe('w');
+    expect(resolvePlayerColor('black')).toBe('b');
+  });
+
+  it('random returns w or b (both reachable)', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) seen.add(resolvePlayerColor('random'));
+    expect([...seen].every((c) => c === 'w' || c === 'b')).toBe(true);
+    expect(seen.size).toBe(2);
+  });
+});
 
 describe('getMoveNumber', () => {
   it('returns 1 for empty history', () => {

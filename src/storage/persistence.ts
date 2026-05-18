@@ -8,13 +8,15 @@
  * Each setting is stored under its own key to avoid read-modify-write races.
  */
 
-import type { DifficultyLevel, BoardAlignment, BoardSize } from '../state/contracts';
+import type { DifficultyLevel, BoardAlignment, BoardSize, PlayAs, PlayerColor } from '../state/contracts';
 
 export interface SavedGame {
   fen: string;
   history: string[];
   turn: 'w' | 'b';
   difficulty: DifficultyLevel;
+  /** Resolved human color for the saved game (so a restore keeps orientation/engine ownership). */
+  playerColor?: PlayerColor;
   savedAt: number;
 }
 
@@ -23,6 +25,7 @@ const DIFFICULTY_KEY   = 'evenchess-difficulty';
 const MARKERS_KEY      = 'evenchess-board-markers';
 const ALIGNMENT_KEY    = 'evenchess-board-alignment';
 const SIZE_KEY         = 'evenchess-board-size';
+const PLAY_AS_KEY      = 'evenchess-play-as';
 
 // --- Storage adapter ---
 
@@ -84,8 +87,23 @@ export async function loadBoardSize(): Promise<BoardSize> {
   return (value as BoardSize | null) ?? 'small';
 }
 
-export async function saveGame(fen: string, history: string[], turn: 'w' | 'b', difficulty: DifficultyLevel = 'casual'): Promise<void> {
-  const saved: SavedGame = { fen, history, turn, difficulty, savedAt: Date.now() };
+export async function savePlayAs(playAs: PlayAs): Promise<void> {
+  await _set(PLAY_AS_KEY, playAs);
+}
+
+export async function loadPlayAs(): Promise<PlayAs> {
+  const value = await _get(PLAY_AS_KEY);
+  return value === 'white' || value === 'black' || value === 'random' ? value : 'white';
+}
+
+export async function saveGame(
+  fen: string,
+  history: string[],
+  turn: 'w' | 'b',
+  difficulty: DifficultyLevel = 'casual',
+  playerColor: PlayerColor = 'w',
+): Promise<void> {
+  const saved: SavedGame = { fen, history, turn, difficulty, playerColor, savedAt: Date.now() };
   try {
     await _set(GAME_KEY, JSON.stringify(saved));
     console.log('[Persistence] Game saved');

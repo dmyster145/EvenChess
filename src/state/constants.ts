@@ -5,18 +5,19 @@
 import type { MenuOption, DifficultyLevel, GameMode, DrillType } from './contracts';
 
 // Menu options and labels are parallel arrays
-export const MENU_OPTIONS: MenuOption[] = ['mode', 'boardMarkers', 'viewLog', 'difficulty', 'displayOptions', 'reset', 'exit'];
-export const MENU_LABELS: readonly string[] = ['Mode', 'Board Markers', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit Menu'];
+export const MENU_OPTIONS: MenuOption[] = ['playAs', 'mode', 'boardMarkers', 'viewLog', 'difficulty', 'displayOptions', 'reset', 'exit'];
+export const MENU_LABELS: readonly string[] = ['Play As', 'Mode', 'Board Markers', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit Menu'];
 export const MENU_OPTION_COUNT = MENU_OPTIONS.length;
 
 export const MENU_INDEX = {
-  MODE: 0,
-  BOARD_MARKERS: 1,
-  VIEW_LOG: 2,
-  DIFFICULTY: 3,
-  DISPLAY_OPTIONS: 4,
-  RESET: 5,
-  EXIT: 6,
+  PLAY_AS: 0,
+  MODE: 1,
+  BOARD_MARKERS: 2,
+  VIEW_LOG: 3,
+  DIFFICULTY: 4,
+  DISPLAY_OPTIONS: 5,
+  RESET: 6,
+  EXIT: 7,
 } as const;
 
 export const DISPLAY_OPTIONS_OPTIONS: readonly string[] = ['alignment', 'size'];
@@ -67,6 +68,10 @@ export const DRILL_OPTION_COUNT = DRILL_OPTIONS.length;
 export const DIFFICULTY_OPTIONS: DifficultyLevel[] = ['easy', 'casual', 'serious'];
 export const DIFFICULTY_LABELS: readonly string[] = ['Easy', 'Casual', 'Serious'];
 export const DIFFICULTY_OPTION_COUNT = DIFFICULTY_OPTIONS.length;
+
+export const PLAY_AS_OPTIONS: readonly ('white' | 'black' | 'random')[] = ['white', 'black', 'random'];
+export const PLAY_AS_LABELS: readonly string[] = ['White', 'Black', 'Random'];
+export const PLAY_AS_OPTION_COUNT = PLAY_AS_OPTIONS.length;
 
 /** SDK text container limit is 2000 chars; 40 move pairs stays well under */
 export const MAX_MOVES_DISPLAY = 40;

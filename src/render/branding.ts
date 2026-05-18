@@ -293,6 +293,109 @@ function drawKnightIcon(pixels: Uint8Array, x: number, y: number): void {
   }
 }
 
+// ── Captured-pieces strip ─────────────────────────────────────────────────
+// One row, board-size (19px) silhouettes: White's lost pieces solid on the LEFT,
+// Black's lost pieces as OUTLINES on the RIGHT. Counts (only ever 2–8: max 8 pawns)
+// use a compact 5×7 digit font lifted from the board marker font.
+
+const DIGIT_5x7: Record<string, number[]> = {
+  '1': [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+  '2': [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+  '3': [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110],
+  '4': [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+  '5': [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+  '6': [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+  '7': [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+  '8': [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+};
+const CAPTURE_ORDER = ['q', 'r', 'b', 'n', 'p'] as const;
+const DIGIT_W = 5;
+const ENTRY_GAP = 3;
+
+function drawDigit(pixels: Uint8Array, x: number, y: number, ch: string): void {
+  const glyph = DIGIT_5x7[ch];
+  if (!glyph) return;
+  for (let row = 0; row < 7; row++) {
+    const bits = glyph[row] ?? 0;
+    for (let col = 0; col < 5; col++) {
+      if (bits & (1 << (4 - col))) setPixel(pixels, x + col, y + row, 1);
+    }
+  }
+}
+
+/** Native-size (19px) piece silhouette. `outline` draws only the perimeter. */
+function drawSilhouette(pixels: Uint8Array, x: number, y: number, type: string, outline: boolean): void {
+  const bmp = PIECE_SILHOUETTES[type];
+  if (!bmp) return;
+  const on = (r: number, c: number): boolean =>
+    r >= 0 && r < PIECE_SIZE && c >= 0 && c < PIECE_SIZE &&
+    ((bmp[r] ?? 0) & (1 << (PIECE_SIZE - 1 - c))) !== 0;
+  for (let row = 0; row < PIECE_SIZE; row++) {
+    for (let col = 0; col < PIECE_SIZE; col++) {
+      if (!on(row, col)) continue;
+      if (outline && on(row - 1, col) && on(row + 1, col) && on(row, col - 1) && on(row, col + 1)) {
+        continue; // interior pixel — skip so only the edge remains
+      }
+      setPixel(pixels, x + col, y + row, 1);
+    }
+  }
+}
+
+function entryWidth(n: number): number {
+  return PIECE_SIZE + (n > 1 ? DIGIT_W + 1 : 0) + ENTRY_GAP;
+}
+
+function groupWidth(counts: Record<string, number>): number {
+  let w = 0;
+  for (const t of CAPTURE_ORDER) {
+    const n = counts[t] ?? 0;
+    if (n > 0) w += entryWidth(n);
+  }
+  return w;
+}
+
+/** Draw a captured group left→right from startX; returns the x just past it. */
+function drawGroup(
+  pixels: Uint8Array,
+  startX: number,
+  y: number,
+  counts: Record<string, number>,
+  outline: boolean,
+): number {
+  let x = startX;
+  for (const t of CAPTURE_ORDER) {
+    const n = counts[t] ?? 0;
+    if (n <= 0) continue;
+    if (x + PIECE_SIZE > BRAND_WIDTH - 1) break; // clip overflow
+    drawSilhouette(pixels, x, y, t, outline);
+    x += PIECE_SIZE;
+    if (n > 1) {
+      drawDigit(pixels, x, y + Math.floor((PIECE_SIZE - 7) / 2), String(n));
+      x += DIGIT_W + 1;
+    }
+    x += ENTRY_GAP;
+  }
+  return x;
+}
+
+function hasAnyCapture(counts: Record<string, number>): boolean {
+  return CAPTURE_ORDER.some((t) => (counts[t] ?? 0) > 0);
+}
+
+function makeCapturedPixels(black: Record<string, number>, white: Record<string, number>): Uint8Array {
+  // Branding disabled: nothing captured → blank strip (no "CHESS" mark).
+  if (!hasAnyCapture(black) && !hasAnyCapture(white)) return makeBlankPixels();
+  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
+  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
+  const y = Math.floor((BRAND_HEIGHT - PIECE_SIZE) / 2);
+
+  const whiteEnd = drawGroup(pixels, 2, y, white, false); // White solid, left
+  const bw = groupWidth(black);
+  const blackStart = Math.max(whiteEnd + 4, BRAND_WIDTH - 2 - bw);
+  drawGroup(pixels, blackStart, y, black, true); // Black outline, right
+  return pixels;
+}
+
 function create1BitBmp(pixels: Uint8Array): Uint8Array {
   const rowBytes = getBmpRowBytes(BRAND_WIDTH);
   const rowPadded = getBmpRowStride(BRAND_WIDTH);
@@ -382,6 +485,21 @@ export function renderBlankBrandingImage(): ImageRawDataUpdate {
   if (cachedBlankBrandImage) return cachedBlankBrandImage;
   cachedBlankBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeBlankPixels())));
   return cachedBlankBrandImage;
+}
+
+let cachedCapturedSig: string | null = null;
+let cachedCapturedImage: ImageRawDataUpdate | null = null;
+
+/** Captured-pieces strip (normal mode). `sig` lets the caller skip re-encode when unchanged. */
+export function renderCapturedBrandingImage(
+  black: Record<string, number>,
+  white: Record<string, number>,
+  sig: string,
+): ImageRawDataUpdate {
+  if (cachedCapturedImage && cachedCapturedSig === sig) return cachedCapturedImage;
+  cachedCapturedSig = sig;
+  cachedCapturedImage = makeBrandingUpdate(Array.from(create1BitBmp(makeCapturedPixels(black, white))));
+  return cachedCapturedImage;
 }
 
 export function renderCheckBrandingImage(): ImageRawDataUpdate {

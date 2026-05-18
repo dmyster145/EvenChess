@@ -2,8 +2,8 @@
  * State reducer — pure function `(state, action) => state`.
  *
  * Implements the UI state machine:
- *   Idle ──scroll──▶ PieceSelect ──tap──▶ DestSelect ──tap──▶ Idle
- *                     │ double-tap → Idle    │ double-tap → PieceSelect
+ *   Idle ─tap/scroll─▶ RowSelect ─tap─▶ PieceSelect ─tap─▶ DestSelect ─tap─▶ Idle
+ *                       │ dbltap→menu     │ dbltap→RowSelect   │ dbltap→PieceSelect
  */
 
 import type { GameState, Action, PieceEntry, UIPhase, MenuOption, GameMode, DrillType } from './contracts';
@@ -21,6 +21,8 @@ import {
   BOARD_ALIGNMENT_OPTION_COUNT,
   BOARD_SIZE_OPTIONS,
   BOARD_SIZE_OPTION_COUNT,
+  PLAY_AS_OPTIONS,
+  PLAY_AS_OPTION_COUNT,
   LOG_MAX_VISIBLE,
   MAX_HISTORY_LENGTH,
   MODE_OPTIONS,
@@ -33,6 +35,8 @@ import {
   PROMOTION_OPTION_COUNT,
   PROMOTION_PIECE_KEYS,
 } from './constants';
+import { rankOfSquare } from '../chess/square-utils';
+import { getCandidateRows, getPiecesOnRow, getSelectedRow } from './selectors';
 import { generateRandomSquare, moveCursorAxis, fileRankToSquare, getDefaultCursorPosition } from '../academy/drills';
 import { generateKnightPuzzle, getKnightMoves, isValidKnightMove, getSquareIndices } from '../academy/knight';
 import { getRandomTacticsPuzzle, getRandomMatePuzzle } from '../academy/puzzles';
@@ -199,6 +203,9 @@ export function reduce(state: GameState, action: Action): GameState {
         menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
       };
 
+    case 'SET_PLAYER_COLOR':
+      return state.playerColor === action.color ? state : { ...state, playerColor: action.color };
+
     case 'MARK_SAVED':
       return { ...state, hasUnsavedChanges: false };
 
@@ -229,8 +236,17 @@ export function reduce(state: GameState, action: Action): GameState {
 }
 
 
-/** Initial piece when entering pieceSelect: player's last-moved piece if any, else bottom-left (first in list). */
-function initialPieceForPieceSelect(state: GameState): PieceEntry | null {
+/** First movable piece on a chess rank (state.pieces is file-sorted a→h). */
+function firstPieceOnRow(state: GameState, rank: number): PieceEntry | null {
+  return state.pieces.find((p) => rankOfSquare(p.square) === rank) ?? null;
+}
+
+/**
+ * Initial piece when entering rowSelect: player's last-moved piece if it still has
+ * moves (its rank becomes the active row), else the first piece in spatial order
+ * (lowest rank, file a → first candidate row).
+ */
+function initialPieceForRowSelect(state: GameState): PieceEntry | null {
   if (state.pieces.length === 0) return null;
   if (state.playerLastMoveToSquare) {
     const found = state.pieces.find((p) => p.square === state.playerLastMoveToSquare);
@@ -241,14 +257,17 @@ function initialPieceForPieceSelect(state: GameState): PieceEntry | null {
 
 /**
  * Scroll (swipe) handling during gameplay:
- * - SCROLL_BOTTOM_EVENT → direction 'down' → next item (clockwise: +1 in spatial order).
- * - SCROLL_TOP_EVENT → direction 'up' → previous item (counter-clockwise: -1).
- * - pieceSelect: order = state.pieces (rank 1→8, file a→h). Start at bottom-left or latest-moved piece.
+ * - SCROLL_BOTTOM_EVENT → direction 'down' → next item (+1 in spatial order).
+ * - SCROLL_TOP_EVENT → direction 'up' → previous item (-1).
+ * - rowSelect: order = candidate rows ascending. 'down' = next (+1) = higher rank =
+ *   band moves UP the screen (board is rank-8-top, never flipped), so a physical
+ *   swipe-up moves the highlighted row up. Same direction convention as pieceSelect.
+ * - pieceSelect: order = movable pieces on the active row only (file a→h).
  * - destSelect: order = piece.moves (destination squares rank then file).
  */
 const SETTINGS_PHASES = new Set([
   'menu', 'exitConfirm', 'resetConfirm', 'difficultySelect', 'boardMarkersSelect',
-  'displayOptionsSelect', 'boardAlignmentSelect', 'boardSizeSelect',
+  'displayOptionsSelect', 'boardAlignmentSelect', 'boardSizeSelect', 'playAsSelect',
   'modeSelect', 'bulletSetup', 'academySelect',
 ]);
 
@@ -258,26 +277,50 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     ? (direction === 'down' ? 'up' : 'down')
     : direction;
   switch (state.phase) {
-    case 'idle':
+    case 'idle': {
       if (state.pieces.length === 0) return state;
-      const initial = initialPieceForPieceSelect(state);
+      const initial = initialPieceForRowSelect(state);
       if (!initial) return state;
       const startTimer = state.mode === 'bullet' && state.timers && !state.timerActive;
       return {
         ...state,
-        phase: 'pieceSelect',
+        phase: 'rowSelect',
         selectedPieceId: initial.id,
         selectedMoveIndex: 0,
         phaseEnteredAt: Date.now(),
         ...(startTimer && { timerActive: true, lastTickTime: Date.now() }),
       };
+    }
+
+    case 'rowSelect': {
+      const rows = getCandidateRows(state);
+      if (rows.length === 0) return state;
+      const cur = getSelectedRow(state);
+      let idx = cur != null ? rows.indexOf(cur) : 0;
+      if (idx < 0) idx = 0;
+      // Candidate rows are rank-ascending. White's view has rank 8 at the top, so +1 =
+      // higher rank = band moves UP the screen. When the human plays Black the board is
+      // flipped (rank 1 at top), so the step direction must invert to keep "swipe up =
+      // band moves up the screen".
+      const stepDown = state.playerColor === 'b' ? d === 'up' : d === 'down';
+      const next = stepDown
+        ? (idx + 1) % rows.length
+        : (idx - 1 + rows.length) % rows.length;
+      const piece = firstPieceOnRow(state, rows[next]!);
+      return piece
+        ? { ...state, selectedPieceId: piece.id, selectedMoveIndex: 0 }
+        : state;
+    }
 
     case 'pieceSelect': {
-      const idx = currentPieceIndex(state);
-      const len = state.pieces.length;
+      const cur = selectedPieceEntry(state);
+      if (!cur) return state;
+      const rowPieces = getPiecesOnRow(state, rankOfSquare(cur.square));
+      const len = rowPieces.length;
       if (len === 0) return state;
+      const idx = Math.max(0, rowPieces.findIndex((p) => p.id === cur.id));
       const next = d === 'down' ? (idx + 1) % len : (idx - 1 + len) % len;
-      const piece = state.pieces[next];
+      const piece = rowPieces[next];
       return piece
         ? { ...state, selectedPieceId: piece.id, selectedMoveIndex: 0 }
         : state;
@@ -361,6 +404,15 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
         d === 'down'
           ? (idx + 1) % BOARD_SIZE_OPTION_COUNT
           : (idx - 1 + BOARD_SIZE_OPTION_COUNT) % BOARD_SIZE_OPTION_COUNT;
+      return { ...state, menuSelectedIndex: next };
+    }
+
+    case 'playAsSelect': {
+      const idx = state.menuSelectedIndex;
+      const next =
+        d === 'down'
+          ? (idx + 1) % PLAY_AS_OPTION_COUNT
+          : (idx - 1 + PLAY_AS_OPTION_COUNT) % PLAY_AS_OPTION_COUNT;
       return { ...state, menuSelectedIndex: next };
     }
 
@@ -486,13 +538,26 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
   switch (state.phase) {
     case 'idle': {
       if (state.pieces.length === 0) return state;
-      const initial = initialPieceForPieceSelect(state);
+      const initial = initialPieceForRowSelect(state);
       if (!initial) return state;
       return {
         ...state,
-        phase: 'pieceSelect',
+        phase: 'rowSelect',
         selectedPieceId: initial.id,
         selectedMoveIndex: 0,
+        phaseEnteredAt: Date.now(),
+      };
+    }
+
+    case 'rowSelect': {
+      const piece = selectedPieceEntry(state) ?? state.pieces[0];
+      if (!piece) return state;
+      return {
+        ...state,
+        phase: 'pieceSelect',
+        selectedPieceId: piece.id,
+        selectedMoveIndex: 0,
+        phaseEnteredAt: Date.now(),
       };
     }
 
@@ -649,6 +714,22 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
       };
     }
 
+    case 'playAsSelect': {
+      const chosen = PLAY_AS_OPTIONS[state.menuSelectedIndex] ?? 'white';
+      // Picking a side starts a new game (changing color mid-game is meaningless).
+      // If moves have been played, confirm first (reuses the reset confirmation, whose
+      // resetConfirm→idle side-effect resolves playerColor from playAs and re-rolls
+      // 'random'). On a fresh board, apply immediately — the playAsSelect→idle
+      // transition is picked up by the same new-game side-effect.
+      const inProgress = state.history.length > 0;
+      return {
+        ...state,
+        playAs: chosen,
+        phase: inProgress ? 'resetConfirm' : 'idle',
+        menuSelectedIndex: inProgress ? 1 : 0,
+      };
+    }
+
     case 'modeSelect': {
       const selectedMode = MODE_OPTIONS[state.menuSelectedIndex] ?? 'play';
       return handleSetMode(state, selectedMode);
@@ -715,14 +796,21 @@ function handleDoubleTap(state: GameState): GameState {
     case 'idle':
       return handleOpenMenu(state);
 
+    case 'rowSelect':
+      // Double-tap at the top gameplay level opens the settings menu (idle→rowSelect
+      // means a fused scroll+double-tap lands here; menu is the intended target anyway).
+      return handleOpenMenu(state);
+
     case 'pieceSelect': {
-      // Gesture disambiguation: if scroll+double-tap arrived together, scroll processed
-      // first putting us in pieceSelect. Treat quick double-tap as menu open intent.
+      // Defensive: a fused scroll+double-tap now lands in rowSelect (handled above),
+      // so this branch is normally unreachable — kept as a guard in case a fast
+      // double-tap slips through right after descending into pieceSelect.
       const timeSinceEntry = Date.now() - state.phaseEnteredAt;
       if (timeSinceEntry < GESTURE_DISAMBIGUATION_MS) {
         return handleOpenMenu(state);
       }
-      return { ...state, phase: 'idle', selectedPieceId: null, selectedMoveIndex: 0 };
+      // Back up one level to row selection (keep selectedPieceId so the row is preserved).
+      return { ...state, phase: 'rowSelect', selectedMoveIndex: 0 };
     }
 
     case 'destSelect':
@@ -751,6 +839,9 @@ function handleDoubleTap(state: GameState): GameState {
 
     case 'difficultySelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.DIFFICULTY };
+
+    case 'playAsSelect':
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.PLAY_AS };
 
     case 'boardMarkersSelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.BOARD_MARKERS };
@@ -844,12 +935,6 @@ function handlePlayerMoveSan(state: GameState, san: string): GameState {
 }
 
 
-function currentPieceIndex(state: GameState): number {
-  if (!state.selectedPieceId) return 0;
-  const idx = state.pieces.findIndex((p) => p.id === state.selectedPieceId);
-  return idx >= 0 ? idx : 0;
-}
-
 function selectedPieceEntry(state: GameState): PieceEntry | null {
   if (!state.selectedPieceId) return null;
   return state.pieces.find((p) => p.id === state.selectedPieceId) ?? null;
@@ -863,7 +948,7 @@ function handleOpenMenu(state: GameState): GameState {
 
   // Preserve original phase when navigating within menu sub-screens
   const previousPhase: UIPhase =
-    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'boardMarkersSelect' || state.phase === 'displayOptionsSelect' || state.phase === 'boardAlignmentSelect' || state.phase === 'boardSizeSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
+    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'boardMarkersSelect' || state.phase === 'displayOptionsSelect' || state.phase === 'boardAlignmentSelect' || state.phase === 'boardSizeSelect' || state.phase === 'playAsSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
       ? (state.previousPhase ?? 'idle')
       : state.phase;
 
@@ -880,7 +965,7 @@ function handleOpenMenu(state: GameState): GameState {
 function handleCloseMenu(state: GameState): GameState {
   const resumeBulletTimer =
     state.mode === 'bullet' && state.timers && !state.gameOver &&
-    (state.previousPhase === 'idle' || state.previousPhase === 'pieceSelect' || state.previousPhase === 'destSelect');
+    (state.previousPhase === 'idle' || state.previousPhase === 'rowSelect' || state.previousPhase === 'pieceSelect' || state.previousPhase === 'destSelect');
   return {
     ...state,
     phase: state.previousPhase ?? 'idle',
@@ -925,6 +1010,15 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
       return {
         ...state,
         phase: 'difficultySelect',
+        menuSelectedIndex: idx >= 0 ? idx : 0,
+      };
+    }
+
+    case 'playAs': {
+      const idx = PLAY_AS_OPTIONS.indexOf(state.playAs);
+      return {
+        ...state,
+        phase: 'playAsSelect',
         menuSelectedIndex: idx >= 0 ? idx : 0,
       };
     }

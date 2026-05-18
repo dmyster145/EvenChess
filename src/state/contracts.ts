@@ -27,6 +27,7 @@ export type GameMode = 'play' | 'ghost' | 'academy' | 'bullet';
 
 export type UIPhase =
   | 'idle'
+  | 'rowSelect'
   | 'pieceSelect'
   | 'destSelect'
   | 'promotionSelect'
@@ -38,6 +39,7 @@ export type UIPhase =
   | 'displayOptionsSelect'
   | 'boardAlignmentSelect'
   | 'boardSizeSelect'
+  | 'playAsSelect'
   | 'resetConfirm'
   | 'exitConfirm'
   | 'modeSelect'
@@ -49,10 +51,14 @@ export type UIPhase =
   | 'knightPathDrill'
   | 'pgnStudy';
 
-export type MenuOption = 'mode' | 'boardMarkers' | 'viewLog' | 'difficulty' | 'displayOptions' | 'reset' | 'exit';
+export type MenuOption = 'mode' | 'boardMarkers' | 'viewLog' | 'difficulty' | 'playAs' | 'displayOptions' | 'reset' | 'exit';
 
 export type BoardAlignment = 'center' | 'right';
 export type BoardSize = 'small' | 'large';
+/** User preference for which side to play. 'random' re-rolls each new game. */
+export type PlayAs = 'white' | 'black' | 'random';
+/** Resolved human color for the current game (random is resolved at new-game). */
+export type PlayerColor = 'w' | 'b';
 
 export type DrillType = 'coordinate' | 'tactics' | 'mate' | 'knightPath' | 'pgn';
 
@@ -145,6 +151,10 @@ export interface GameState {
   difficulty: DifficultyLevel;
   boardAlignment: BoardAlignment;
   boardSize: BoardSize;
+  /** User preference for side to play; 'random' re-rolls each new game. */
+  playAs: PlayAs;
+  /** Resolved human color for the current game. Drives board flip + engine ownership. */
+  playerColor: PlayerColor;
   logScrollOffset: number;
   /** For gesture disambiguation (see GESTURE_DISAMBIGUATION_MS in constants) */
   phaseEnteredAt: number;
@@ -185,6 +195,7 @@ export type Action =
   | { type: 'SET_BOARD_MARKERS'; enabled: boolean }
   | { type: 'SET_BOARD_ALIGNMENT'; alignment: BoardAlignment }
   | { type: 'SET_BOARD_SIZE'; size: BoardSize }
+  | { type: 'SET_PLAYER_COLOR'; color: PlayerColor }
   | { type: 'SET_MODE'; mode: GameMode }
   | { type: 'START_BULLET_GAME'; timeControlIndex: number }
   | { type: 'TIMER_TICK' }
@@ -220,6 +231,8 @@ export function buildInitialState(chess: ChessService): GameState {
     difficulty: 'casual',
     boardAlignment: 'right',
     boardSize: 'small',
+    playAs: 'white',
+    playerColor: 'w',
     logScrollOffset: 0,
     phaseEnteredAt: Date.now(),
     timerActive: false,

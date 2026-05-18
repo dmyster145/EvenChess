@@ -85,7 +85,33 @@ export class TurnLoop {
         return;
       }
 
-      this.dispatch({ type: 'ENGINE_THINKING' }, 'engine');
+      await this.runEngineTurn(requestSeq);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /**
+   * Ask the engine to move at the current position. Used when the human plays Black
+   * so the engine (White) makes the opening move. Mirrors the engine half of
+   * onPlayerMoved but without a preceding player move.
+   */
+  async requestEngineMove(): Promise<void> {
+    if (this.busy) return;
+    this.clearPendingGameOverTimeout();
+    const requestSeq = ++this.requestSeq;
+    this.busy = true;
+    try {
+      const state = this.store.getState();
+      if (state.gameOver || this.chess.isGameOver()) return;
+      await this.runEngineTurn(requestSeq);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private async runEngineTurn(requestSeq: number): Promise<void> {
+    this.dispatch({ type: 'ENGINE_THINKING' }, 'engine');
 
       let bestMoveUci: string | null = null;
       try {
@@ -160,9 +186,6 @@ export class TurnLoop {
           this.dispatch({ type: 'GAME_OVER', reason }, 'engine');
         }, 500);
       }
-    } finally {
-      this.busy = false;
-    }
   }
 
   private dispatchRefresh(): void {

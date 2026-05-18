@@ -144,10 +144,13 @@ describe('createFlush', () => {
   });
 
   it('text dedup is keyed on boardReady — flipping the layout always re-sends text (race #10)', async () => {
+    // Scope to the HUD text container — full layout also sends the captured-piece strips
+    // (ids 5/6) which would otherwise inflate the raw count.
+    const hudCalls = () => bridge.textCalls.filter((c) => c.id === CONTAINER_ID_TEXT).length;
     const flush = makeFlush();
     imagesActive = false;
     await flush.flushNow();
-    const textOnlyCount = bridge.textCalls.length;
+    const textOnlyCount = hudCalls();
     expect(textOnlyCount).toBe(1);
 
     // Flip to full layout — text content is identical but the cache key changes, so we expect a re-send.
@@ -155,7 +158,7 @@ describe('createFlush', () => {
     const flushPromise = flush.flushNow();
     await vi.advanceTimersByTimeAsync(1);
     await flushPromise;
-    expect(bridge.textCalls.length).toBe(textOnlyCount + 1);
+    expect(hudCalls()).toBe(textOnlyCount + 1);
   });
 
   it('cancel() prevents a pending debounced flush from firing', async () => {
