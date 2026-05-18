@@ -788,7 +788,7 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
       const statusActive =
         !!v?.status && (v.statusExpiresAt == null || v.statusExpiresAt > Date.now());
       if (v?.pendingConfirm) {
-        lines.push(`Heard: ${expandMoveName(v.pendingConfirm.san)}`);
+        lines.push(`Heard: ${expandMoveForLog(v.pendingConfirm.san)}`);
         lines.push('Tap to confirm · Double-tap aborts');
       } else if (v?.listening) {
         lines.push(v.status ?? 'Listening… speak your move');

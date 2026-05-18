@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 2.0.4 — 2026-05-18
+
+### Fixed
+
+- Voice confirm label now names the piece for pawn moves: "Pawn to D4" shows
+  `Heard: Pawn D4` instead of a bare `Heard: D4`.
+
+## 2.0.3 — 2026-05-18
 
 ### Added — Offline voice move input
 
