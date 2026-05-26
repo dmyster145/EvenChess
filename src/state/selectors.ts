@@ -620,7 +620,6 @@ export function getTacticsDisplayText(state: GameState): string {
   const puzzle = academy?.tacticsPuzzle;
 
   const lines: string[] = ['', drillName];
-  lines.push(`Score: ${academy?.score.correct ?? 0}/${academy?.score.total ?? 0}`);
 
   if (!puzzle) {
     lines.push('');
