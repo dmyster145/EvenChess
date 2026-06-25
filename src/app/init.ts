@@ -19,6 +19,7 @@ import type { BrandingController } from './branding';
 import { buildInitialState } from '../state/contracts';
 import {
   loadDifficulty,
+  loadCustomSkillLevel,
   loadBoardMarkers,
   loadBoardAlignment,
   loadBoardSize,
@@ -39,8 +40,9 @@ import { getCombinedDisplayText } from '../state/selectors';
 import { debugLog } from '../debug/logger';
 
 export async function loadInitialAppState(chess: ChessService): Promise<GameState> {
-  const [persistedDifficulty, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, persistedPlayAs, savedGame] = await Promise.all([
+  const [persistedDifficulty, persistedCustomSkillLevel, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, persistedPlayAs, savedGame] = await Promise.all([
     loadDifficulty(),
+    loadCustomSkillLevel(),
     loadBoardMarkers(),
     loadBoardAlignment(),
     loadBoardSize(),
@@ -52,6 +54,7 @@ export async function loadInitialAppState(chess: ChessService): Promise<GameStat
   initialState = {
     ...initialState,
     difficulty: persistedDifficulty,
+    customSkillLevel: persistedCustomSkillLevel,
     showBoardMarkers: persistedBoardMarkers,
     boardAlignment: persistedBoardAlignment,
     boardSize: persistedBoardSize,
@@ -76,6 +79,8 @@ export async function loadInitialAppState(chess: ChessService): Promise<GameStat
           history: savedGame.history,
           turn: savedGame.turn,
           difficulty: savedGame.difficulty,
+          // Older saves predate per-game custom-skill capture; fall back to the persisted setting.
+          customSkillLevel: savedGame.customSkillLevel ?? persistedCustomSkillLevel,
           playerColor: savedGame.playerColor ?? 'w',
           pieces: chess.getPiecesWithMoves(),
           inCheck: chess.isInCheck(),

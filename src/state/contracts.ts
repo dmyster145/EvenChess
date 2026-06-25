@@ -49,6 +49,7 @@ export type UIPhase =
   | 'menu'
   | 'viewLog'
   | 'difficultySelect'
+  | 'customDifficultySelect'
   | 'boardMarkersSelect'
   | 'displayOptionsSelect'
   | 'boardAlignmentSelect'
@@ -120,7 +121,12 @@ export interface AcademyState {
   pgnStudy?: PgnStudyState;
 }
 
-export type DifficultyLevel = 'easy' | 'casual' | 'serious';
+export type DifficultyLevel = 'easy' | 'casual' | 'serious' | 'custom';
+
+/** Inclusive bounds for the user-facing Custom difficulty picker (0..9). */
+export const CUSTOM_SKILL_LEVEL_MIN = 0;
+export const CUSTOM_SKILL_LEVEL_MAX = 9;
+export const CUSTOM_SKILL_LEVEL_DEFAULT = 5;
 
 export interface EngineProfile {
   name: string;
@@ -163,6 +169,12 @@ export interface GameState {
    */
   pendingSystemExitDialog?: boolean;
   difficulty: DifficultyLevel;
+  /**
+   * User-picked level (0..9) for the Custom difficulty. Always present so the picker has a
+   * starting value even when `difficulty` is one of the named tiers; only consulted when
+   * `difficulty === 'custom'`.
+   */
+  customSkillLevel: number;
   boardAlignment: BoardAlignment;
   boardSize: BoardSize;
   /** User preference for side to play; 'random' re-rolls each new game. */
@@ -208,6 +220,7 @@ export type Action =
   | { type: 'LOAD_GAME'; fen: string; history: string[]; turn: 'w' | 'b' }
   | { type: 'MARK_SAVED' }
   | { type: 'SET_DIFFICULTY'; level: DifficultyLevel }
+  | { type: 'SET_CUSTOM_SKILL_LEVEL'; value: number }
   | { type: 'SET_BOARD_MARKERS'; enabled: boolean }
   | { type: 'SET_BOARD_ALIGNMENT'; alignment: BoardAlignment }
   | { type: 'SET_BOARD_SIZE'; size: BoardSize }
@@ -251,6 +264,7 @@ export function buildInitialState(chess: ChessService): GameState {
     hasUnsavedChanges: false,
     previousPhase: null,
     difficulty: 'casual',
+    customSkillLevel: CUSTOM_SKILL_LEVEL_DEFAULT,
     boardAlignment: 'right',
     boardSize: 'small',
     playAs: 'white',

@@ -26,6 +26,7 @@ const MENU_PHASES: UIPhase[] = [
   'menu',
   'viewLog',
   'difficultySelect',
+  'customDifficultySelect',
   'resetConfirm',
   'exitConfirm',
   'modeSelect',

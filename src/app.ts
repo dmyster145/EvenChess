@@ -27,7 +27,7 @@ import { mapEvenHubEvent } from './input/actions';
 import { BoardRenderer } from './render/boardimage';
 import { type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 import { TurnLoop } from './engine/turnloop';
-import { PROFILE_BY_DIFFICULTY } from './engine/profiles';
+import { getEngineProfile } from './engine/profiles';
 import { initPersistence } from './storage/persistence';
 import { EvenHubBridge } from './evenhub/bridge';
 import { setBackgroundState, onBackgroundRestore } from './storage/background-state';
@@ -53,6 +53,8 @@ type BackgroundSnapshot = {
   fen: string;
   turn: 'w' | 'b';
   difficulty: DifficultyLevel;
+  /** Optional: present only on snapshots written after the Custom difficulty shipped. */
+  customSkillLevel?: number;
   boardAlignment: BoardAlignment;
   boardSize: BoardSize;
   showBoardMarkers: boolean;
@@ -99,7 +101,7 @@ export async function initApp(): Promise<void> {
   const rendererRef: { current: BoardRenderer } = {
     current: new BoardRenderer({ largeGrid: initialState.boardSize === 'large' }),
   };
-  const initialProfile = PROFILE_BY_DIFFICULTY[initialState.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
+  const initialProfile = getEngineProfile(initialState.difficulty, initialState.customSkillLevel);
   const turnLoop = new TurnLoop(chess, store, initialProfile);
 
   // Mutable flag: starts false (text-only startup), flips to true once upgradeToFullLayout
@@ -175,6 +177,7 @@ export async function initApp(): Promise<void> {
       fen: s.fen,
       turn: s.turn,
       difficulty: s.difficulty,
+      customSkillLevel: s.customSkillLevel,
       boardAlignment: s.boardAlignment,
       boardSize: s.boardSize,
       showBoardMarkers: s.showBoardMarkers,
@@ -200,6 +203,7 @@ export async function initApp(): Promise<void> {
       fen: snap.fen,
       turn: snap.turn ?? fresh.turn,
       difficulty: snap.difficulty ?? fresh.difficulty,
+      customSkillLevel: snap.customSkillLevel ?? fresh.customSkillLevel,
       boardAlignment: snap.boardAlignment ?? fresh.boardAlignment,
       boardSize: snap.boardSize ?? fresh.boardSize,
       showBoardMarkers: snap.showBoardMarkers ?? fresh.showBoardMarkers,

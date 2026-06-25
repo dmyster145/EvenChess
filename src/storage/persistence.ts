@@ -9,23 +9,31 @@
  */
 
 import type { DifficultyLevel, BoardAlignment, BoardSize, PlayAs, PlayerColor } from '../state/contracts';
+import {
+  CUSTOM_SKILL_LEVEL_DEFAULT,
+  CUSTOM_SKILL_LEVEL_MAX,
+  CUSTOM_SKILL_LEVEL_MIN,
+} from '../state/contracts';
 
 export interface SavedGame {
   fen: string;
   history: string[];
   turn: 'w' | 'b';
   difficulty: DifficultyLevel;
+  /** Picker value (0..9) for Custom difficulty; absent on saves written before this field existed. */
+  customSkillLevel?: number;
   /** Resolved human color for the saved game (so a restore keeps orientation/engine ownership). */
   playerColor?: PlayerColor;
   savedAt: number;
 }
 
-const GAME_KEY         = 'evenchess-save';
-const DIFFICULTY_KEY   = 'evenchess-difficulty';
-const MARKERS_KEY      = 'evenchess-board-markers';
-const ALIGNMENT_KEY    = 'evenchess-board-alignment';
-const SIZE_KEY         = 'evenchess-board-size';
-const PLAY_AS_KEY      = 'evenchess-play-as';
+const GAME_KEY              = 'evenchess-save';
+const DIFFICULTY_KEY        = 'evenchess-difficulty';
+const CUSTOM_SKILL_KEY      = 'evenchess-custom-skill-level';
+const MARKERS_KEY           = 'evenchess-board-markers';
+const ALIGNMENT_KEY         = 'evenchess-board-alignment';
+const SIZE_KEY              = 'evenchess-board-size';
+const PLAY_AS_KEY           = 'evenchess-play-as';
 
 // --- Storage adapter ---
 
@@ -57,7 +65,24 @@ export async function saveDifficulty(difficulty: DifficultyLevel): Promise<void>
 
 export async function loadDifficulty(): Promise<DifficultyLevel> {
   const value = await _get(DIFFICULTY_KEY);
-  return (value as DifficultyLevel | null) ?? 'casual';
+  if (value === 'easy' || value === 'casual' || value === 'serious' || value === 'custom') {
+    return value;
+  }
+  return 'casual';
+}
+
+export async function saveCustomSkillLevel(level: number): Promise<void> {
+  await _set(CUSTOM_SKILL_KEY, String(level));
+}
+
+export async function loadCustomSkillLevel(): Promise<number> {
+  const raw = await _get(CUSTOM_SKILL_KEY);
+  if (raw == null) return CUSTOM_SKILL_LEVEL_DEFAULT;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return CUSTOM_SKILL_LEVEL_DEFAULT;
+  if (parsed < CUSTOM_SKILL_LEVEL_MIN) return CUSTOM_SKILL_LEVEL_MIN;
+  if (parsed > CUSTOM_SKILL_LEVEL_MAX) return CUSTOM_SKILL_LEVEL_MAX;
+  return parsed;
 }
 
 export async function saveBoardMarkers(showBoardMarkers: boolean): Promise<void> {
@@ -102,8 +127,9 @@ export async function saveGame(
   turn: 'w' | 'b',
   difficulty: DifficultyLevel = 'casual',
   playerColor: PlayerColor = 'w',
+  customSkillLevel?: number,
 ): Promise<void> {
-  const saved: SavedGame = { fen, history, turn, difficulty, playerColor, savedAt: Date.now() };
+  const saved: SavedGame = { fen, history, turn, difficulty, playerColor, customSkillLevel, savedAt: Date.now() };
   try {
     await _set(GAME_KEY, JSON.stringify(saved));
     console.log('[Persistence] Game saved');

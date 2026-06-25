@@ -16,7 +16,7 @@ function createState(overrides?: Partial<GameState>): GameState {
     lastMoveToSquare: null, playerLastMoveToSquare: null, engineThinking: false,
     inCheck: false, gameOver: null, pendingMove: null, menuSelectedIndex: 0,
     hasUnsavedChanges: false, previousPhase: null, difficulty: 'casual',
-    logScrollOffset: 0, phaseEnteredAt: Date.now(), timerActive: false,
+    customSkillLevel: 5, logScrollOffset: 0, phaseEnteredAt: Date.now(), timerActive: false,
     lastTickTime: null, selectedTimeControlIndex: 2, showBoardMarkers: true,
     playAs: 'white', playerColor: 'w', ...overrides,
   };

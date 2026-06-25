@@ -65,8 +65,8 @@ export const DRILL_LABELS: readonly string[] = [
 ];
 export const DRILL_OPTION_COUNT = DRILL_OPTIONS.length;
 
-export const DIFFICULTY_OPTIONS: DifficultyLevel[] = ['easy', 'casual', 'serious'];
-export const DIFFICULTY_LABELS: readonly string[] = ['Easy', 'Casual', 'Serious'];
+export const DIFFICULTY_OPTIONS: DifficultyLevel[] = ['easy', 'casual', 'serious', 'custom'];
+export const DIFFICULTY_LABELS: readonly string[] = ['Easy', 'Casual', 'Serious', 'Custom'];
 export const DIFFICULTY_OPTION_COUNT = DIFFICULTY_OPTIONS.length;
 
 export const PLAY_AS_OPTIONS: readonly ('white' | 'black' | 'random')[] = ['white', 'black', 'random'];

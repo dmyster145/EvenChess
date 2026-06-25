@@ -39,6 +39,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     hasUnsavedChanges: false,
     previousPhase: null,
     difficulty: 'casual',
+    customSkillLevel: 5,
     logScrollOffset: 0,
     phaseEnteredAt: Date.now(),
     timerActive: false,

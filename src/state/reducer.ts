@@ -7,6 +7,7 @@
  */
 
 import type { GameState, Action, PieceEntry, UIPhase, MenuOption, GameMode, DrillType } from './contracts';
+import { CUSTOM_SKILL_LEVEL_MIN, CUSTOM_SKILL_LEVEL_MAX } from './contracts';
 import {
   MENU_OPTIONS,
   MENU_OPTION_COUNT,
@@ -219,6 +220,12 @@ export function reduce(state: GameState, action: Action): GameState {
         menuSelectedIndex: 0,
       };
 
+    case 'SET_CUSTOM_SKILL_LEVEL': {
+      const clamped = clampCustomSkill(action.value);
+      if (clamped === state.customSkillLevel) return state;
+      return { ...state, customSkillLevel: clamped };
+    }
+
     case 'SET_BOARD_MARKERS':
       return {
         ...state,
@@ -306,10 +313,18 @@ function initialPieceForRowSelect(state: GameState): PieceEntry | null {
  * - destSelect: order = piece.moves (destination squares rank then file).
  */
 const SETTINGS_PHASES = new Set([
-  'menu', 'exitConfirm', 'resetConfirm', 'difficultySelect', 'boardMarkersSelect',
-  'displayOptionsSelect', 'boardAlignmentSelect', 'boardSizeSelect', 'playAsSelect',
-  'modeSelect', 'bulletSetup', 'academySelect',
+  'menu', 'exitConfirm', 'resetConfirm', 'difficultySelect', 'customDifficultySelect',
+  'boardMarkersSelect', 'displayOptionsSelect', 'boardAlignmentSelect', 'boardSizeSelect',
+  'playAsSelect', 'modeSelect', 'bulletSetup', 'academySelect',
 ]);
+
+function clampCustomSkill(value: number): number {
+  if (!Number.isFinite(value)) return CUSTOM_SKILL_LEVEL_MIN;
+  const rounded = Math.round(value);
+  if (rounded < CUSTOM_SKILL_LEVEL_MIN) return CUSTOM_SKILL_LEVEL_MIN;
+  if (rounded > CUSTOM_SKILL_LEVEL_MAX) return CUSTOM_SKILL_LEVEL_MAX;
+  return rounded;
+}
 
 function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
   // Invert scroll direction in settings/menu screens vs gameplay
@@ -409,6 +424,15 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
           ? (idx + 1) % DIFFICULTY_OPTION_COUNT
           : (idx - 1 + DIFFICULTY_OPTION_COUNT) % DIFFICULTY_OPTION_COUNT;
       return { ...state, menuSelectedIndex: next };
+    }
+
+    case 'customDifficultySelect': {
+      // Picker bounds are clamped — no wraparound, so 9 + down stays at 9.
+      // Inversion is already applied above via SETTINGS_PHASES; here 'down' = next = higher number.
+      const next = d === 'down'
+        ? Math.min(CUSTOM_SKILL_LEVEL_MAX, state.customSkillLevel + 1)
+        : Math.max(CUSTOM_SKILL_LEVEL_MIN, state.customSkillLevel - 1);
+      return next === state.customSkillLevel ? state : { ...state, customSkillLevel: next };
     }
 
     case 'boardMarkersSelect': {
@@ -700,9 +724,26 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
 
     case 'difficultySelect': {
       const selectedDifficulty = DIFFICULTY_OPTIONS[state.menuSelectedIndex] ?? 'casual';
+      // Custom routes into a picker for the numeric level; named tiers commit directly.
+      if (selectedDifficulty === 'custom') {
+        return {
+          ...state,
+          phase: 'customDifficultySelect',
+        };
+      }
       return {
         ...state,
         difficulty: selectedDifficulty,
+        phase: 'menu',
+        menuSelectedIndex: MENU_INDEX.DIFFICULTY,
+      };
+    }
+
+    case 'customDifficultySelect': {
+      // Tap commits the current picker value as the active difficulty.
+      return {
+        ...state,
+        difficulty: 'custom',
         phase: 'menu',
         menuSelectedIndex: MENU_INDEX.DIFFICULTY,
       };
@@ -878,6 +919,14 @@ function handleDoubleTap(state: GameState): GameState {
     case 'difficultySelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.DIFFICULTY };
 
+    case 'customDifficultySelect':
+      // Back out to the tier selector with Custom highlighted so the user can re-pick.
+      return {
+        ...state,
+        phase: 'difficultySelect',
+        menuSelectedIndex: DIFFICULTY_OPTIONS.indexOf('custom'),
+      };
+
     case 'playAsSelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.PLAY_AS };
 
@@ -1026,7 +1075,7 @@ function handleOpenMenu(state: GameState): GameState {
 
   // Preserve original phase when navigating within menu sub-screens
   const previousPhase: UIPhase =
-    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'boardMarkersSelect' || state.phase === 'displayOptionsSelect' || state.phase === 'boardAlignmentSelect' || state.phase === 'boardSizeSelect' || state.phase === 'playAsSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
+    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'customDifficultySelect' || state.phase === 'boardMarkersSelect' || state.phase === 'displayOptionsSelect' || state.phase === 'boardAlignmentSelect' || state.phase === 'boardSizeSelect' || state.phase === 'playAsSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
       ? (state.previousPhase ?? 'idle')
       : state.phase;
 

@@ -21,9 +21,9 @@ import type { FlushController } from './flush';
 import type { BrandingController } from './branding';
 import type { BulletTimerController } from './bullet-timer';
 import type { AutosaveController } from './autosave';
-import { saveGame, saveDifficulty, saveBoardMarkers, saveBoardSize, saveBoardAlignment, savePlayAs, clearSave } from '../storage/persistence';
+import { saveGame, saveDifficulty, saveCustomSkillLevel, saveBoardMarkers, saveBoardSize, saveBoardAlignment, savePlayAs, clearSave } from '../storage/persistence';
 import { resolvePlayerColor } from '../state/utils';
-import { PROFILE_BY_DIFFICULTY } from '../engine/profiles';
+import { getEngineProfile } from '../engine/profiles';
 import { extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from '../input/actions';
 import { composePageForState } from '../render/composer';
 import { BoardRenderer as BoardRendererClass } from '../render/boardimage';
@@ -39,6 +39,7 @@ const SUBMENU_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'bulletSetup',
   'academySelect',
   'difficultySelect',
+  'customDifficultySelect',
   'boardMarkersSelect',
   'displayOptionsSelect',
   'boardAlignmentSelect',
@@ -105,12 +106,22 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
     }
 
     // Difficulty change → persist + reconfigure engine + persist current save.
-    if (state.difficulty !== prevState.difficulty) {
-      const profile = PROFILE_BY_DIFFICULTY[state.difficulty] ?? PROFILE_BY_DIFFICULTY['casual'];
+    // Either the tier OR the custom level can change while staying on 'custom'; both need
+    // to trigger an engine reconfigure since the latter alters skill/depth/movetime.
+    const difficultyShapeChanged =
+      state.difficulty !== prevState.difficulty ||
+      (state.difficulty === 'custom' && state.customSkillLevel !== prevState.customSkillLevel);
+    if (difficultyShapeChanged) {
+      const profile = getEngineProfile(state.difficulty, state.customSkillLevel);
       deps.turnLoop.setProfile(profile);
-      void saveDifficulty(state.difficulty);
+      if (state.difficulty !== prevState.difficulty) {
+        void saveDifficulty(state.difficulty);
+      }
+      if (state.customSkillLevel !== prevState.customSkillLevel) {
+        void saveCustomSkillLevel(state.customSkillLevel);
+      }
       if (state.history.length > 0) {
-        void saveGame(state.fen, state.history, state.turn, state.difficulty, state.playerColor);
+        void saveGame(state.fen, state.history, state.turn, state.difficulty, state.playerColor, state.customSkillLevel);
       }
     }
 

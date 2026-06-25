@@ -374,9 +374,29 @@ export function getDifficultyDisplayText(state: GameState): string {
 
   DIFFICULTY_LABELS.forEach((label, i) => {
     const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
-    const current = DIFFICULTY_OPTIONS[i] === state.difficulty ? ' *' : '';
-    lines.push(`${prefix}${label}${current}`);
+    const isActive = DIFFICULTY_OPTIONS[i] === state.difficulty;
+    const current = isActive ? ' *' : '';
+    // For the Custom row, show the active level inline so the user can see what they picked.
+    const suffix = DIFFICULTY_OPTIONS[i] === 'custom' && isActive
+      ? ` (${state.customSkillLevel})`
+      : '';
+    lines.push(`${prefix}${label}${suffix}${current}`);
   });
+
+  return lines.join('\n');
+}
+
+export function getCustomDifficultyDisplayText(state: GameState): string {
+  const level = state.customSkillLevel;
+  const lines: string[] = ['', 'CUSTOM DIFFICULTY'];
+  lines.push(`  Level: ${ARROW_LEFT} ${level} ${ARROW_RIGHT}   (0–9)`);
+  lines.push('  Tap to confirm');
+  lines.push('');
+  lines.push('  0–1: Beginner');
+  lines.push('  2–3: Easy');
+  lines.push('  4–5: Casual');
+  lines.push('  6–7: Strong');
+  lines.push('  8–9: Expert');
 
   return lines.join('\n');
 }
@@ -707,6 +727,8 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
       return getLogDisplayText(state);
     case 'difficultySelect':
       return getDifficultyDisplayText(state);
+    case 'customDifficultySelect':
+      return getCustomDifficultyDisplayText(state);
     case 'boardMarkersSelect':
       return getBoardMarkersDisplayText(state);
     case 'displayOptionsSelect':

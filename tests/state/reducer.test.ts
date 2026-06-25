@@ -51,6 +51,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     hasUnsavedChanges: false,
     previousPhase: null,
     difficulty: 'casual',
+    customSkillLevel: 5,
     logScrollOffset: 0,
     phaseEnteredAt: Date.now(),
     timerActive: false,
@@ -496,6 +497,44 @@ describe('reducer', () => {
     });
   });
 
+  describe('custom difficulty picker', () => {
+    it('tapping Custom in difficultySelect opens the picker phase', () => {
+      // Custom is index 3 in DIFFICULTY_OPTIONS (Easy, Casual, Serious, Custom).
+      const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 3, customSkillLevel: 4 });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.phase).toBe('customDifficultySelect');
+      // Picker keeps the prior level until the user adjusts it.
+      expect(next.customSkillLevel).toBe(4);
+    });
+
+    it('scrolling adjusts the picker without wrap; clamps at bounds', () => {
+      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 8 });
+      // Settings phase: scroll direction is inverted; 'up' = next = higher level.
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
+      expect(next.customSkillLevel).toBe(9);
+      const clamped = reduce(next, { type: 'SCROLL', direction: 'up' });
+      expect(clamped.customSkillLevel).toBe(9); // clamps at MAX
+      const back = reduce(clamped, { type: 'SCROLL', direction: 'down' });
+      expect(back.customSkillLevel).toBe(8);
+    });
+
+    it('tapping in the picker commits Custom and returns to menu', () => {
+      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 7, difficulty: 'casual' });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.phase).toBe('menu');
+      expect(next.difficulty).toBe('custom');
+      expect(next.customSkillLevel).toBe(7);
+    });
+
+    it('double-tap in the picker returns to difficultySelect with Custom highlighted', () => {
+      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 3 });
+      const next = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(next.phase).toBe('difficultySelect');
+      expect(next.menuSelectedIndex).toBe(3); // Custom's index in DIFFICULTY_OPTIONS
+      expect(next.customSkillLevel).toBe(3); // picker value preserved
+    });
+  });
+
   describe('SET_BOARD_MARKERS', () => {
     it('enables board markers', () => {
       const state = createTestState({ phase: 'boardMarkersSelect', showBoardMarkers: false });
@@ -514,12 +553,15 @@ describe('reducer', () => {
   describe('difficulty and board markers scroll', () => {
     it('cycles difficulty options', () => {
       // Settings phase: scroll direction inverted; `up` advances forward.
+      // Options are Easy, Casual, Serious, Custom (4 entries, wraps back to 0).
       const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 0 });
       const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.menuSelectedIndex).toBe(1);
       const next2 = reduce(next, { type: 'SCROLL', direction: 'up' });
       expect(next2.menuSelectedIndex).toBe(2);
-      const wrapped = reduce(next2, { type: 'SCROLL', direction: 'up' });
+      const next3 = reduce(next2, { type: 'SCROLL', direction: 'up' });
+      expect(next3.menuSelectedIndex).toBe(3);
+      const wrapped = reduce(next3, { type: 'SCROLL', direction: 'up' });
       expect(wrapped.menuSelectedIndex).toBe(0);
     });
 
