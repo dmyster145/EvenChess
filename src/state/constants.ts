@@ -5,36 +5,32 @@
 import type { MenuOption, DifficultyLevel, GameMode, DrillType } from './contracts';
 
 // Menu options and labels are parallel arrays
-export const MENU_OPTIONS: MenuOption[] = ['playAs', 'mode', 'boardMarkers', 'viewLog', 'difficulty', 'displayOptions', 'reset', 'exit'];
-export const MENU_LABELS: readonly string[] = ['Play As', 'Mode', 'Board Markers', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit Menu'];
+export const MENU_OPTIONS: MenuOption[] = ['playAs', 'mode', 'viewLog', 'difficulty', 'displayOptions', 'reset', 'exit'];
+export const MENU_LABELS: readonly string[] = ['Play As', 'Mode', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit'];
 export const MENU_OPTION_COUNT = MENU_OPTIONS.length;
 
 export const MENU_INDEX = {
   PLAY_AS: 0,
   MODE: 1,
-  BOARD_MARKERS: 2,
-  VIEW_LOG: 3,
-  DIFFICULTY: 4,
-  DISPLAY_OPTIONS: 5,
-  RESET: 6,
-  EXIT: 7,
+  VIEW_LOG: 2,
+  DIFFICULTY: 3,
+  DISPLAY_OPTIONS: 4,
+  RESET: 5,
+  EXIT: 6,
 } as const;
 
-export const DISPLAY_OPTIONS_OPTIONS: readonly string[] = ['alignment', 'size'];
-export const DISPLAY_OPTIONS_LABELS: readonly string[] = ['Alignment', 'Size'];
+export const DISPLAY_OPTIONS_OPTIONS: readonly string[] = ['alignment', 'size', 'markers'];
+export const DISPLAY_OPTIONS_LABELS: readonly string[] = ['Alignment', 'Size', 'Board Markers'];
 export const DISPLAY_OPTIONS_OPTION_COUNT = DISPLAY_OPTIONS_OPTIONS.length;
+export const DISPLAY_OPTIONS_INDEX = {
+  ALIGNMENT: 0,
+  SIZE: 1,
+  MARKERS: 2,
+} as const;
 
-export const BOARD_ALIGNMENT_OPTIONS: readonly ('center' | 'right')[] = ['center', 'right'];
-export const BOARD_ALIGNMENT_LABELS: readonly string[] = ['Center', 'Right'];
-export const BOARD_ALIGNMENT_OPTION_COUNT = BOARD_ALIGNMENT_OPTIONS.length;
-
-export const BOARD_SIZE_OPTIONS: readonly ('small' | 'large')[] = ['small', 'large'];
-export const BOARD_SIZE_LABELS: readonly string[] = ['Small', 'Large'];
-export const BOARD_SIZE_OPTION_COUNT = BOARD_SIZE_OPTIONS.length;
-
-export const BOARD_MARKERS_OPTIONS: readonly ('on' | 'off')[] = ['on', 'off'];
-export const BOARD_MARKERS_LABELS: readonly string[] = ['On', 'Off'];
-export const BOARD_MARKERS_OPTION_COUNT = BOARD_MARKERS_OPTIONS.length;
+// Board alignment/size/markers are binary toggles flipped directly from the Display Options menu
+// (no sub-menu), so only the option key sets in DISPLAY_OPTIONS_OPTIONS are needed here; the
+// value↔label mapping lives inline in selectors' displayOptionValue().
 
 export const MODE_OPTIONS: GameMode[] = ['play', 'bullet', 'academy'];
 export const MODE_LABELS: readonly string[] = ['Play vs AI', 'Bullet Blitz', 'Academy'];

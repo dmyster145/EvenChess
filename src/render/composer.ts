@@ -14,15 +14,28 @@ import type { GameState } from '../state/contracts';
 import { getCombinedDisplayText } from '../state/selectors';
 import { DISPLAY_WIDTH } from '../state/constants';
 
-const CONTAINER_ID_TEXT = 1;
-const CONTAINER_ID_IMAGE_TOP = 2;
-const CONTAINER_ID_IMAGE_BOTTOM = 3;
-const CONTAINER_ID_BRAND = 4;
+// Master toggle for the invisible gesture-capture container. When true, an invisible
+// full-screen text container (isEventCapture:1) sits behind everything and receives all
+// touch/scroll gestures, so the firmware never re-anchors/scrolls the VISIBLE menu text as
+// you swipe. Kept as a one-line flag so image-loading can be A/B isolated against it without
+// touching the rest of the layout: flip to false → single visible capture container (the
+// original known-good layout, image IDs 2/3/4).
+const USE_INPUT_CAPTURE_CONTAINER = true;
+
+// Container IDs. Draw order follows ascending containerID (lower = drawn first = behind), so the
+// INPUT capture container takes the lowest ID to render behind the visible HUD/board. When the
+// capture container is disabled the visible text reclaims ID 1 and images fall back to 2/3/4.
+const CONTAINER_ID_INPUT = 1;
+const CONTAINER_ID_TEXT = USE_INPUT_CAPTURE_CONTAINER ? 2 : 1;
+const CONTAINER_ID_IMAGE_TOP = USE_INPUT_CAPTURE_CONTAINER ? 3 : 2;
+const CONTAINER_ID_IMAGE_BOTTOM = USE_INPUT_CAPTURE_CONTAINER ? 4 : 3;
+const CONTAINER_ID_BRAND = USE_INPUT_CAPTURE_CONTAINER ? 5 : 4;
 
 const CONTAINER_NAME_TEXT = 'chess-hud';
 const CONTAINER_NAME_IMAGE_TOP = 'board-top';
 const CONTAINER_NAME_IMAGE_BOTTOM = 'board-bot';
 const CONTAINER_NAME_BRAND = 'brand';
+const CONTAINER_NAME_INPUT = 'input';
 
 // Shared constants (unchanged across layouts)
 const DISPLAY_HEIGHT = 288;
@@ -84,6 +97,32 @@ export function getBoardLayout(state: GameState): BoardLayout {
 
 // ---------------------------------------------------------------------------
 
+// The visible HUD/board containers only capture events when the dedicated INPUT container is off.
+const VISIBLE_EVENT_CAPTURE = USE_INPUT_CAPTURE_CONTAINER ? 0 : 1;
+
+/**
+ * Invisible full-screen gesture-capture container. Full display size (not a small box) so the
+ * firmware never renders a scroll indicator on it; content is a single space so nothing shows.
+ * Its lowest containerID draws it behind the visible HUD/board. All visible containers set
+ * isEventCapture:0 so their gestures fall through to this one — the firmware then never re-anchors
+ * the visible menu text on swipe.
+ */
+function buildInputCaptureContainer(): TextContainerProperty {
+  return new TextContainerProperty({
+    xPosition: 0,
+    yPosition: 0,
+    width: DISPLAY_WIDTH,
+    height: DISPLAY_HEIGHT,
+    borderWidth: 0,
+    borderColor: 0,
+    paddingLength: 0,
+    containerID: CONTAINER_ID_INPUT,
+    containerName: CONTAINER_NAME_INPUT,
+    content: ' ',
+    isEventCapture: 1,
+  });
+}
+
 /**
  * Startup layout with text + optional brand only (full-width text, no board image slots).
  * Used for text-first BLE bring-up; `upgradeToFullLayout` later calls `composePageForState`.
@@ -92,7 +131,9 @@ function buildTextOnlyContainers(state: GameState): ContainerSet {
   const TEXT_Y = BRAND_HEIGHT + 20 + 4;
   const textWidth = DISPLAY_WIDTH;
 
-  const textObjects: TextContainerProperty[] = [
+  const textObjects: TextContainerProperty[] = [];
+  if (USE_INPUT_CAPTURE_CONTAINER) textObjects.push(buildInputCaptureContainer());
+  textObjects.push(
     new TextContainerProperty({
       xPosition: 0,
       yPosition: TEXT_Y,
@@ -101,9 +142,9 @@ function buildTextOnlyContainers(state: GameState): ContainerSet {
       containerID: CONTAINER_ID_TEXT,
       containerName: CONTAINER_NAME_TEXT,
       content: getCombinedDisplayText(state),
-      isEventCapture: 1,
+      isEventCapture: VISIBLE_EVENT_CAPTURE,
     }),
-  ];
+  );
 
   const imageObjects: ImageContainerProperty[] = [];
   const brandX = Math.floor((textWidth - BRAND_WIDTH) / 2);
@@ -166,6 +207,7 @@ function buildContainers(state: GameState): ContainerSet {
   // The brand/captured strip moved above the board (right column), so the left text
   // column's top is now free — start the HUD/menu near the top of the display.
   const TEXT_Y = 8;
+  if (USE_INPUT_CAPTURE_CONTAINER) textObjects.push(buildInputCaptureContainer());
   textObjects.push(
     new TextContainerProperty({
       xPosition: 0,
@@ -175,7 +217,7 @@ function buildContainers(state: GameState): ContainerSet {
       containerID: CONTAINER_ID_TEXT,
       containerName: CONTAINER_NAME_TEXT,
       content: getCombinedDisplayText(state),
-      isEventCapture: 1,
+      isEventCapture: VISIBLE_EVENT_CAPTURE,
     }),
   );
 

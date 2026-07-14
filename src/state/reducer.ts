@@ -14,14 +14,9 @@ import {
   MENU_INDEX,
   DIFFICULTY_OPTIONS,
   DIFFICULTY_OPTION_COUNT,
-  BOARD_MARKERS_OPTIONS,
-  BOARD_MARKERS_OPTION_COUNT,
   DISPLAY_OPTIONS_OPTIONS,
   DISPLAY_OPTIONS_OPTION_COUNT,
-  BOARD_ALIGNMENT_OPTIONS,
-  BOARD_ALIGNMENT_OPTION_COUNT,
-  BOARD_SIZE_OPTIONS,
-  BOARD_SIZE_OPTION_COUNT,
+  DISPLAY_OPTIONS_INDEX,
   PLAY_AS_OPTIONS,
   PLAY_AS_OPTION_COUNT,
   LOG_MAX_VISIBLE,
@@ -226,30 +221,6 @@ export function reduce(state: GameState, action: Action): GameState {
       return { ...state, customSkillLevel: clamped };
     }
 
-    case 'SET_BOARD_MARKERS':
-      return {
-        ...state,
-        showBoardMarkers: action.enabled,
-        phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.BOARD_MARKERS,
-      };
-
-    case 'SET_BOARD_ALIGNMENT':
-      return {
-        ...state,
-        boardAlignment: action.alignment,
-        phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
-      };
-
-    case 'SET_BOARD_SIZE':
-      return {
-        ...state,
-        boardSize: action.size,
-        phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
-      };
-
     case 'SET_PLAYER_COLOR':
       return state.playerColor === action.color ? state : { ...state, playerColor: action.color };
 
@@ -314,8 +285,7 @@ function initialPieceForRowSelect(state: GameState): PieceEntry | null {
  */
 const SETTINGS_PHASES = new Set([
   'menu', 'exitConfirm', 'resetConfirm', 'difficultySelect', 'customDifficultySelect',
-  'boardMarkersSelect', 'displayOptionsSelect', 'boardAlignmentSelect', 'boardSizeSelect',
-  'playAsSelect', 'modeSelect', 'bulletSetup', 'academySelect',
+  'displayOptionsSelect', 'playAsSelect', 'modeSelect', 'bulletSetup', 'academySelect',
 ]);
 
 function clampCustomSkill(value: number): number {
@@ -400,16 +370,10 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
 
     case 'menu': {
       const idx = state.menuSelectedIndex;
-      let next =
+      const next =
         d === 'down'
           ? (idx + 1) % MENU_OPTION_COUNT
           : (idx - 1 + MENU_OPTION_COUNT) % MENU_OPTION_COUNT;
-      // Skip boardMarkers when large board is active (markers are disabled in large mode)
-      if (state.boardSize === 'large' && next === MENU_INDEX.BOARD_MARKERS) {
-        next = d === 'down'
-          ? (next + 1) % MENU_OPTION_COUNT
-          : (next - 1 + MENU_OPTION_COUNT) % MENU_OPTION_COUNT;
-      }
       return { ...state, menuSelectedIndex: next };
     }
 
@@ -435,39 +399,18 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       return next === state.customSkillLevel ? state : { ...state, customSkillLevel: next };
     }
 
-    case 'boardMarkersSelect': {
-      const idx = state.menuSelectedIndex;
-      const next =
-        d === 'down'
-          ? (idx + 1) % BOARD_MARKERS_OPTION_COUNT
-          : (idx - 1 + BOARD_MARKERS_OPTION_COUNT) % BOARD_MARKERS_OPTION_COUNT;
-      return { ...state, menuSelectedIndex: next };
-    }
-
     case 'displayOptionsSelect': {
       const idx = state.menuSelectedIndex;
-      const next =
+      let next =
         d === 'down'
           ? (idx + 1) % DISPLAY_OPTIONS_OPTION_COUNT
           : (idx - 1 + DISPLAY_OPTIONS_OPTION_COUNT) % DISPLAY_OPTIONS_OPTION_COUNT;
-      return { ...state, menuSelectedIndex: next };
-    }
-
-    case 'boardAlignmentSelect': {
-      const idx = state.menuSelectedIndex;
-      const next =
-        d === 'down'
-          ? (idx + 1) % BOARD_ALIGNMENT_OPTION_COUNT
-          : (idx - 1 + BOARD_ALIGNMENT_OPTION_COUNT) % BOARD_ALIGNMENT_OPTION_COUNT;
-      return { ...state, menuSelectedIndex: next };
-    }
-
-    case 'boardSizeSelect': {
-      const idx = state.menuSelectedIndex;
-      const next =
-        d === 'down'
-          ? (idx + 1) % BOARD_SIZE_OPTION_COUNT
-          : (idx - 1 + BOARD_SIZE_OPTION_COUNT) % BOARD_SIZE_OPTION_COUNT;
+      // Markers are disabled in large-board mode — skip that row when navigating.
+      if (state.boardSize === 'large' && next === DISPLAY_OPTIONS_INDEX.MARKERS) {
+        next = d === 'down'
+          ? (next + 1) % DISPLAY_OPTIONS_OPTION_COUNT
+          : (next - 1 + DISPLAY_OPTIONS_OPTION_COUNT) % DISPLAY_OPTIONS_OPTION_COUNT;
+      }
       return { ...state, menuSelectedIndex: next };
     }
 
@@ -749,50 +692,19 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
       };
     }
 
-    case 'boardMarkersSelect': {
-      const selectedOption = BOARD_MARKERS_OPTIONS[state.menuSelectedIndex] ?? 'on';
-      return {
-        ...state,
-        showBoardMarkers: selectedOption === 'on',
-        phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.BOARD_MARKERS,
-      };
-    }
-
     case 'displayOptionsSelect': {
+      // Each Display Option is binary, so a tap toggles it in place — no sub-menu. Stay on the
+      // same row so the user can flip it and immediately see the effect (board re-renders behind
+      // the menu). Persistence + layout side effects fire on the value change in side-effects.ts.
       const selected = DISPLAY_OPTIONS_OPTIONS[state.menuSelectedIndex];
       if (selected === 'alignment') {
-        return {
-          ...state,
-          phase: 'boardAlignmentSelect',
-          menuSelectedIndex: BOARD_ALIGNMENT_OPTIONS.indexOf(state.boardAlignment),
-        };
+        return { ...state, boardAlignment: state.boardAlignment === 'center' ? 'right' : 'center' };
       }
-      return {
-        ...state,
-        phase: 'boardSizeSelect',
-        menuSelectedIndex: BOARD_SIZE_OPTIONS.indexOf(state.boardSize),
-      };
-    }
-
-    case 'boardAlignmentSelect': {
-      const selectedAlignment = BOARD_ALIGNMENT_OPTIONS[state.menuSelectedIndex] ?? 'right';
-      return {
-        ...state,
-        boardAlignment: selectedAlignment,
-        phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
-      };
-    }
-
-    case 'boardSizeSelect': {
-      const selectedSize = BOARD_SIZE_OPTIONS[state.menuSelectedIndex] ?? 'small';
-      return {
-        ...state,
-        boardSize: selectedSize,
-        phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS,
-      };
+      if (selected === 'size') {
+        return { ...state, boardSize: state.boardSize === 'small' ? 'large' : 'small' };
+      }
+      // markers
+      return { ...state, showBoardMarkers: !state.showBoardMarkers };
     }
 
     case 'playAsSelect': {
@@ -902,10 +814,11 @@ function handleDoubleTap(state: GameState): GameState {
       return { ...state, phase: 'destSelect', pendingPromotionMove: null };
 
     case 'menu':
-      // Per ER guidance, double-tap in the settings menu surfaces the system "End this feature?"
-      // dialog. The app subscriber sees this flag and calls bridge.shutDownPageContainer(1).
-      // Stay in the menu phase: if the user cancels the system dialog the app is still on the menu.
-      return { ...state, pendingSystemExitDialog: true };
+      // Double-tap in the settings menu backs out to the game (consistent with double-tap =
+      // back-one-level everywhere else). App exit is the menu's tappable "Exit" item, NOT this
+      // gesture — see handleMenuSelect 'exit'. Keeping double-tap as a safe close means a stray
+      // double-tap in the menu can't trip the shutDownPageContainer(1) image-channel defect.
+      return handleCloseMenu(state);
 
     case 'viewLog':
       return { ...state, phase: 'menu', menuSelectedIndex: 0 };
@@ -930,15 +843,8 @@ function handleDoubleTap(state: GameState): GameState {
     case 'playAsSelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.PLAY_AS };
 
-    case 'boardMarkersSelect':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.BOARD_MARKERS };
-
     case 'displayOptionsSelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS };
-
-    case 'boardAlignmentSelect':
-    case 'boardSizeSelect':
-      return { ...state, phase: 'displayOptionsSelect', menuSelectedIndex: 0 };
 
     case 'modeSelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.MODE };
@@ -1075,7 +981,7 @@ function handleOpenMenu(state: GameState): GameState {
 
   // Preserve original phase when navigating within menu sub-screens
   const previousPhase: UIPhase =
-    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'customDifficultySelect' || state.phase === 'boardMarkersSelect' || state.phase === 'displayOptionsSelect' || state.phase === 'boardAlignmentSelect' || state.phase === 'boardSizeSelect' || state.phase === 'playAsSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
+    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'customDifficultySelect' || state.phase === 'displayOptionsSelect' || state.phase === 'playAsSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
       ? (state.previousPhase ?? 'idle')
       : state.phase;
 
@@ -1109,13 +1015,6 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
         ...state,
         phase: 'modeSelect',
         menuSelectedIndex: MODE_OPTIONS.indexOf(state.mode),
-      };
-
-    case 'boardMarkers':
-      return {
-        ...state,
-        phase: 'boardMarkersSelect',
-        menuSelectedIndex: state.showBoardMarkers ? 0 : 1,
       };
 
     case 'displayOptions':
@@ -1158,11 +1057,13 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
       };
 
     case 'exit':
-      // "Exit Menu" closes the settings menu and returns to the previous phase. Autosave handles
-      // state durability (debounced after every move), so there's no need for the prior
-      // "Save & Exit / Cancel" sub-dialog — it was misleading: the user wasn't exiting the app,
-      // just the menu. Use double-tap in the menu to exit the app via the ER system dialog.
-      return handleCloseMenu(state);
+      // Tapping "Exit" fires the ER system exit-confirmation dialog — this is the documented
+      // reference pattern for a menu-based app (ER QA guidelines name Chess: "root double-tap opens
+      // an in-app menu containing an 'Exit' item that then calls shutDownPageContainer(1)"). The
+      // flag is observed by side-effects.ts, which calls bridge.requestSystemExit(). Stay in the
+      // menu phase so cancelling ("No") leaves the user where they were. To just close the menu and
+      // return to the game, double-tap (handleDoubleTap 'menu').
+      return { ...state, pendingSystemExitDialog: true };
 
     default:
       return state;

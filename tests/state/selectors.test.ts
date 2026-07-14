@@ -9,7 +9,7 @@ import {
   getCarouselDisplayText,
   getMenuDisplayText,
   getDifficultyDisplayText,
-  getBoardMarkersDisplayText,
+  getDisplayOptionsDisplayText,
   getLogDisplayText,
   getResetConfirmDisplayText,
   getExitConfirmDisplayText,
@@ -567,11 +567,13 @@ describe('selectors', () => {
       const state = createTestState({ phase: 'menu' });
       const text = getMenuDisplayText(state);
       expect(text).toContain('Mode');
-      expect(text).toContain('Board Markers');
       expect(text).toContain('View Log');
       expect(text).toContain('Difficulty');
+      expect(text).toContain('Display Options');
       expect(text).toContain('Reset');
       expect(text).toContain('Exit');
+      // Board Markers now lives under Display Options, not the top-level menu.
+      expect(text).not.toContain('Board Markers');
     });
   });
 
@@ -601,24 +603,38 @@ describe('selectors', () => {
 
   // ── Board Markers Display Text Tests ────────────────────────────────────────
 
-  describe('getBoardMarkersDisplayText', () => {
-    it('shows BOARD MARKERS header', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect' });
-      const text = getBoardMarkersDisplayText(state);
-      expect(text).toContain('BOARD MARKERS');
+  describe('getDisplayOptionsDisplayText', () => {
+    it('shows DISPLAY OPTIONS header and all three rows with inline values', () => {
+      const state = createTestState({
+        phase: 'displayOptionsSelect',
+        boardAlignment: 'right',
+        boardSize: 'small',
+        showBoardMarkers: true,
+      });
+      const text = getDisplayOptionsDisplayText(state);
+      expect(text).toContain('DISPLAY OPTIONS');
+      expect(text).toContain('Alignment: Right');
+      expect(text).toContain('Size: Small');
+      expect(text).toContain('Board Markers: On');
     });
 
-    it('shows On and Off options', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect' });
-      const text = getBoardMarkersDisplayText(state);
-      expect(text).toContain('On');
-      expect(text).toContain('Off');
+    it('reflects toggled values inline', () => {
+      const state = createTestState({
+        phase: 'displayOptionsSelect',
+        boardAlignment: 'center',
+        boardSize: 'small',
+        showBoardMarkers: false,
+      });
+      const text = getDisplayOptionsDisplayText(state);
+      expect(text).toContain('Alignment: Center');
+      expect(text).toContain('Board Markers: Off');
     });
 
-    it('marks current setting with *', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect', showBoardMarkers: false });
-      const text = getBoardMarkersDisplayText(state);
-      expect(text).toContain('Off *');
+    it('hides the Board Markers row when the board is large', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect', boardSize: 'large' });
+      const text = getDisplayOptionsDisplayText(state);
+      expect(text).toContain('Size: Large');
+      expect(text).not.toContain('Board Markers');
     });
   });
 
@@ -888,10 +904,10 @@ describe('selectors', () => {
       expect(text).toContain('DIFFICULTY');
     });
 
-    it('returns board markers display text for boardMarkersSelect', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect' });
+    it('returns display options text for displayOptionsSelect', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect' });
       const text = getCombinedDisplayText(state);
-      expect(text).toContain('BOARD MARKERS');
+      expect(text).toContain('DISPLAY OPTIONS');
     });
 
     it('returns mode select display text for modeSelect', () => {

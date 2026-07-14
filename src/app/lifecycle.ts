@@ -25,7 +25,6 @@ import type { BrandingController } from './branding';
 import type { BulletTimerController } from './bullet-timer';
 import type { AutosaveController } from './autosave';
 import { OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
-import { composePageForState } from '../render/composer';
 import { debugLog } from '../debug/logger';
 
 const SYS_EVENT_DEDUP_MS = 600;
@@ -138,28 +137,37 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
 
   // --- Exit-dialog handling (inverted polarity) ---
 
-  // NOTE: The exit-dialog handlers below are RUNTIME-DEAD while the dialog is suppressed in
-  // app.ts (isExitDialogEnabled() default off — ER SDK image-channel defect). They are kept,
-  // and written as the correct EvenRoads-style handling, so behavior is right the instant the
-  // dialog is re-enabled after ER ships an SDK fix. The earlier WebView-reload recovery was
-  // removed: on-device logs proved the host keeps the BLE session across location.reload(), so
-  // the image channel stayed dead AND the reload added a jarring ~2s blank — strictly worse.
+  // The exit dialog (menu double-tap → shutDownPageContainer(1)) is ENABLED for ER submission.
+  // CRITICAL: while it is on screen we must do NOTHING to the page/images — mirror the firmware
+  // long-press exit, which the app doesn't touch and which leaves the board intact. The earlier
+  // "rebuild the page on sys=4" step is what DECOMPOSED the board: rebuildPageContainer swaps the
+  // image containers to empty placeholders, and on this exit path the refills come back
+  // `sendFailed`, leaving a blank/broken board after "No". Not rebuilding keeps the firmware's
+  // last-rendered frame on screen. (An earlier WebView-reload recovery was also removed: the host
+  // keeps the BLE session across reload, so it didn't help and added a ~2s blank.)
 
-  /** sys=4 while exit dialog pending: dialog appeared, host cleared the page. Rebuild it. */
+  /** sys=4 while exit dialog pending: the dialog appeared. Leave the page ALONE (see note above). */
   function onExitDialogShown(): void {
-    debugLog('exit-dialog shown (sys=4) — rebuilding page', {}, 'LCY');
-    if (!deps.imageContainersActive()) return;
-    void deps.bridge.updatePage(composePageForState(deps.store.getState()));
+    debugLog('exit-dialog shown (sys=4) — leaving page untouched (board retained by firmware)', {}, 'LCY');
   }
 
-  /** sys=5 while exit dialog pending: user tapped "No". Keep running; re-render. Do NOT pause. */
+  /**
+   * sys=5 while exit dialog pending: user tapped "No". Keep running, and do NOTHING to the page or
+   * images — the firmware retains the last board frame (mirrors the working long-press exit).
+   *
+   * The image channel is dead here (shutDownPageContainer(1) tore it down for the native session)
+   * so the board can't update until a real app restart. We deliberately DON'T try to recover it:
+   *   - rebuild/reinit re-decompose the board (empty containers + failing refills),
+   *   - a WebView reload does NOT get a fresh channel (the native session keeps the dead one) AND
+   *     was observed to trigger a spurious sys=7 that exits the app — strictly worse.
+   * So we just clear the flag and schedule a gentle, diff-gated flush (unchanged board → no image
+   * sends), leaving the retained frame visible. See the exit-affordance note in app.ts for context.
+   */
   function onExitDialogCancelled(): void {
-    debugLog('exit-dialog cancelled (sys=5) — re-rendering, app stays alive', {}, 'LCY');
+    debugLog('exit-dialog cancelled (sys=5) — app stays alive, page left intact (board frozen, channel dead)', {}, 'LCY');
     deps.bridge.clearExitDialog();
-    deps.flush.setForceFullRefresh();
-    deps.branding.forceNextRefresh();
-    void deps.flush.flushNow({ force: true });
-    deps.branding.syncNow();
+    deps.flush.schedule();
+    deps.branding.schedule();
   }
 
   function doSystemExitCleanup(reason: string): void {

@@ -40,10 +40,7 @@ const SUBMENU_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'academySelect',
   'difficultySelect',
   'customDifficultySelect',
-  'boardMarkersSelect',
   'displayOptionsSelect',
-  'boardAlignmentSelect',
-  'boardSizeSelect',
   'playAsSelect',
   'resetConfirm',
   'exitConfirm',
@@ -92,7 +89,12 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
     }
 
     // System exit dialog request — fire-and-forget at the SDK level.
+    // Menu "Exit" item tapped (reducer armed pendingSystemExitDialog) → surface the ER system exit
+    // dialog. Cancel any in-flight text/image sends first so minimal JS work races the
+    // shutDownPageContainer(1) call, then arm the bridge's exit-dialog flag via requestSystemExit().
     if (state.pendingSystemExitDialog && !prevState.pendingSystemExitDialog) {
+      deps.flush.cancel();
+      deps.branding.cancel();
       deps.bridge.requestSystemExit();
       deps.store.dispatch({ type: 'CLEAR_SYSTEM_EXIT_REQUEST' });
     }

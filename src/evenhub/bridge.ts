@@ -69,6 +69,84 @@ function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
 
+/**
+ * IMGDIAG (logging-only): summarize an image payload so a `sendFailed` can be correlated with the
+ * exact bytes we handed the SDK — data type (Uint8Array vs number[] vs base64 string), byte count,
+ * and a format sniff (PNG/BMP magic). Tests the "0.0.12 rejects large single-shot images / expects
+ * a different encoding" hypotheses without changing what is sent.
+ */
+function describeImagePayload(payload: ImageRawDataUpdate): {
+  type: string;
+  bytes: number;
+  fmt: string;
+} {
+  const data: unknown = payload?.imageData;
+  if (data == null) return { type: 'null', bytes: 0, fmt: 'none' };
+  let type: string;
+  let bytes: number;
+  let head: number[] = [];
+  if (typeof data === 'string') {
+    type = 'string';
+    bytes = data.length;
+  } else if (data instanceof Uint8Array) {
+    type = 'u8';
+    bytes = data.length;
+    head = Array.from(data.subarray(0, 4));
+  } else if (Array.isArray(data)) {
+    type = 'array';
+    bytes = data.length;
+    head = data.slice(0, 4) as number[];
+  } else if (data instanceof ArrayBuffer) {
+    type = 'arraybuffer';
+    bytes = data.byteLength;
+    head = Array.from(new Uint8Array(data).subarray(0, 4));
+  } else {
+    type = typeof data;
+    bytes = -1;
+  }
+  return { type, bytes, fmt: sniffImageFormat(head) };
+}
+
+function sniffImageFormat(head: number[]): string {
+  if (head[0] === 0x89 && head[1] === 0x50) return 'png';
+  if (head[0] === 0x42 && head[1] === 0x4d) return 'bmp';
+  return head.length ? `raw[${head.join(',')}]` : 'unknown';
+}
+
+/**
+ * Workaround for @evenrealities/even_hub_sdk@0.0.12's broken image path.
+ *
+ * 0.0.12's `ImageRawDataUpdate.toJson()` (the static serializer the SDK's own `updateImageRawData`
+ * calls before postMessage-ing to native) unconditionally tags the payload `compressMode: 2` (LZ4)
+ * — but the shipped bundle contains NO LZ4 code, so the bytes are sent uncompressed. Every host
+ * then rejects the mislabeled payload: `updateImageRawData` resolves with `sendFailed` while text
+ * (which has no compress path) keeps working. 0.0.10/0.0.11 emitted no `compressMode` at all and
+ * worked. Verified by diffing `toJson` output across versions and grepping the 0.0.12 bundle for
+ * any compression code (none).
+ *
+ * We wrap the static `toJson` once to strip `compressMode`, restoring the exact pre-0.0.12 wire
+ * shape (`{containerID, containerName, imageData}`). Idempotent and defensive: no-ops if the method
+ * shape ever changes. Remove this once the SDK either ships real LZ4 or stops tagging uncompressed
+ * data — track via [[project_sdk_012_lz4_images]].
+ */
+function patchImageCompressModeBug(): void {
+  const cls = ImageRawDataUpdate as unknown as {
+    toJson?: (model?: unknown) => Record<string, unknown>;
+    __compressModePatched?: boolean;
+  };
+  if (typeof cls.toJson !== 'function' || cls.__compressModePatched) return;
+  const orig = cls.toJson.bind(ImageRawDataUpdate);
+  cls.toJson = (model?: unknown) => {
+    const json = orig(model);
+    if (json && typeof json === 'object' && 'compressMode' in json) {
+      delete (json as Record<string, unknown>).compressMode;
+    }
+    return json;
+  };
+  cls.__compressModePatched = true;
+  debugLog('patched ImageRawDataUpdate.toJson to strip compressMode (0.0.12 LZ4 bug)', {}, 'BRG');
+}
+
 interface PendingImage {
   name: string;
   payload: ImageRawDataUpdate;
@@ -119,6 +197,7 @@ export class EvenHubBridge {
   private unsubscribeEvents: (() => void) | null = null;
 
   async init(): Promise<void> {
+    patchImageCompressModeBug();
     try {
       this.bridge = await waitForEvenAppBridge();
       console.log('[EvenHubBridge] Bridge ready.');
@@ -288,9 +367,29 @@ export class EvenHubBridge {
 
         const bridge = this.bridge;
         const sendStartMs = nowMs();
+        // IMGDIAG: capture the raw SDK outcome (resolved value vs thrown error) so `sendFailed` is
+        // no longer ambiguous with serializeBleCall's fallback. `outcome` stays 'timeout' if neither
+        // the resolve nor the catch runs before the fallback (i.e. serializeBleCall timed out).
+        const desc = describeImagePayload(payload);
+        // Held in an object so its `outcome` union type survives mutation inside the closure
+        // (a bare `let` gets narrowed to its initializer literal by control-flow analysis).
+        const trace: { outcome: 'resolved' | 'rejected' | 'timeout'; rawValue?: unknown; rawErr?: unknown } = {
+          outcome: 'timeout',
+        };
         const result = await this.serializeBleCall(
           'updateImageRawData',
-          () => bridge.updateImageRawData(payload),
+          async () => {
+            try {
+              const v = await bridge.updateImageRawData(payload);
+              trace.outcome = 'resolved';
+              trace.rawValue = v;
+              return v;
+            } catch (e) {
+              trace.outcome = 'rejected';
+              trace.rawErr = e;
+              throw e;
+            }
+          },
           ImageRawDataUpdateResult.sendFailed,
           IMAGE_SEND_TIMEOUT_MS,
         );
@@ -301,13 +400,19 @@ export class EvenHubBridge {
         // anything other than `success` as a real failure.
         if (ImageRawDataUpdateResult.isSuccess(result)) {
           this.consecutiveImageSendFailures = 0;
-          debugLog('image send ok', { containerID, ms }, 'BRG');
+          debugLog('image send ok', { containerID, ms, bytes: desc.bytes, type: desc.type, fmt: desc.fmt }, 'BRG');
         } else {
           this.consecutiveImageSendFailures += 1;
           debugLog('image send non-success', {
             containerID,
             result: String(result),
+            outcome: trace.outcome,
+            rawValue: trace.outcome === 'resolved' ? String(trace.rawValue) : undefined,
+            rawErr: trace.outcome === 'rejected' ? String(trace.rawErr) : undefined,
             ms,
+            bytes: desc.bytes,
+            type: desc.type,
+            fmt: desc.fmt,
             consecutive: this.consecutiveImageSendFailures,
           }, 'BRG');
           this.maybeFirePersistentImageFailure();

@@ -411,11 +411,29 @@ describe('reducer', () => {
       expect(next.phase).toBe('modeSelect');
     });
 
-    it('navigates to boardMarkersSelect on boardMarkers option', () => {
-      const state = createTestState({ phase: 'menu', showBoardMarkers: true });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'boardMarkers' });
-      expect(next.phase).toBe('boardMarkersSelect');
-      expect(next.menuSelectedIndex).toBe(0); // 'on' selected
+    it('toggles board markers in place from the Display Options markers row', () => {
+      // Board Markers is a binary toggle under Display Options: tapping the row flips it and stays.
+      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 2, showBoardMarkers: true });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.showBoardMarkers).toBe(false);
+      expect(next.phase).toBe('displayOptionsSelect');
+      expect(next.menuSelectedIndex).toBe(2); // stays on the markers row
+    });
+
+    it('toggles alignment in place from the Display Options alignment row', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 0, boardAlignment: 'right' });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.boardAlignment).toBe('center');
+      expect(next.phase).toBe('displayOptionsSelect');
+      expect(next.menuSelectedIndex).toBe(0);
+    });
+
+    it('toggles size in place from the Display Options size row', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'small' });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.boardSize).toBe('large');
+      expect(next.phase).toBe('displayOptionsSelect');
+      expect(next.menuSelectedIndex).toBe(1);
     });
 
     it('navigates to viewLog on viewLog option', () => {
@@ -438,14 +456,14 @@ describe('reducer', () => {
       expect(next.menuSelectedIndex).toBe(1); // Cancel selected by default
     });
 
-    it('closes the menu regardless of unsaved changes (autosave handles durability)', () => {
-      const unsavedState = createTestState({ phase: 'menu', hasUnsavedChanges: true, previousPhase: 'idle' });
-      const unsavedNext = reduce(unsavedState, { type: 'MENU_SELECT', option: 'exit' });
-      expect(unsavedNext.phase).toBe('idle');
-
-      const savedState = createTestState({ phase: 'menu', hasUnsavedChanges: false, previousPhase: 'idle' });
-      const savedNext = reduce(savedState, { type: 'MENU_SELECT', option: 'exit' });
-      expect(savedNext.phase).toBe('idle');
+    it('"Exit" item arms the ER system exit dialog and stays in the menu', () => {
+      // Tapping the menu's "Exit" item fires the ER exit-confirmation dialog (side-effects.ts sees
+      // pendingSystemExitDialog and calls requestSystemExit). Stay in the menu so cancelling leaves
+      // the user where they were. (Closing the menu back to the game is double-tap, not this.)
+      const state = createTestState({ phase: 'menu', previousPhase: 'idle' });
+      const next = reduce(state, { type: 'MENU_SELECT', option: 'exit' });
+      expect(next.pendingSystemExitDialog).toBe(true);
+      expect(next.phase).toBe('menu');
     });
   });
 
@@ -535,22 +553,31 @@ describe('reducer', () => {
     });
   });
 
-  describe('SET_BOARD_MARKERS', () => {
-    it('enables board markers', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect', showBoardMarkers: false });
-      const next = reduce(state, { type: 'SET_BOARD_MARKERS', enabled: true });
-      expect(next.showBoardMarkers).toBe(true);
-      expect(next.phase).toBe('menu');
+  describe('Display Options toggles', () => {
+    it('tapping the markers row flips showBoardMarkers and stays put', () => {
+      const on = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 2, showBoardMarkers: true });
+      const off = reduce(on, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(off.showBoardMarkers).toBe(false);
+      expect(off.phase).toBe('displayOptionsSelect');
+      // Toggling back on.
+      const backOn = reduce(off, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(backOn.showBoardMarkers).toBe(true);
     });
 
-    it('disables board markers', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect', showBoardMarkers: true });
-      const next = reduce(state, { type: 'SET_BOARD_MARKERS', enabled: false });
-      expect(next.showBoardMarkers).toBe(false);
+    it('tapping the alignment row flips boardAlignment', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 0, boardAlignment: 'center' });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.boardAlignment).toBe('right');
+    });
+
+    it('tapping the size row flips boardSize', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'large' });
+      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.boardSize).toBe('small');
     });
   });
 
-  describe('difficulty and board markers scroll', () => {
+  describe('difficulty scroll', () => {
     it('cycles difficulty options', () => {
       // Settings phase: scroll direction inverted; `up` advances forward.
       // Options are Easy, Casual, Serious, Custom (4 entries, wraps back to 0).
@@ -564,30 +591,13 @@ describe('reducer', () => {
       const wrapped = reduce(next3, { type: 'SCROLL', direction: 'up' });
       expect(wrapped.menuSelectedIndex).toBe(0);
     });
-
-    it('cycles board markers options', () => {
-      // Settings phase: scroll direction inverted; `up` advances forward.
-      const state = createTestState({ phase: 'boardMarkersSelect', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
-      expect(next.menuSelectedIndex).toBe(1);
-
-      const wrapped = reduce(next, { type: 'SCROLL', direction: 'up' });
-      expect(wrapped.menuSelectedIndex).toBe(0);
-    });
   });
 
-  describe('difficulty and board markers tap', () => {
+  describe('difficulty tap', () => {
     it('tap selects difficulty and returns to menu', () => {
       const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 2 }); // index 2 = Serious
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
       expect(next.difficulty).toBe('serious');
-      expect(next.phase).toBe('menu');
-    });
-
-    it('tap selects board markers and returns to menu', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect', menuSelectedIndex: 1 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
-      expect(next.showBoardMarkers).toBe(false);
       expect(next.phase).toBe('menu');
     });
   });
@@ -1141,14 +1151,14 @@ describe('reducer', () => {
       expect(next.phase).toBe('menu');
     });
 
-    it('requests the system exit dialog from menu (sets pendingSystemExitDialog, stays in menu)', () => {
-      // Per ER guidance, double-tap in the settings menu surfaces the system "End this feature?"
-      // confirmation dialog rather than closing the menu. The app subscriber observes the flag and
-      // calls bridge.shutDownPageContainer(1).
+    it('menu double-tap closes the menu (back to game) without arming the exit dialog', () => {
+      // App exit is the menu's tappable "Exit" item, not double-tap. Double-tap in the menu backs
+      // out to the game (double-tap = back-one-level), and must NOT set pendingSystemExitDialog — a
+      // stray double-tap must not surface the board-killing exit dialog.
       const state = createTestState({ phase: 'menu', previousPhase: 'pieceSelect' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
-      expect(next.phase).toBe('menu');
-      expect(next.pendingSystemExitDialog).toBe(true);
+      expect(next.phase).toBe('pieceSelect');
+      expect(next.pendingSystemExitDialog).toBeFalsy();
     });
 
     it('CLEAR_SYSTEM_EXIT_REQUEST clears the flag', () => {
@@ -1202,8 +1212,8 @@ describe('reducer', () => {
       expect(next.phase).toBe('menu');
     });
 
-    it('returns from boardMarkersSelect to menu', () => {
-      const state = createTestState({ phase: 'boardMarkersSelect' });
+    it('returns from displayOptionsSelect to menu', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('menu');
     });

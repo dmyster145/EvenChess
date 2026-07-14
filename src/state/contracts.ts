@@ -50,10 +50,7 @@ export type UIPhase =
   | 'viewLog'
   | 'difficultySelect'
   | 'customDifficultySelect'
-  | 'boardMarkersSelect'
   | 'displayOptionsSelect'
-  | 'boardAlignmentSelect'
-  | 'boardSizeSelect'
   | 'playAsSelect'
   | 'resetConfirm'
   | 'exitConfirm'
@@ -66,7 +63,7 @@ export type UIPhase =
   | 'knightPathDrill'
   | 'pgnStudy';
 
-export type MenuOption = 'mode' | 'boardMarkers' | 'viewLog' | 'difficulty' | 'playAs' | 'displayOptions' | 'reset' | 'exit';
+export type MenuOption = 'mode' | 'viewLog' | 'difficulty' | 'playAs' | 'displayOptions' | 'reset' | 'exit';
 
 export type BoardAlignment = 'center' | 'right';
 export type BoardSize = 'small' | 'large';
@@ -221,9 +218,6 @@ export type Action =
   | { type: 'MARK_SAVED' }
   | { type: 'SET_DIFFICULTY'; level: DifficultyLevel }
   | { type: 'SET_CUSTOM_SKILL_LEVEL'; value: number }
-  | { type: 'SET_BOARD_MARKERS'; enabled: boolean }
-  | { type: 'SET_BOARD_ALIGNMENT'; alignment: BoardAlignment }
-  | { type: 'SET_BOARD_SIZE'; size: BoardSize }
   | { type: 'SET_PLAYER_COLOR'; color: PlayerColor }
   | { type: 'SET_MODE'; mode: GameMode }
   | { type: 'START_BULLET_GAME'; timeControlIndex: number }

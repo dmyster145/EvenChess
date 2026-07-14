@@ -6,16 +6,11 @@
 
 import type { GameState, PieceEntry, CarouselMove } from './contracts';
 import {
-  MENU_OPTIONS,
   MENU_LABELS,
   DIFFICULTY_OPTIONS,
   DIFFICULTY_LABELS,
-  BOARD_MARKERS_LABELS,
+  DISPLAY_OPTIONS_OPTIONS,
   DISPLAY_OPTIONS_LABELS,
-  BOARD_ALIGNMENT_OPTIONS,
-  BOARD_ALIGNMENT_LABELS,
-  BOARD_SIZE_OPTIONS,
-  BOARD_SIZE_LABELS,
   PLAY_AS_OPTIONS,
   PLAY_AS_LABELS,
   MAX_MOVES_DISPLAY,
@@ -360,8 +355,6 @@ export function getMenuDisplayText(state: GameState): string {
   const lines: string[] = [''];
 
   MENU_LABELS.forEach((label, i) => {
-    // Hide Board Markers when large board is active (markers disabled in large mode)
-    if (MENU_OPTIONS[i] === 'boardMarkers' && state.boardSize === 'large') return;
     const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
     lines.push(`${prefix}${label}`);
   });
@@ -401,50 +394,30 @@ export function getCustomDifficultyDisplayText(state: GameState): string {
   return lines.join('\n');
 }
 
-export function getBoardMarkersDisplayText(state: GameState): string {
-  const lines: string[] = ['', 'BOARD MARKERS', ''];
-
-  BOARD_MARKERS_LABELS.forEach((label, i) => {
-    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
-    const current = (i === 0 && state.showBoardMarkers) ||
-                    (i === 1 && !state.showBoardMarkers) ? ' *' : '';
-    lines.push(`${prefix}${label}${current}`);
-  });
-
-  return lines.join('\n');
+/** Current value shown inline next to each (binary) Display Option row. */
+function displayOptionValue(state: GameState, option: string): string {
+  switch (option) {
+    case 'alignment':
+      return state.boardAlignment === 'center' ? 'Center' : 'Right';
+    case 'size':
+      return state.boardSize === 'small' ? 'Small' : 'Large';
+    case 'markers':
+      return state.showBoardMarkers ? 'On' : 'Off';
+    default:
+      return '';
+  }
 }
 
 export function getDisplayOptionsDisplayText(state: GameState): string {
   const lines: string[] = ['', 'DISPLAY OPTIONS', ''];
 
   DISPLAY_OPTIONS_LABELS.forEach((label, i) => {
+    const option = DISPLAY_OPTIONS_OPTIONS[i] ?? '';
+    // Board Markers row is disabled in large-board mode — hide to match scroll skip.
+    if (option === 'markers' && state.boardSize === 'large') return;
     const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
-    lines.push(`${prefix}${label}`);
-  });
-
-  return lines.join('\n');
-}
-
-export function getBoardAlignmentDisplayText(state: GameState): string {
-  const lines: string[] = ['', 'ALIGNMENT', ''];
-
-  BOARD_ALIGNMENT_LABELS.forEach((label, i) => {
-    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
-    const current = BOARD_ALIGNMENT_OPTIONS[i] === state.boardAlignment ? ' *' : '';
-    lines.push(`${prefix}${label}${current}`);
-  });
-
-  return lines.join('\n');
-}
-
-export function getBoardSizeDisplayText(state: GameState): string {
-  const lines: string[] = ['', 'BOARD SIZE', ''];
-
-  BOARD_SIZE_LABELS.forEach((label, i) => {
-    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
-    const current = BOARD_SIZE_OPTIONS[i] === state.boardSize ? ' *' : '';
-    const note = BOARD_SIZE_OPTIONS[i] === 'large' ? ' (no markers)' : '';
-    lines.push(`${prefix}${label}${note}${current}`);
+    // Each row is a binary toggle: tap flips it. Show the current value inline.
+    lines.push(`${prefix}${label}: ${displayOptionValue(state, option)}`);
   });
 
   return lines.join('\n');
@@ -729,14 +702,8 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
       return getDifficultyDisplayText(state);
     case 'customDifficultySelect':
       return getCustomDifficultyDisplayText(state);
-    case 'boardMarkersSelect':
-      return getBoardMarkersDisplayText(state);
     case 'displayOptionsSelect':
       return getDisplayOptionsDisplayText(state);
-    case 'boardAlignmentSelect':
-      return getBoardAlignmentDisplayText(state);
-    case 'boardSizeSelect':
-      return getBoardSizeDisplayText(state);
     case 'playAsSelect':
       return getPlayAsDisplayText(state);
     case 'resetConfirm':

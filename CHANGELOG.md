@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.0.5 — 2026-07-13
+
+### Fixed
+
+- **Board images render again on SDK 0.0.12.** 0.0.12's `ImageRawDataUpdate.toJson`
+  tags every image payload `compressMode: 2` (LZ4) but the bundle ships no LZ4
+  compression, so the host rejected every image with `sendFailed` (text was
+  unaffected). Patched the static serializer at bridge init to strip the bogus
+  field, restoring the pre-0.0.12 wire format. See
+  [docs/sdk-0.0.12-image-compressmode-bug.md](docs/sdk-0.0.12-image-compressmode-bug.md).
+- **Board no longer decomposes when the exit dialog is cancelled.** The lifecycle no
+  longer rebuilds/repaints the page while the system exit dialog is on screen (that
+  emptied the image containers); it now leaves the firmware's retained frame intact.
+  Note: `shutDownPageContainer(1)` still kills the image channel for the session, so
+  after tapping "No" the board is frozen until an app restart — an ER SDK defect with
+  no software recovery (reported upstream).
+
+### Changed
+
+- **Exit follows ER's documented "Chess" reference pattern.** Root (game) double-tap
+  opens the settings menu; the menu's **Exit** item fires the system exit-confirmation
+  dialog (`shutDownPageContainer(1)`). Double-tap inside the menu now just closes it,
+  so a stray gesture can't trip the exit-dialog SDK defect.
+- **Board Markers moved under Settings → Display Options** (alongside Alignment and
+  Size), decluttering the top-level menu.
+- **Display Options toggle in place.** Tapping Alignment, Size, or Board Markers now
+  flips the value directly (each is binary) and shows it inline — no sub-menu.
+- **Gestures are captured by a dedicated invisible full-screen container** so the
+  firmware no longer re-anchors/scrolls the visible menu text as you swipe between
+  options. Toggle via `USE_INPUT_CAPTURE_CONTAINER` in `src/render/composer.ts`.
+
+### Dependencies
+
+- Bumped `@evenrealities/even_hub_sdk` `0.0.10` → `0.0.12`; raised manifest
+  `min_sdk_version` to `0.0.11` (current ER submission floor).
+
 ## 2.0.4 — 2026-05-18
 
 ### Fixed

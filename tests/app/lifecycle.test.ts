@@ -184,31 +184,38 @@ describe('createLifecycle', () => {
 
   // --- Exit-dialog path (inverted polarity) ---
 
-  // The exit-dialog path is runtime-dead while the dialog is suppressed (ER SDK image-channel
-  // defect — see app.ts isExitDialogEnabled). These tests pin the EvenRoads-style handling that
-  // takes effect if/when the dialog is re-enabled after ER ships an SDK fix.
+  // The exit dialog (menu double-tap → shutDownPageContainer(1)) is ENABLED for ER submission.
+  // While it is on screen the app must do NOTHING to the page/images — a rebuild or force-repaint
+  // during this window decomposes the board (image containers become empty placeholders whose
+  // refills come back sendFailed). Mirror the firmware long-press exit, which leaves the board
+  // intact by not touching it.
 
-  it('exit dialog: FOREGROUND_ENTER (sys=4) rebuilds the page, does NOT resume as a foreground', () => {
+  it('exit dialog: FOREGROUND_ENTER (sys=4) leaves the page untouched, does NOT resume as a foreground', () => {
     bridge.exitDialogPending = true;
     const lifecycle = makeLifecycle({ imageContainersActive: true });
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
-    // Host cleared the page when the dialog appeared — rebuild it (control channel works).
-    expect(bridge.updatePages).toBe(1);
+    // No rebuild while the dialog is up — the firmware retains the last board frame.
+    expect(bridge.updatePages).toBe(0);
+    expect(flush.schedules).toBe(0);
     // Must NOT run the normal foreground-resume path.
     expect(bulletTimer.resumed).toBe(0);
     expect(flush.flushNows).toBe(0);
   });
 
-  it('exit dialog: FOREGROUND_EXIT (sys=5) = "No" — clears flag, re-renders, app stays alive (no pause, no reload)', () => {
+  it('exit dialog: FOREGROUND_EXIT (sys=5) = "No" — clears flag, gentle resync, board left intact (no rebuild, no reload)', () => {
     bridge.exitDialogPending = true;
     const lifecycle = makeLifecycle({ imageContainersActive: true });
     lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
     expect(bridge.clearExitDialogCalls).toBe(1);
     // Must NOT treat as background.
     expect(bulletTimer.suspended).toBe(0);
-    // Re-renders to keep the app alive; no page rebuild here (sys=4 did that), no WebView reload.
+    // No page rebuild, no forced repaint, and no WebView reload (a reload doesn't recover the dead
+    // image channel and triggers a spurious sys=7 that exits the app). Only a gentle, diff-gated
+    // flush is scheduled — an unchanged board produces no image sends, leaving the retained frame.
     expect(bridge.updatePages).toBe(0);
-    expect(flush.flushNows).toBe(1);
+    expect(flush.flushNows).toBe(0);
+    expect(flush.schedules).toBe(1);
+    expect(branding.schedules).toBeGreaterThanOrEqual(1);
   });
 
   it('exit dialog: SYSTEM_EXIT (sys=7) = "Yes" — cleans up and shuts down', async () => {

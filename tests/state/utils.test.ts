@@ -76,7 +76,7 @@ describe('isMenuPhase', () => {
     'pieceSelect',
     'destSelect',
     'promotionSelect',
-    'boardMarkersSelect',
+    'displayOptionsSelect',
   ];
 
   it('returns true for menu-related phases', () => {
@@ -109,7 +109,7 @@ describe('isConfirmPhase', () => {
       'menu',
       'viewLog',
       'difficultySelect',
-      'boardMarkersSelect',
+      'displayOptionsSelect',
       'modeSelect',
       'bulletSetup',
       'academySelect',
