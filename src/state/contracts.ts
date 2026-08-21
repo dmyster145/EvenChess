@@ -159,12 +159,26 @@ export interface GameState {
   hasUnsavedChanges: boolean;
   previousPhase: UIPhase | null;
   /**
+   * True while the current menu sub-screen was opened via the native OS context menu (SDK 0.0.14),
+   * not the hand-rolled double-tap list. When a native-initiated sub-screen backs out or cancels,
+   * it returns straight to gameplay instead of the hand-rolled list (which the user never opened).
+   * The OS menu can't be reopened programmatically, so there's nothing to fall back to.
+   */
+  menuInvokedNative: boolean;
+  /**
    * Set by the reducer when the user double-taps in the settings menu. The app subscriber observes
    * the false→true transition and calls `bridge.shutDownPageContainer(1)` to surface the system's
    * "End this feature?" confirmation dialog, then clears the flag. Per ER guidance, no app-side
    * cleanup happens here — if the user confirms, cleanup runs in the SYSTEM_EXIT_EVENT handler.
    */
   pendingSystemExitDialog?: boolean;
+  /**
+   * Set only when the user CONFIRMS the reset dialog (resetConfirm → Confirm). side-effects.ts keys
+   * the board reset on this flag, not on the resetConfirm→idle phase transition — otherwise a
+   * native-menu Cancel that returns to gameplay (also resetConfirm→idle) would wrongly reset the
+   * game. Cleared by NEW_GAME once the reset is applied.
+   */
+  pendingReset?: boolean;
   difficulty: DifficultyLevel;
   /**
    * User-picked level (0..9) for the Custom difficulty. Always present so the picker has a
@@ -176,6 +190,12 @@ export interface GameState {
   boardSize: BoardSize;
   /** User preference for side to play; 'random' re-rolls each new game. */
   playAs: PlayAs;
+  /**
+   * A Play As choice awaiting reset confirmation (game in progress). Committed to `playAs` only when
+   * the user confirms the reset; discarded on cancel so cancelling never changes (or persists) the
+   * side. On a fresh board the choice applies immediately and this stays null.
+   */
+  pendingPlayAs?: PlayAs | null;
   /** Resolved human color for the current game. Drives board flip + engine ownership. */
   playerColor: PlayerColor;
   logScrollOffset: number;
@@ -210,6 +230,8 @@ export type Action =
   | { type: 'FOREGROUND_EXIT' }
   | { type: 'OPEN_MENU' }
   | { type: 'MENU_SELECT'; option: MenuOption }
+  /** Native OS context-menu item clicked (SDK 0.0.14 menuObject). itemID is 1-based into NATIVE_MENU_OPTIONS. */
+  | { type: 'MENU_ITEM_CLICK'; itemID: number }
   | { type: 'CLOSE_MENU' }
   | { type: 'CONFIRM_EXIT'; save: boolean }
   | { type: 'CLEAR_SYSTEM_EXIT_REQUEST' }
@@ -222,6 +244,10 @@ export type Action =
   | { type: 'SET_MODE'; mode: GameMode }
   | { type: 'START_BULLET_GAME'; timeControlIndex: number }
   | { type: 'TIMER_TICK' }
+  /** Freeze the bullet clock while a system overlay (the native OS menu) is open. */
+  | { type: 'BULLET_PAUSE' }
+  /** Resume the bullet clock after the overlay closes, without charging the paused time. */
+  | { type: 'BULLET_RESUME' }
   | { type: 'APPLY_INCREMENT'; color: 'w' | 'b' }
   | { type: 'START_DRILL'; drillType: DrillType }
   | { type: 'DRILL_ANSWER'; correct: boolean }
@@ -257,6 +283,7 @@ export function buildInitialState(chess: ChessService): GameState {
     menuSelectedIndex: 0,
     hasUnsavedChanges: false,
     previousPhase: null,
+    menuInvokedNative: false,
     difficulty: 'casual',
     customSkillLevel: CUSTOM_SKILL_LEVEL_DEFAULT,
     boardAlignment: 'right',

@@ -73,6 +73,14 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
   const subscriptions = new Set<() => void>();
   let attached = false;
   let isHidden = false;
+  // Set when a FOREGROUND_ENTER arrives while we already believe we're showing — i.e. an overlay
+  // (the SDK 0.0.14 native OS context menu, or any system overlay) appeared on top of the app. The
+  // paired FOREGROUND_EXIT then means the overlay dismissed, NOT a genuine background. See the
+  // overlay-disambiguation note in onHubEvent's normal-lifecycle branch.
+  let overlayActive = false;
+  // True while an overlay (native OS menu) paused a running bullet clock — so its dismissal knows to
+  // resume it, and a not-yet-started clock is never started by opening/closing the menu.
+  let overlayPausedBullet = false;
 
   // Firmware emits duplicate sys events ~50–100ms apart for one physical transition. Dedupe
   // identical consecutive sys events within 600ms before any state-changing decision.
@@ -99,6 +107,8 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
     subscriptions.clear();
     attached = false;
+    overlayActive = false;
+    overlayPausedBullet = false;
   }
 
   // --- Genuine background / foreground (no exit dialog pending) ---
@@ -240,12 +250,44 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
 
     // --- Normal lifecycle ---
-    if (eventType === FOREGROUND_EXIT) {
-      onHide('foreground-exit');
+    // Overlay disambiguation (SDK 0.0.14 native menu, §3): the OS context menu — like the exit
+    // dialog — surfaces as FOREGROUND_ENTER (appeared) then FOREGROUND_EXIT (dismissed), the
+    // INVERSE order of a genuine background (FOREGROUND_EXIT to leave, FOREGROUND_ENTER to return).
+    // We tell them apart by isHidden at ENTER time: a FOREGROUND_ENTER received while we already
+    // believe we're showing means an overlay appeared, so the paired FOREGROUND_EXIT is that overlay
+    // dismissing — NOT a real background. Treating that EXIT as a background is what would suspend
+    // the bullet timer and latch the app "hidden" every time the user closed the OS menu.
+    if (eventType === FOREGROUND_ENTER) {
+      if (!isHidden) {
+        overlayActive = true;
+        // Pause the bullet clock while the overlay (native OS menu) is up — matching the hand-rolled
+        // menu, which pauses via handleOpenMenu. Only when it's actually running, so we can decide
+        // on dismiss whether to resume (and never start a not-yet-started clock).
+        const st = deps.store.getState();
+        if (st.mode === 'bullet' && st.timerActive) {
+          deps.store.dispatch({ type: 'BULLET_PAUSE' });
+          overlayPausedBullet = true;
+        }
+        debugLog('overlay appeared (foreground-enter while showing) — pausing bullet clock if running', { paused: overlayPausedBullet }, 'LCY');
+        return;
+      }
+      overlayActive = false;
+      onShow('foreground-enter');
       return;
     }
-    if (eventType === FOREGROUND_ENTER) {
-      onShow('foreground-enter');
+    if (eventType === FOREGROUND_EXIT) {
+      if (overlayActive) {
+        overlayActive = false;
+        // Resume the bullet clock the overlay paused. The reducer no-ops if a menu click dove into a
+        // sub-screen (not a game phase) — that sub-screen resumes on its way back to gameplay.
+        if (overlayPausedBullet) {
+          deps.store.dispatch({ type: 'BULLET_RESUME' });
+          overlayPausedBullet = false;
+        }
+        debugLog('overlay dismissed (foreground-exit) — not a background', {}, 'LCY');
+        return;
+      }
+      onHide('foreground-exit');
       return;
     }
     if (eventType === ABNORMAL_EXIT) {

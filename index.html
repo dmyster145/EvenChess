@@ -490,7 +490,7 @@
             <p>Games auto-save, so you can pick up where you left off. When you continue a saved game, the difficulty you used for that game is restored with it.</p>
 
             <h3>Bullet Blitz</h3>
-            <p>Speed chess. Your clock ticks down on your turn. Hit zero and you lose.</p>
+            <p>Speed chess. Your clock starts on your first move and ticks down on your turn. Hit zero and you lose. Opening the menu pauses the clock.</p>
             
             <table class="time-table">
               <thead>
@@ -521,7 +521,7 @@
         <details>
           <summary>Controls</summary>
           <div class="section-content">
-            <p>Three gestures on your G2 touchpad, plus optional voice:</p>
+            <p>Touchpad gestures on your G2, plus optional voice:</p>
 
             <div class="gesture-grid">
               <div class="gesture-card">
@@ -536,7 +536,12 @@
 
               <div class="gesture-card">
                 <strong>Double Tap</strong>
-                Go back one step (move to piece to row), or open the menu from the idle screen.
+                Go back one step during selection (move to piece to row).
+              </div>
+
+              <div class="gesture-card">
+                <strong>System Menu Gesture</strong>
+                A short press, then a long press opens the glasses' built-in menu. It's how you reach Play As, Mode, Difficulty, and more. See <a href="#menu-options">Menu Options</a>.
               </div>
 
               <div class="gesture-card">
@@ -571,16 +576,14 @@
         <details>
           <summary>Menu Options</summary>
           <div class="section-content">
-            <p>Double-tap from idle to open the menu. Scroll to browse, tap to choose.</p>
+            <p><strong>Opening the menu:</strong> use the glasses' system-menu gesture: a short press, then a long press on the touchpad. The glasses draw the menu. Scroll to highlight an option and tap to choose. Each option opens on the board; double-tap to back out.</p>
+            <p>To leave Chess, pick <strong>Close</strong> from the system menu (it also has display and brightness controls).</p>
 
             <h3>Play As</h3>
             <p>Choose which side you play: <strong>White</strong>, <strong>Black</strong>, or <strong>Random</strong>. Picking a side starts a new game; if a game is in progress you will be asked to confirm first. Black flips the board to your side and the engine opens as White. Random picks a fresh side every new game. Your choice is remembered between sessions.</p>
 
             <h3>Mode</h3>
             <p>Switch between Play vs AI, Bullet Blitz, and Academy.</p>
-
-            <h3>Board Markers</h3>
-            <p>Show or hide the file (A-H) and rank (1-8) labels on the board.</p>
 
             <h3>View Log</h3>
             <p>See your move history. Scroll through it, then tap or double-tap to go back. Moves show as pairs like "Knight C3 | Pawn E5".</p>
@@ -591,13 +594,22 @@
               <li><strong>Easy:</strong> Lighter opponent with more varied play</li>
               <li><strong>Casual:</strong> Good for practice; forgiving AI</li>
               <li><strong>Serious:</strong> Full-strength Stockfish for a real fight</li>
+              <li><strong>Custom:</strong> Dial the engine's skill level yourself (0–9)</li>
+            </ul>
+
+            <h3>Display Options</h3>
+            <p>Fine-tune how the board looks:</p>
+            <ul>
+              <li><strong>Alignment:</strong> Center or right-align the board</li>
+              <li><strong>Size:</strong> Small or large pieces</li>
+              <li><strong>Board Markers:</strong> Show or hide the file (A–H) and rank (1–8) labels</li>
             </ul>
 
             <h3>Reset</h3>
             <p>Start fresh. You'll confirm first so you don't lose your game by accident.</p>
 
             <h3>Exit</h3>
-            <p>Close the app. If you have unsaved moves, you'll get a chance to save.</p>
+            <p>To leave Chess, open the system menu and pick <strong>Close</strong>. Your game auto-saves, so you can pick up where you left off next time.</p>
           </div>
         </details>
       </section>
@@ -690,9 +702,10 @@
             <h3>Navigation</h3>
             <ul>
               <li>From idle, scroll to pick a piece, or tap to speak your move</li>
-              <li>Double-tap from idle opens the menu</li>
-              <li>Double-tap backs up one step (move to piece to row)</li>
-              <li>Difficulty, board markers, and your Play As side save between sessions</li>
+              <li>Open the menu with the system-menu gesture (short press, then long press)</li>
+              <li>The system menu is drawn by the glasses and works from any screen; it also has Close (exits Chess), display, and brightness controls</li>
+              <li>Double-tap backs up one step during selection (move to piece to row)</li>
+              <li>Difficulty, display options, and your Play As side save between sessions</li>
               <li>Your game saves automatically when you exit</li>
             </ul>
 

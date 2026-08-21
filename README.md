@@ -1,16 +1,16 @@
 # Chess
 
-Chess for **Even Realities G2** smart glasses: play vs Stockfish, race the clock in Bullet Blitz, or train in the Academy. Use the ring controller (R1) or touchpad — scroll to move, tap to select.
+Chess for **Even Realities G2** smart glasses: play vs Stockfish, race the clock in Bullet Blitz, or train in the Academy. Use the ring controller (R1) or touchpad: scroll to move, tap to select.
 
-This project is licensed under the MIT License — see [LICENSE](LICENSE).
+Licensed under the MIT License. See [LICENSE](LICENSE).
 
 ## Screenshots
 
-| Play — piece selection | Menu | Academy — drill selection |
+| Play: piece selection | Menu | Academy: drill selection |
 |------------------------|------|-------------|
-| ![Piece selection and board](assets/screenshot.png) | ![Main menu](assets/screenshot-menu.png) | ![Academy — drill selection](assets/screenshot-academy.png) |
+| ![Piece selection and board](assets/screenshot.png) | ![Main menu](assets/screenshot-menu.png) | ![Academy drill selection](assets/screenshot-academy.png) |
 
-| Bullet Blitz — timed game | Mode select |
+| Bullet Blitz: timed game | Mode select |
 |---------------------------|----------------------------|
 | ![Bullet with timers and log](assets/screenshot-bullet.png) | ![Select mode](assets/screenshot-mode-select.png) |
 
@@ -22,7 +22,7 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
 - **Runtime:** TypeScript, Vite
 - **Chess:** [chess.js](https://github.com/jhlywa/chess.js) (rules, FEN, moves). [Stockfish](https://stockfishchess.org/) via **stockfish.js** (worker + WASM copied to `public/stockfish/` on install). If the engine doesn’t load, the app falls back to random moves.
-- **Glasses:** [Even Hub SDK](https://www.npmjs.com/package/@evenrealities/even_hub_sdk) — containers, 1-bit BMP updates, event mapping
+- **Glasses:** [Even Hub SDK](https://www.npmjs.com/package/@evenrealities/even_hub_sdk) for containers, 1-bit BMP updates, and event mapping
 - **Tests:** Vitest
 
 ## Project structure
@@ -47,8 +47,8 @@ Chess/
 
 ## Prerequisites
 
-- **Even Realities** — G2 glasses and the [Even App](https://www.evenrealities.com/) (so you can open the widget and see the chess HUD on your glasses).
-- **Node.js** — v20.19.0 or newer. [Download Node.js](https://nodejs.org/) if you don’t have it; the installer is enough.
+- **Even Realities:** G2 glasses and the [Even App](https://www.evenrealities.com/) **version 2.2.9 or newer** (required by SDK 0.0.14; the native glasses menu only appears on 2.2.9+). This lets you open the widget and see the chess HUD on your glasses.
+- **Node.js:** v20.19.0 or newer. [Download Node.js](https://nodejs.org/) if you don’t have it; the installer is enough.
 
 ## Setup
 
@@ -76,13 +76,14 @@ Chess/
 
 4. **Try it**
    - On your **phone:** Open the same URL in a browser to see the [help page](index.html) (getting started, modes, controls).
-   - On your **glasses:** Scroll to move the cursor, tap to select; double-tap from idle to open the menu (Mode, Difficulty, Academy, etc.).
+   - On your **glasses:** Scroll to move the cursor, tap to select. Open the menu (Play As, Mode, Difficulty, etc.) with the glasses' system-menu gesture: a short press, then a long press.
 
 ## Usage on the glasses
 
-- **Scroll** — Move the selection on the board or in menus.
-- **Tap** — Select a square, confirm a move, or choose a menu item.
-- **Double-tap (from idle)** — Open the menu: Mode, Board Markers, View Log, Difficulty, Reset, Exit.
+- **Scroll:** Move the selection on the board or in menus.
+- **Tap:** Select a square, confirm a move, or choose a menu item.
+- **System-menu gesture (short press, then long press):** Open the glasses' built-in menu: Play As, Mode, View Log, Difficulty, Display Options, Reset. The OS draws it and it works from any screen. It also has Close (exits Chess), display, and brightness controls.
+- **Double-tap:** Back up one step during selection (move to piece to row).
 
 ## Scripts
 
@@ -105,14 +106,14 @@ Output is in `dist/`. Deploy that folder to any static host, then open the deplo
 
 ## Features (summary)
 
-- **Play vs AI:** White vs Stockfish; Easy, Casual, or Serious difficulty. Game auto-saves.
-- **Bullet Blitz:** Timed game with optional increment (e.g. 1+0, 3+2, 5+5).
+- **Play vs AI:** Play White, Black, or Random against Stockfish; Easy, Casual, Serious, or Custom difficulty. Games auto-save.
+- **Bullet Blitz:** Timed game with optional increment (e.g. 1+0, 3+0, 5+5).
 - **Academy:** Coordinate drill, Tactics, Mate-in-one, Knight Path, PGN Study (famous games and openings).
-- **Menu (double-tap from idle):** Mode, Board Markers (A–H / 1–8), View Log, Difficulty, Reset, Exit. Difficulty and board markers are saved.
+- **Menu:** Play As, Mode, View Log, Difficulty, Display Options (alignment / size / board markers A–H · 1–8), Reset. Open it with the glasses' system-menu gesture (short press, then long press); the system menu's own Close exits Chess. Difficulty, display options, and Play As are saved.
 
 Full behavior and tips are on the in-app help page ([index.html](index.html)).
 
 ## License & credits
 
-- **chess.js** — [BSD-2-Clause](https://opensource.org/licenses/BSD-2-Clause). Copyright © Jeff Hlywa. Used for move generation, validation, FEN, and PGN. [GitHub](https://github.com/jhlywa/chess.js).
-- **Stockfish** — The app uses [stockfish.js](https://www.npmjs.com/package/stockfish.js) (GPL-3.0); worker and WASM are copied to `public/stockfish/` on install. If the engine doesn’t load (e.g. missing files), the app falls back to random moves. The MIT license above applies only to Chess; any build that includes Stockfish must comply with GPL-3.0 for that component (attribution, license text, source offer).
+- **chess.js:** [BSD-2-Clause](https://opensource.org/licenses/BSD-2-Clause). Copyright © Jeff Hlywa. Used for move generation, validation, FEN, and PGN. [GitHub](https://github.com/jhlywa/chess.js).
+- **Stockfish:** The app uses [stockfish.js](https://www.npmjs.com/package/stockfish.js) (GPL-3.0); worker and WASM are copied to `public/stockfish/` on install. If the engine doesn’t load (e.g. missing files), the app falls back to random moves. The MIT license above applies only to Chess; any build that includes Stockfish must comply with GPL-3.0 for that component (attribution, license text, source offer).

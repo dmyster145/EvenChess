@@ -182,6 +182,65 @@ describe('createLifecycle', () => {
     expect(autosave.flushes).toBe(1);
   });
 
+  // --- Overlay disambiguation (SDK 0.0.14 native OS context menu) ---
+  // The OS menu surfaces as FOREGROUND_ENTER (appeared) then FOREGROUND_EXIT (dismissed) — the
+  // inverse order of a genuine background. Closing it must NOT be treated as a background (which
+  // would suspend the bullet timer and latch the app "hidden").
+
+  it('native menu open (ENTER while showing) then close (EXIT) does NOT suspend the timer or hide', async () => {
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } }); // menu appeared
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });  // menu dismissed
+    expect(bulletTimer.suspended).toBe(0);
+    expect(autosave.flushes).toBe(0);
+    expect(bulletTimer.resumed).toBe(0);
+  });
+
+  it('a genuine background AFTER an overlay cycle still suspends the timer', async () => {
+    const lifecycle = makeLifecycle();
+    // Overlay cycle.
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    expect(bulletTimer.suspended).toBe(0);
+    // Real background later (past the dedup window): EXIT with no overlay pending → onHide.
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    expect(bulletTimer.suspended).toBe(1);
+    expect(autosave.flushes).toBe(1);
+  });
+
+  it('pauses a running bullet clock when the overlay opens and resumes it on close', async () => {
+    store = createStore({
+      ...buildInitialState(chess),
+      mode: 'bullet', phase: 'idle',
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
+      timerActive: true, lastTickTime: Date.now(),
+    });
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } }); // menu opens
+    expect(store.getState().timerActive).toBe(false); // paused
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } }); // menu closes
+    expect(store.getState().timerActive).toBe(true); // resumed
+  });
+
+  it('does not start a not-yet-running bullet clock by opening/closing the overlay', async () => {
+    store = createStore({
+      ...buildInitialState(chess),
+      mode: 'bullet', phase: 'idle',
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
+      timerActive: false,
+    });
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
+    expect(store.getState().timerActive).toBe(false);
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    expect(store.getState().timerActive).toBe(false); // still not started
+  });
+
   // --- Exit-dialog path (inverted polarity) ---
 
   // The exit dialog (menu double-tap → shutDownPageContainer(1)) is ENABLED for ER submission.

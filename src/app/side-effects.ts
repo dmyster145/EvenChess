@@ -246,9 +246,11 @@ function handleMenuSideEffects(
     }
   };
 
-  // resetConfirm→idle: triggered by the Reset menu AND by a Play As change while a game
-  // is in progress (playAsSelect routes through the reset confirmation).
-  if (prevState.phase === 'resetConfirm' && state.phase === 'idle') {
+  // Reset confirmed: the Reset menu OR a Play As change while a game is in progress (which routes
+  // through the reset confirmation). Keyed on the explicit `pendingReset` flag rather than the
+  // resetConfirm→idle transition, so a native-menu Cancel that returns to gameplay (also
+  // resetConfirm→idle) does NOT reset the board.
+  if (state.pendingReset && !prevState.pendingReset) {
     chess.reset();
     void clearSave();
     dispatch({ type: 'NEW_GAME' });

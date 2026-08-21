@@ -160,6 +160,16 @@ export function mapEvenHubEvent(event: EvenHubEvent, state: GameState): Action |
 
   try {
     let action: Action | null = null;
+    // Native OS context-menu click (SDK 0.0.14). Arrives as its own top-level event field — not a
+    // list/text/sys event — so it bypasses the touchpad debounce/cooldown machinery entirely (the
+    // OS swallows touch input while its menu is open). itemID is 1-based into NATIVE_MENU_OPTIONS.
+    if (event.menuItemClickEvent) {
+      const itemID = event.menuItemClickEvent.itemID;
+      if (typeof itemID === 'number' && itemID > 0) {
+        return { type: 'MENU_ITEM_CLICK', itemID };
+      }
+      return null;
+    }
     if (event.listEvent) {
       if (DEBUG_EVENTS) {
         console.log('[InputMapper] listEvent:', event.listEvent.eventType, event.listEvent);

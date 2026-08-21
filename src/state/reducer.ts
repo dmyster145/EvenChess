@@ -12,6 +12,7 @@ import {
   MENU_OPTIONS,
   MENU_OPTION_COUNT,
   MENU_INDEX,
+  NATIVE_MENU_OPTIONS,
   DIFFICULTY_OPTIONS,
   DIFFICULTY_OPTION_COUNT,
   DISPLAY_OPTIONS_OPTIONS,
@@ -27,7 +28,6 @@ import {
   TIME_CONTROL_COUNT,
   DRILL_OPTIONS,
   DRILL_OPTION_COUNT,
-  GESTURE_DISAMBIGUATION_MS,
   PROMOTION_OPTION_COUNT,
   PROMOTION_PIECE_KEYS,
 } from './constants';
@@ -38,11 +38,45 @@ import { generateKnightPuzzle, getKnightMoves, isValidKnightMove, getSquareIndic
 import { getRandomTacticsPuzzle, getRandomMatePuzzle } from '../academy/puzzles';
 import { getRandomFamousGame, STARTING_FEN } from '../academy/pgn';
 
+/** Menu sub-screens that can fall back to the hand-rolled 'menu' list. */
+const MENU_SUB_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
+  'modeSelect', 'bulletSetup', 'academySelect', 'difficultySelect', 'customDifficultySelect',
+  'displayOptionsSelect', 'playAsSelect', 'resetConfirm', 'exitConfirm', 'viewLog',
+]);
+
+/** Gameplay phases a native-menu sub-screen returns to when it closes. */
+const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
+  'idle', 'rowSelect', 'pieceSelect', 'destSelect', 'promotionSelect',
+]);
+
 /**
- * Pure reducer — side-effects (move execution, engine requests) are handled
- * by the store subscriber layer in app.ts.
+ * Pure reducer. Wraps the core state machine with one post-processing step: a menu sub-screen
+ * opened via the native OS context menu returns to gameplay (not the hand-rolled list) when it
+ * closes — see `menuInvokedNative`. Side-effects (move execution, engine requests) are handled by
+ * the store subscriber layer in app.ts.
  */
 export function reduce(state: GameState, action: Action): GameState {
+  const next = reduceCore(state, action);
+  if (next === state) return next;
+
+  // A native-initiated sub-screen just fell back to the hand-rolled 'menu' list — the user never
+  // opened that list, and the OS menu can't be reopened programmatically, so return to gameplay.
+  if (state.menuInvokedNative && next.phase === 'menu' && MENU_SUB_PHASES.has(state.phase)) {
+    return closeNativeSubMenu(next);
+  }
+  // Native flow ended in gameplay by some other path (e.g. reset confirmed, mode changed) — clear
+  // the marker so it never leaks into a later hand-rolled menu interaction.
+  if (next.menuInvokedNative && GAME_PHASES.has(next.phase)) {
+    return { ...next, menuInvokedNative: false };
+  }
+  return next;
+}
+
+function reduceCore(state: GameState, action: Action): GameState {
+  // During gameOver the app is locked to "start a new game" (DOUBLE_TAP). The hand-rolled menu is
+  // unreachable here (handleDoubleTap starts a new game rather than opening it), so a native-menu
+  // click is a no-op too — otherwise it would drop the user into a sub-phase whose SCROLL/TAP are
+  // blocked by this very guard, leaving only double-tap (which starts a new game) to escape.
   if (state.gameOver && action.type !== 'NEW_GAME' && action.type !== 'OPEN_MENU' && action.type !== 'CLOSE_MENU' && action.type !== 'DOUBLE_TAP' && action.type !== 'RESTORE_STATE') {
     return state;
   }
@@ -142,6 +176,9 @@ export function reduce(state: GameState, action: Action): GameState {
         menuSelectedIndex: 0,
         previousPhase: null,
         logScrollOffset: 0,
+        // Reset intent (set by resetConfirm confirm) is consumed here.
+        pendingReset: false,
+        pendingPlayAs: null,
         ...bulletTimerReset,
       };
     }
@@ -169,6 +206,9 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case 'MENU_SELECT':
       return handleMenuSelect(state, action.option);
+
+    case 'MENU_ITEM_CLICK':
+      return handleMenuItemClick(state, action.itemID);
 
     case 'CONFIRM_EXIT':
       return handleConfirmExit(state, action.save);
@@ -235,6 +275,21 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case 'TIMER_TICK':
       return handleTimerTick(state);
+
+    // Freeze the bullet clock while the native OS menu (a system overlay) is open. Only meaningful
+    // if the clock is actually running; the lifecycle layer only pauses/resumes when it was.
+    case 'BULLET_PAUSE':
+      return state.mode === 'bullet' && state.timerActive && state.timers
+        ? { ...state, timerActive: false }
+        : state;
+
+    // Resume after the overlay closes. Reset lastTickTime so the paused span isn't charged. Guarded
+    // to a live game phase so a click that dove into a menu sub-screen (e.g. Difficulty) stays
+    // paused — that sub-screen resumes the clock itself when it closes back to gameplay.
+    case 'BULLET_RESUME':
+      return state.mode === 'bullet' && state.timers && !state.gameOver && !state.timerActive && GAME_PHASES.has(state.phase)
+        ? { ...state, timerActive: true, lastTickTime: Date.now() }
+        : state;
 
     case 'APPLY_INCREMENT':
       return handleApplyIncrement(state, action.color);
@@ -658,10 +713,20 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
 
     case 'resetConfirm': {
       if (state.menuSelectedIndex === 0) {
-        // app.ts detects this transition and performs the reset
-        return { ...state, phase: 'idle', previousPhase: null };
+        // Confirm: commit any deferred Play As choice, then flag the reset explicitly so
+        // side-effects.ts performs it. Keying on the flag (not the resetConfirm→idle transition)
+        // lets a native-menu Cancel return to gameplay without tripping a reset. Cleared by NEW_GAME.
+        return {
+          ...state,
+          playAs: state.pendingPlayAs ?? state.playAs,
+          pendingPlayAs: null,
+          phase: 'idle',
+          previousPhase: null,
+          pendingReset: true,
+        };
       } else {
-        return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.RESET };
+        // Cancel: discard any deferred Play As choice so the side stays unchanged.
+        return { ...state, pendingPlayAs: null, phase: 'menu', menuSelectedIndex: MENU_INDEX.RESET };
       }
     }
 
@@ -710,17 +775,17 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
     case 'playAsSelect': {
       const chosen = PLAY_AS_OPTIONS[state.menuSelectedIndex] ?? 'white';
       // Picking a side starts a new game (changing color mid-game is meaningless).
-      // If moves have been played, confirm first (reuses the reset confirmation, whose
-      // resetConfirm→idle side-effect resolves playerColor from playAs and re-rolls
-      // 'random'). On a fresh board, apply immediately — the playAsSelect→idle
-      // transition is picked up by the same new-game side-effect.
       const inProgress = state.history.length > 0;
-      return {
-        ...state,
-        playAs: chosen,
-        phase: inProgress ? 'resetConfirm' : 'idle',
-        menuSelectedIndex: inProgress ? 1 : 0,
-      };
+      if (inProgress) {
+        // Moves have been played — confirm first. Stash the choice in pendingPlayAs and commit it
+        // only on confirm (resetConfirm), so cancelling leaves playAs (and its persisted value)
+        // unchanged. The confirm path reuses the reset flow, whose new-game side-effect resolves
+        // playerColor from the now-committed playAs and re-rolls 'random'.
+        return { ...state, pendingPlayAs: chosen, phase: 'resetConfirm', menuSelectedIndex: 1 };
+      }
+      // Fresh board: apply immediately — the playAsSelect→idle transition is picked up by the
+      // new-game side-effect.
+      return { ...state, playAs: chosen, phase: 'idle', menuSelectedIndex: 0 };
     }
 
     case 'modeSelect': {
@@ -787,25 +852,17 @@ function handleDoubleTap(state: GameState): GameState {
   }
   switch (state.phase) {
     case 'idle':
-      return handleOpenMenu(state);
+      // No-op. The menu is opened via the glasses' native OS context menu (SDK 0.0.14), not this
+      // gesture; double-tap from idle used to open the hand-rolled list, which is now retired.
+      return state;
 
     case 'rowSelect':
-      // Back out to the idle "tap to speak / scroll to begin" screen. The settings
-      // menu is one more double-tap away (idle → menu), so swiping into row select
-      // by mistake no longer drops the user straight into settings.
+      // Back out to the idle "tap to speak / scroll to begin" screen.
       return { ...state, phase: 'idle', selectedPieceId: null, selectedMoveIndex: 0 };
 
-    case 'pieceSelect': {
-      // Defensive: a fused scroll+double-tap now lands in rowSelect (handled above),
-      // so this branch is normally unreachable — kept as a guard in case a fast
-      // double-tap slips through right after descending into pieceSelect.
-      const timeSinceEntry = Date.now() - state.phaseEnteredAt;
-      if (timeSinceEntry < GESTURE_DISAMBIGUATION_MS) {
-        return handleOpenMenu(state);
-      }
+    case 'pieceSelect':
       // Back up one level to row selection (keep selectedPieceId so the row is preserved).
       return { ...state, phase: 'rowSelect', selectedMoveIndex: 0 };
-    }
 
     case 'destSelect':
       return { ...state, phase: 'pieceSelect', selectedMoveIndex: 0 };
@@ -824,7 +881,7 @@ function handleDoubleTap(state: GameState): GameState {
       return { ...state, phase: 'menu', menuSelectedIndex: 0 };
 
     case 'resetConfirm':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.RESET };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.RESET, pendingPlayAs: null };
 
     case 'exitConfirm':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.EXIT };
@@ -991,7 +1048,31 @@ function handleOpenMenu(state: GameState): GameState {
     phase: 'menu',
     menuSelectedIndex: 0,
     previousPhase,
+    // Opening the hand-rolled list clears any stale native marker: sub-screens reached from here
+    // should return to this list, not skip straight to gameplay.
+    menuInvokedNative: false,
     ...(pauseBulletTimer && { timerActive: false }),
+  };
+}
+
+/**
+ * Close a native-menu sub-screen back to gameplay (mirrors handleCloseMenu, but skips the
+ * hand-rolled list). Resumes the bullet timer if we're returning to an active game phase.
+ */
+function closeNativeSubMenu(state: GameState): GameState {
+  const target = state.previousPhase ?? 'idle';
+  const resumeBulletTimer =
+    state.mode === 'bullet' && state.timers && !state.gameOver &&
+    (target === 'idle' || target === 'rowSelect' || target === 'pieceSelect' || target === 'destSelect');
+  return {
+    ...state,
+    phase: target,
+    menuSelectedIndex: 0,
+    previousPhase: null,
+    menuInvokedNative: false,
+    // A native Cancel out of the Play As → reset confirmation must not keep the deferred choice.
+    pendingPlayAs: null,
+    ...(resumeBulletTimer && { timerActive: true, lastTickTime: Date.now() }),
   };
 }
 
@@ -1068,6 +1149,25 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
     default:
       return state;
   }
+}
+
+/**
+ * Native OS context-menu item selected (SDK 0.0.14 `menuObject` → `menuItemClickEvent`). The
+ * itemID is 1-based into NATIVE_MENU_OPTIONS (Exit excluded — the OS menu's own "close" exits).
+ * Since the OS menu is invocable from any phase, compose the same transition the hand-rolled menu
+ * uses: handleOpenMenu sets previousPhase and pauses the bullet timer (so backing out of the
+ * sub-phase lands in the menu, then the game), then handleMenuSelect routes to the sub-phase.
+ */
+function handleMenuItemClick(state: GameState, itemID: number): GameState {
+  const option = NATIVE_MENU_OPTIONS[itemID - 1];
+  if (!option) return state;
+  const opened = handleOpenMenu(state);
+  // handleOpenMenu returns the same reference (no-op) while the engine is thinking — respect that
+  // so a native-menu click during engine turn is ignored, matching the hand-rolled menu.
+  if (opened === state) return state;
+  // Mark this as a native-menu flow so the sub-screen returns to gameplay (not the hand-rolled
+  // list) when it closes — the reduce() wrapper reads menuInvokedNative to do that.
+  return { ...handleMenuSelect(opened, option), menuInvokedNative: true };
 }
 
 function handleConfirmExit(state: GameState, save: boolean): GameState {

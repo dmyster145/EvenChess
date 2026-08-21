@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mapListEvent, mapTextEvent, mapSysEvent, resetScrollDebounce, resetTapCooldown, resetScrollSuppression, resetInputDedup } from '../../src/input/actions';
-import { OsEventTypeList, List_ItemEvent, Text_ItemEvent, Sys_ItemEvent } from '@evenrealities/even_hub_sdk';
+import { mapListEvent, mapTextEvent, mapSysEvent, mapEvenHubEvent, resetScrollDebounce, resetTapCooldown, resetScrollSuppression, resetInputDedup } from '../../src/input/actions';
+import { OsEventTypeList, List_ItemEvent, Text_ItemEvent, Sys_ItemEvent, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
+import { buildInitialState } from '../../src/state/contracts';
+import { ChessService } from '../../src/chess/chessservice';
 
 describe('input/actions', () => {
   beforeEach(() => {
@@ -148,6 +150,31 @@ describe('input/actions', () => {
       expect(listClick?.type).toBe('TAP');
       const textEcho = mapTextEvent(new Text_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT }));
       expect(textEcho).toBeNull();
+    });
+  });
+
+  describe('mapEvenHubEvent — native menu (SDK 0.0.14 menuObject)', () => {
+    const state = buildInitialState(new ChessService());
+
+    it('maps menuItemClickEvent to MENU_ITEM_CLICK with the itemID', () => {
+      const event = { menuItemClickEvent: { itemID: 3 } } as unknown as EvenHubEvent;
+      const action = mapEvenHubEvent(event, state);
+      expect(action).not.toBeNull();
+      expect(action!.type).toBe('MENU_ITEM_CLICK');
+      if (action!.type === 'MENU_ITEM_CLICK') {
+        expect(action.itemID).toBe(3);
+      }
+    });
+
+    it('ignores a zero/invalid itemID (0 is the reserved protobuf value)', () => {
+      expect(mapEvenHubEvent({ menuItemClickEvent: { itemID: 0 } } as unknown as EvenHubEvent, state)).toBeNull();
+      expect(mapEvenHubEvent({ menuItemClickEvent: {} } as unknown as EvenHubEvent, state)).toBeNull();
+    });
+
+    it('does not run touchpad debounce/cooldown for menu clicks (fires every time)', () => {
+      const event = { menuItemClickEvent: { itemID: 1 } } as unknown as EvenHubEvent;
+      expect(mapEvenHubEvent(event, state)?.type).toBe('MENU_ITEM_CLICK');
+      expect(mapEvenHubEvent(event, state)?.type).toBe('MENU_ITEM_CLICK');
     });
   });
 });

@@ -19,6 +19,19 @@ export const MENU_INDEX = {
   EXIT: 6,
 } as const;
 
+/**
+ * Native OS context-menu items (SDK 0.0.14 `menuObject`). Exit is deliberately excluded — the OS
+ * menu's own "close" item exits the app, so a custom Exit entry is redundant (SDK 0.0.14 migration
+ * §3). The itemID sent to the host is the 1-based position in this array (non-zero, unique, uint32).
+ * Derived from MENU_OPTIONS/MENU_LABELS so the two stay in lockstep regardless of ordering. The
+ * hand-rolled double-tap menu still lists Exit; only the native menu drops it.
+ */
+const NATIVE_MENU_ENTRIES = MENU_OPTIONS
+  .map((option, i) => ({ option, label: MENU_LABELS[i] ?? option }))
+  .filter((entry) => entry.option !== 'exit');
+export const NATIVE_MENU_OPTIONS: MenuOption[] = NATIVE_MENU_ENTRIES.map((e) => e.option);
+export const NATIVE_MENU_LABELS: readonly string[] = NATIVE_MENU_ENTRIES.map((e) => e.label);
+
 export const DISPLAY_OPTIONS_OPTIONS: readonly string[] = ['alignment', 'size', 'markers'];
 export const DISPLAY_OPTIONS_LABELS: readonly string[] = ['Alignment', 'Size', 'Board Markers'];
 export const DISPLAY_OPTIONS_OPTION_COUNT = DISPLAY_OPTIONS_OPTIONS.length;

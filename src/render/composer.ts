@@ -9,10 +9,28 @@ import {
   RebuildPageContainer,
   TextContainerProperty,
   ImageContainerProperty,
+  MenuContainerProperty,
+  MenuItemProperty,
 } from '@evenrealities/even_hub_sdk';
 import type { GameState } from '../state/contracts';
 import { getCombinedDisplayText } from '../state/selectors';
-import { DISPLAY_WIDTH } from '../state/constants';
+import { DISPLAY_WIDTH, NATIVE_MENU_LABELS } from '../state/constants';
+
+/**
+ * Native OS context-menu (SDK 0.0.14 `menuObject`). The OS draws and invokes it via the system
+ * short+long-press gesture; a click returns `menuItemClickEvent.itemID`. itemID is the 1-based
+ * position in NATIVE_MENU_LABELS (non-zero, unique, uint32). Must be attached to EVERY page —
+ * startup AND every rebuild — because a rebuild that omits `menuObject` clears the registered menu.
+ * Exit is excluded (the OS menu's own "close" exits the app); the hand-rolled double-tap menu keeps
+ * Exit as the fallback path.
+ */
+function buildMenuObject(): MenuContainerProperty {
+  return new MenuContainerProperty({
+    menuItems: NATIVE_MENU_LABELS.map(
+      (label, i) => new MenuItemProperty({ itemName: label, itemID: i + 1 }),
+    ),
+  });
+}
 
 // Master toggle for the invisible gesture-capture container. When true, an invisible
 // full-screen text container (isEventCapture:1) sits behind everything and receives all
@@ -170,6 +188,7 @@ export function composeTextOnlyStartupPage(state: GameState): CreateStartUpPageC
     containerTotalNum: containers.totalNum,
     textObject: containers.textObjects,
     imageObject: containers.imageObjects,
+    menuObject: buildMenuObject(),
   });
 }
 
@@ -179,6 +198,7 @@ export function composeStartupPage(state: GameState): CreateStartUpPageContainer
     containerTotalNum: containers.totalNum,
     textObject: containers.textObjects,
     imageObject: containers.imageObjects,
+    menuObject: buildMenuObject(),
   });
 }
 
@@ -188,6 +208,7 @@ export function composePageForState(state: GameState): RebuildPageContainer {
     containerTotalNum: containers.totalNum,
     textObject: containers.textObjects,
     imageObject: containers.imageObjects,
+    menuObject: buildMenuObject(),
   });
 }
 

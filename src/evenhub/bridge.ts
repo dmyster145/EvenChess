@@ -37,7 +37,10 @@ import {
   type DeviceStatus,
   type DeviceInfo,
   type LaunchSource,
+  type EvenHubPageContainerLike,
   StartUpPageCreateResult,
+  validateEvenHubPageContainer,
+  formatEvenHubPageContainerValidationError,
 } from '@evenrealities/even_hub_sdk';
 import { debugLog } from '../debug/logger';
 
@@ -113,40 +116,6 @@ function sniffImageFormat(head: number[]): string {
   return head.length ? `raw[${head.join(',')}]` : 'unknown';
 }
 
-/**
- * Workaround for @evenrealities/even_hub_sdk@0.0.12's broken image path.
- *
- * 0.0.12's `ImageRawDataUpdate.toJson()` (the static serializer the SDK's own `updateImageRawData`
- * calls before postMessage-ing to native) unconditionally tags the payload `compressMode: 2` (LZ4)
- * — but the shipped bundle contains NO LZ4 code, so the bytes are sent uncompressed. Every host
- * then rejects the mislabeled payload: `updateImageRawData` resolves with `sendFailed` while text
- * (which has no compress path) keeps working. 0.0.10/0.0.11 emitted no `compressMode` at all and
- * worked. Verified by diffing `toJson` output across versions and grepping the 0.0.12 bundle for
- * any compression code (none).
- *
- * We wrap the static `toJson` once to strip `compressMode`, restoring the exact pre-0.0.12 wire
- * shape (`{containerID, containerName, imageData}`). Idempotent and defensive: no-ops if the method
- * shape ever changes. Remove this once the SDK either ships real LZ4 or stops tagging uncompressed
- * data — track via [[project_sdk_012_lz4_images]].
- */
-function patchImageCompressModeBug(): void {
-  const cls = ImageRawDataUpdate as unknown as {
-    toJson?: (model?: unknown) => Record<string, unknown>;
-    __compressModePatched?: boolean;
-  };
-  if (typeof cls.toJson !== 'function' || cls.__compressModePatched) return;
-  const orig = cls.toJson.bind(ImageRawDataUpdate);
-  cls.toJson = (model?: unknown) => {
-    const json = orig(model);
-    if (json && typeof json === 'object' && 'compressMode' in json) {
-      delete (json as Record<string, unknown>).compressMode;
-    }
-    return json;
-  };
-  cls.__compressModePatched = true;
-  debugLog('patched ImageRawDataUpdate.toJson to strip compressMode (0.0.12 LZ4 bug)', {}, 'BRG');
-}
-
 interface PendingImage {
   name: string;
   payload: ImageRawDataUpdate;
@@ -197,7 +166,6 @@ export class EvenHubBridge {
   private unsubscribeEvents: (() => void) | null = null;
 
   async init(): Promise<void> {
-    patchImageCompressModeBug();
     try {
       this.bridge = await waitForEvenAppBridge();
       console.log('[EvenHubBridge] Bridge ready.');
@@ -284,12 +252,37 @@ export class EvenHubBridge {
   // Page setup / rebuild
   // ---------------------------------------------------------------------------
 
+  /**
+   * Validate a page container against the SDK's own rules (menu item count/ID/name, z-order, text
+   * brightness) BEFORE it reaches the native bridge. On invalid, log the specific reason — visible
+   * on-device via our logger — and return false so the caller skips a doomed BLE round-trip and
+   * gets a real diagnostic instead of the host's opaque `invalid`/`false`. A validator fault must
+   * never block rendering, so we swallow throws and proceed. Returns true when it is safe to send.
+   */
+  private validatePageContainer(label: string, container: EvenHubPageContainerLike): boolean {
+    try {
+      const result = validateEvenHubPageContainer(container);
+      if (!result.valid) {
+        debugLog('page container invalid — aborting', {
+          label,
+          reason: formatEvenHubPageContainerValidationError(result),
+        }, 'BRG');
+        return false;
+      }
+    } catch (err) {
+      // Validator itself faulted — proceed rather than block rendering.
+      debugLog('page container validation threw — proceeding', { label, err: String(err) }, 'BRG');
+    }
+    return true;
+  }
+
   async setupPage(container: CreateStartUpPageContainer): Promise<boolean> {
     if (!this.bridge) return false;
     if (this.startupCalled) {
       console.warn('[EvenHubBridge] setupPage called twice; ignoring (use updatePage instead).');
       return false;
     }
+    if (!this.validatePageContainer('createStartUpPageContainer', container)) return false;
     const bridge = this.bridge;
     const result = await this.serializeBleCall(
       'createStartUpPageContainer',
@@ -308,6 +301,7 @@ export class EvenHubBridge {
 
   async updatePage(container: RebuildPageContainer): Promise<boolean> {
     if (!this.bridge) return false;
+    if (!this.validatePageContainer('rebuildPageContainer', container)) return false;
     const bridge = this.bridge;
     const startMs = nowMs();
     const ok = await this.serializeBleCall(

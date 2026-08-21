@@ -1,6 +1,6 @@
 {
   "name": "evenchess",
-  "version": "2.0.5",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,14 +17,14 @@
     "postinstall": "node scripts/copy-stockfish.cjs"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.12",
+    "@evenrealities/even_hub_sdk": "^0.0.14",
     "chess.js": "^1.4.0",
     "stockfish.js": "^10.0.2",
     "upng-js": "^2.1.0",
     "vosk-browser": "^0.0.8"
   },
   "devDependencies": {
-    "@evenrealities/evenhub-simulator": "^0.7.3",
+    "@evenrealities/evenhub-simulator": "^0.9.1",
     "@types/node": "^25.8.0",
     "@typescript-eslint/eslint-plugin": "^8.59.3",
     "@typescript-eslint/parser": "^8.59.3",
