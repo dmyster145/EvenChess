@@ -28,7 +28,6 @@ function createTimerState(overrides?: Partial<GameState>): GameState {
     difficulty: 'casual',
     customSkillLevel: 5,
     logScrollOffset: 0,
-    phaseEnteredAt: Date.now(),
     timerActive: true,
     lastTickTime: Date.now(),
     selectedTimeControlIndex: 0,

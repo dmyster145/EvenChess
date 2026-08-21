@@ -89,9 +89,3 @@ export const LOG_MAX_VISIBLE = 5;
 export const DISPLAY_WIDTH = 576;
 
 export const MAX_HISTORY_LENGTH = 200;
-
-/**
- * Gesture disambiguation: if double-tap arrives within this time after entering
- * pieceSelect from a scroll, treat it as menu open intent (not back from pieceSelect).
- */
-export const GESTURE_DISAMBIGUATION_MS = 200;

@@ -54,7 +54,6 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     difficulty: 'casual',
     customSkillLevel: 5,
     logScrollOffset: 0,
-    phaseEnteredAt: Date.now(),
     timerActive: false,
     lastTickTime: null,
     selectedTimeControlIndex: 2,
@@ -251,13 +250,8 @@ describe('reducer', () => {
   });
 
   describe('DOUBLE_TAP', () => {
-    it('goes back to rowSelect from pieceSelect (after gesture disambiguation window)', () => {
-      // phaseEnteredAt needs to be old enough to pass the gesture disambiguation
-      const state = createTestState({
-        phase: 'pieceSelect',
-        selectedPieceId: 'w-n-g1',
-        phaseEnteredAt: Date.now() - 500, // 500ms ago, past the 200ms window
-      });
+    it('double-tap from pieceSelect backs out to rowSelect (never opens a menu)', () => {
+      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('rowSelect');
       expect(next.selectedPieceId).toBe('w-n-g1'); // kept so the row is preserved
@@ -272,16 +266,6 @@ describe('reducer', () => {
       // Double-tap from idle no longer opens a menu — the native OS menu is the only entry point.
       const stillIdle = reduce(backToIdle, { type: 'DOUBLE_TAP' });
       expect(stillIdle.phase).toBe('idle');
-    });
-
-    it('double-tap from pieceSelect backs out to rowSelect (never opens a menu)', () => {
-      const state = createTestState({
-        phase: 'pieceSelect',
-        selectedPieceId: 'w-n-g1',
-        phaseEnteredAt: Date.now(), // just entered — the old fused-gesture menu shortcut is gone
-      });
-      const next = reduce(state, { type: 'DOUBLE_TAP' });
-      expect(next.phase).toBe('rowSelect');
     });
 
     it('goes back to pieceSelect from destSelect', () => {
@@ -1464,8 +1448,10 @@ describe('reducer', () => {
       timerActive: true, lastTickTime: 1000, ...over,
     });
 
-    it('PAUSE freezes a running clock', () => {
-      expect(reduce(bullet(), { type: 'BULLET_PAUSE' }).timerActive).toBe(false);
+    it('PAUSE freezes a running clock and marks it paused-for-menu', () => {
+      const next = reduce(bullet(), { type: 'BULLET_PAUSE' });
+      expect(next.timerActive).toBe(false);
+      expect(next.bulletPausedForMenu).toBe(true);
     });
 
     it('PAUSE is a no-op when the clock is not running', () => {
@@ -1478,21 +1464,39 @@ describe('reducer', () => {
       expect(reduce(s, { type: 'BULLET_PAUSE' })).toBe(s);
     });
 
-    it('RESUME restarts a paused clock in a game phase and resets lastTickTime', () => {
-      const paused = bullet({ timerActive: false, lastTickTime: 1000 });
+    it('RESUME restarts a menu-paused clock in a game phase and resets lastTickTime', () => {
+      const paused = bullet({ timerActive: false, bulletPausedForMenu: true, lastTickTime: 1000 });
       const next = reduce(paused, { type: 'BULLET_RESUME' });
       expect(next.timerActive).toBe(true);
+      expect(next.bulletPausedForMenu).toBe(false);
       expect(next.lastTickTime).not.toBe(1000); // reset so the paused span isn't charged
     });
 
+    it('RESUME never starts a clock that was not paused by the menu', () => {
+      const s = bullet({ timerActive: false, bulletPausedForMenu: false });
+      expect(reduce(s, { type: 'BULLET_RESUME' })).toBe(s);
+    });
+
     it('RESUME does NOT fire in a menu sub-phase (that sub-screen resumes on its own)', () => {
-      const s = bullet({ timerActive: false, phase: 'difficultySelect' });
+      const s = bullet({ timerActive: false, bulletPausedForMenu: true, phase: 'difficultySelect' });
       expect(reduce(s, { type: 'BULLET_RESUME' })).toBe(s);
     });
 
     it('RESUME does not restart the clock after game over', () => {
-      const s = bullet({ timerActive: false, gameOver: 'White wins on time!' });
+      const s = bullet({ timerActive: false, bulletPausedForMenu: true, gameOver: 'White wins on time!' });
       expect(reduce(s, { type: 'BULLET_RESUME' })).toBe(s);
+    });
+
+    it('a native menu opened before the first move does not start the clock on back-out', () => {
+      // Fresh bullet game, clock not started. Simulate: OS overlay open (BULLET_PAUSE, no-op),
+      // click a menu item -> sub-phase, back out -> closeNativeSubMenu. The clock must stay stopped.
+      let s = bullet({ timerActive: false });
+      s = reduce(s, { type: 'BULLET_PAUSE' });          // no-op (nothing running)
+      s = reduce(s, { type: 'MENU_ITEM_CLICK', itemID: 4 }); // -> difficultySelect
+      expect(s.phase).toBe('difficultySelect');
+      s = reduce(s, { type: 'DOUBLE_TAP' });            // back out -> gameplay
+      expect(s.phase).toBe('idle');
+      expect(s.timerActive).toBe(false);                // NOT started (finding #1)
     });
   });
 });

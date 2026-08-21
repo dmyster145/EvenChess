@@ -227,6 +227,11 @@ function reduceCore(state: GameState, action: Action): GameState {
         pendingMove: null,
         pendingPromotionMove: null,
         pendingSystemExitDialog: false,
+        // Clear transient menu-flow flags so a snapshot captured mid-flow can't trigger a spurious
+        // reset or resume on restore.
+        pendingReset: false,
+        pendingPlayAs: null,
+        bulletPausedForMenu: false,
         // lastTickTime should be reset; the next TIMER_TICK will recompute elapsed from now.
         lastTickTime: action.state.timerActive ? Date.now() : null,
       };
@@ -276,19 +281,20 @@ function reduceCore(state: GameState, action: Action): GameState {
     case 'TIMER_TICK':
       return handleTimerTick(state);
 
-    // Freeze the bullet clock while the native OS menu (a system overlay) is open. Only meaningful
-    // if the clock is actually running; the lifecycle layer only pauses/resumes when it was.
+    // Freeze the bullet clock while the native OS menu (a system overlay) is open. Only pauses a
+    // RUNNING clock; bulletPausedForMenu records that so resume knows this clock was ticking.
     case 'BULLET_PAUSE':
       return state.mode === 'bullet' && state.timerActive && state.timers
-        ? { ...state, timerActive: false }
+        ? { ...state, timerActive: false, bulletPausedForMenu: true }
         : state;
 
-    // Resume after the overlay closes. Reset lastTickTime so the paused span isn't charged. Guarded
-    // to a live game phase so a click that dove into a menu sub-screen (e.g. Difficulty) stays
-    // paused — that sub-screen resumes the clock itself when it closes back to gameplay.
+    // Resume after the overlay closes. Only if this clock was paused by the menu (never starts a
+    // not-yet-started clock). Reset lastTickTime so the paused span isn't charged. Guarded to a live
+    // game phase so a click that dove into a sub-screen (e.g. Difficulty) stays paused — that
+    // sub-screen resumes the clock itself when it closes back to gameplay.
     case 'BULLET_RESUME':
-      return state.mode === 'bullet' && state.timers && !state.gameOver && !state.timerActive && GAME_PHASES.has(state.phase)
-        ? { ...state, timerActive: true, lastTickTime: Date.now() }
+      return state.bulletPausedForMenu && state.mode === 'bullet' && state.timers && !state.gameOver && !state.timerActive && GAME_PHASES.has(state.phase)
+        ? { ...state, timerActive: true, lastTickTime: Date.now(), bulletPausedForMenu: false }
         : state;
 
     case 'APPLY_INCREMENT':
@@ -367,7 +373,6 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
         phase: 'rowSelect',
         selectedPieceId: initial.id,
         selectedMoveIndex: 0,
-        phaseEnteredAt: Date.now(),
         ...(startTimer && { timerActive: true, lastTickTime: Date.now() }),
       };
     }
@@ -607,7 +612,6 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         phase: 'rowSelect',
         selectedPieceId: initial.id,
         selectedMoveIndex: 0,
-        phaseEnteredAt: Date.now(),
       };
     }
 
@@ -619,7 +623,6 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         phase: 'pieceSelect',
         selectedPieceId: piece.id,
         selectedMoveIndex: 0,
-        phaseEnteredAt: Date.now(),
       };
     }
 
@@ -1051,7 +1054,7 @@ function handleOpenMenu(state: GameState): GameState {
     // Opening the hand-rolled list clears any stale native marker: sub-screens reached from here
     // should return to this list, not skip straight to gameplay.
     menuInvokedNative: false,
-    ...(pauseBulletTimer && { timerActive: false }),
+    ...(pauseBulletTimer && { timerActive: false, bulletPausedForMenu: true }),
   };
 }
 
@@ -1061,8 +1064,10 @@ function handleOpenMenu(state: GameState): GameState {
  */
 function closeNativeSubMenu(state: GameState): GameState {
   const target = state.previousPhase ?? 'idle';
+  // Resume only a clock the menu actually paused (bulletPausedForMenu) — never start one that
+  // wasn't running when the menu was opened.
   const resumeBulletTimer =
-    state.mode === 'bullet' && state.timers && !state.gameOver &&
+    state.bulletPausedForMenu && state.mode === 'bullet' && state.timers && !state.gameOver &&
     (target === 'idle' || target === 'rowSelect' || target === 'pieceSelect' || target === 'destSelect');
   return {
     ...state,
@@ -1072,19 +1077,24 @@ function closeNativeSubMenu(state: GameState): GameState {
     menuInvokedNative: false,
     // A native Cancel out of the Play As → reset confirmation must not keep the deferred choice.
     pendingPlayAs: null,
+    // Leaving the menu flow: clear the pause marker (resume below if it applies).
+    bulletPausedForMenu: false,
     ...(resumeBulletTimer && { timerActive: true, lastTickTime: Date.now() }),
   };
 }
 
 function handleCloseMenu(state: GameState): GameState {
+  // Resume only a clock the menu actually paused (bulletPausedForMenu), never start one that
+  // wasn't running when the menu opened.
   const resumeBulletTimer =
-    state.mode === 'bullet' && state.timers && !state.gameOver &&
+    state.bulletPausedForMenu && state.mode === 'bullet' && state.timers && !state.gameOver &&
     (state.previousPhase === 'idle' || state.previousPhase === 'rowSelect' || state.previousPhase === 'pieceSelect' || state.previousPhase === 'destSelect');
   return {
     ...state,
     phase: state.previousPhase ?? 'idle',
     menuSelectedIndex: 0,
     previousPhase: null,
+    bulletPausedForMenu: false,
     ...(resumeBulletTimer && { timerActive: true, lastTickTime: Date.now() }),
   };
 }

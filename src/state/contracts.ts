@@ -199,14 +199,18 @@ export interface GameState {
   /** Resolved human color for the current game. Drives board flip + engine ownership. */
   playerColor: PlayerColor;
   logScrollOffset: number;
-  /** For gesture disambiguation (see GESTURE_DISAMBIGUATION_MS in constants) */
-  phaseEnteredAt: number;
   timers?: {
     whiteMs: number;
     blackMs: number;
     incrementMs: number;
   };
   timerActive: boolean;
+  /**
+   * True while a menu/overlay paused a RUNNING bullet clock. Set when the pause happens (menu open
+   * or native OS overlay) and checked on resume, so closing the menu resumes only a clock that was
+   * actually ticking — opening the menu before the first move never starts it.
+   */
+  bulletPausedForMenu?: boolean;
   lastTickTime: number | null;
   selectedTimeControlIndex: number;
   academyState?: AcademyState;
@@ -291,7 +295,6 @@ export function buildInitialState(chess: ChessService): GameState {
     playAs: 'white',
     playerColor: 'w',
     logScrollOffset: 0,
-    phaseEnteredAt: Date.now(),
     timerActive: false,
     lastTickTime: null,
     selectedTimeControlIndex: 2,

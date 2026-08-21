@@ -83,20 +83,19 @@ function buildFrame(state: GameState, chess: ChessService): HTMLCanvasElement {
 
   drawText(ctx, state, layout);
 
-  // Captured-pieces strip directly above the board — parity with the brand container,
-  // which now renders piece silhouettes here (Black's losses on top, White's below).
-  // This debug view approximates the silhouettes with FEN letters.
+  // Captured-pieces strip directly above the board, mirroring the brand container: piece
+  // silhouettes (Black's losses on top, White's below), approximated here with FEN letters. When
+  // nothing is captured the glasses leave this strip blank, so the snapshot does too — no "CHESS"
+  // mark (that brand text isn't rendered in the app).
   const cap = getCapturedDisplay(state);
-  const stripY = layout.boardTopY - BRAND_HEIGHT;
-  const xb = layout.boardX * SCALE;
-  ctx.strokeStyle = `rgba(${ON[0]},${ON[1]},${ON[2]},0.4)`;
-  ctx.strokeRect(xb, stripY * SCALE, width * SCALE, BRAND_HEIGHT * SCALE);
-  ctx.fillStyle = `rgb(${ON[0]},${ON[1]},${ON[2]})`;
-  ctx.font = `${13 * SCALE}px "DM Mono", ui-monospace, monospace`;
-  ctx.textBaseline = 'top';
-  if (!cap.top && !cap.bottom) {
-    ctx.fillText('CHESS', xb + 4 * SCALE, (stripY + 12) * SCALE, width * SCALE);
-  } else {
+  if (cap.top || cap.bottom) {
+    const stripY = layout.boardTopY - BRAND_HEIGHT;
+    const xb = layout.boardX * SCALE;
+    ctx.strokeStyle = `rgba(${ON[0]},${ON[1]},${ON[2]},0.4)`;
+    ctx.strokeRect(xb, stripY * SCALE, width * SCALE, BRAND_HEIGHT * SCALE);
+    ctx.fillStyle = `rgb(${ON[0]},${ON[1]},${ON[2]})`;
+    ctx.font = `${13 * SCALE}px "DM Mono", ui-monospace, monospace`;
+    ctx.textBaseline = 'top';
     ctx.fillText(cap.top, xb + 4 * SCALE, (stripY + 2) * SCALE, width * SCALE);
     ctx.fillText(cap.bottom, xb + 4 * SCALE, (stripY + 21) * SCALE, width * SCALE);
   }
