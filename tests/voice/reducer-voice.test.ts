@@ -17,7 +17,7 @@ function createState(overrides?: Partial<GameState>): GameState {
     inCheck: false, gameOver: null, pendingMove: null, menuSelectedIndex: 0,
     hasUnsavedChanges: false, previousPhase: null, difficulty: 'casual',
     customSkillLevel: 5, logScrollOffset: 0, timerActive: false,
-    lastTickTime: null, selectedTimeControlIndex: 2, showBoardMarkers: true,
+    lastTickTime: null, selectedTimeControlIndex: 2, showBoardMarkers: true, boardPosition: 'bottom',
     playAs: 'white', playerColor: 'w', ...overrides,
   };
 }

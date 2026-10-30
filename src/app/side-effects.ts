@@ -5,7 +5,7 @@
  * - Pending move → engine response (race #6 fix: dispatched as a regular action, not
  *   `queueMicrotask(async () => ...)` so the next render cycle naturally picks up the engine
  *   response without a microtask race against the board render)
- * - Difficulty / boardMarkers / boardSize / boardAlignment persistence + side effects
+ * - Difficulty / boardMarkers / boardSize / boardAlignment / boardPosition persistence + side effects
  * - Tap cooldown extension on phase changes
  * - Menu / reset / mode-switch side effects (calls into ChessService)
  * - Autosave queueing
@@ -21,7 +21,7 @@ import type { FlushController } from './flush';
 import type { BrandingController } from './branding';
 import type { BulletTimerController } from './bullet-timer';
 import type { AutosaveController } from './autosave';
-import { saveGame, saveDifficulty, saveCustomSkillLevel, saveBoardMarkers, saveBoardSize, saveBoardAlignment, savePlayAs, clearSave } from '../storage/persistence';
+import { saveGame, saveDifficulty, saveCustomSkillLevel, saveBoardMarkers, saveBoardSize, saveBoardAlignment, saveBoardPosition, savePlayAs, clearSave } from '../storage/persistence';
 import { resolvePlayerColor } from '../state/utils';
 import { getEngineProfile } from '../engine/profiles';
 import { extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from '../input/actions';
@@ -133,6 +133,11 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
 
     if (state.showBoardMarkers !== prevState.showBoardMarkers) {
       void saveBoardMarkers(state.showBoardMarkers);
+    }
+
+    if (state.boardPosition !== prevState.boardPosition) {
+      // The board renderer picks up the new orientation on its next render; just persist.
+      void saveBoardPosition(state.boardPosition);
     }
 
     if (state.boardSize !== prevState.boardSize) {

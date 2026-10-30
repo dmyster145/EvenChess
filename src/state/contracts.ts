@@ -67,6 +67,8 @@ export type MenuOption = 'mode' | 'viewLog' | 'difficulty' | 'playAs' | 'display
 
 export type BoardAlignment = 'center' | 'right';
 export type BoardSize = 'small' | 'large';
+/** Which edge of the board the human's pieces sit on. 'bottom' is the classic view. */
+export type BoardPosition = 'bottom' | 'top';
 /** User preference for which side to play. 'random' re-rolls each new game. */
 export type PlayAs = 'white' | 'black' | 'random';
 /** Resolved human color for the current game (random is resolved at new-game). */
@@ -180,6 +182,8 @@ export interface GameState {
   customSkillLevel: number;
   boardAlignment: BoardAlignment;
   boardSize: BoardSize;
+  /** Display preference: show the human's pieces at the bottom (default) or top of the board. */
+  boardPosition: BoardPosition;
   /** User preference for side to play; 'random' re-rolls each new game. */
   playAs: PlayAs;
   /**
@@ -283,6 +287,7 @@ export function buildInitialState(chess: ChessService): GameState {
     customSkillLevel: CUSTOM_SKILL_LEVEL_DEFAULT,
     boardAlignment: 'right',
     boardSize: 'small',
+    boardPosition: 'bottom',
     playAs: 'white',
     playerColor: 'w',
     logScrollOffset: 0,

@@ -8,7 +8,7 @@
  * Each setting is stored under its own key to avoid read-modify-write races.
  */
 
-import type { DifficultyLevel, BoardAlignment, BoardSize, PlayAs, PlayerColor } from '../state/contracts';
+import type { DifficultyLevel, BoardAlignment, BoardSize, BoardPosition, PlayAs, PlayerColor } from '../state/contracts';
 import {
   CUSTOM_SKILL_LEVEL_DEFAULT,
   CUSTOM_SKILL_LEVEL_MAX,
@@ -33,6 +33,7 @@ const CUSTOM_SKILL_KEY      = 'evenchess-custom-skill-level';
 const MARKERS_KEY           = 'evenchess-board-markers';
 const ALIGNMENT_KEY         = 'evenchess-board-alignment';
 const SIZE_KEY              = 'evenchess-board-size';
+const POSITION_KEY          = 'evenchess-board-position';
 const PLAY_AS_KEY           = 'evenchess-play-as';
 
 // --- Storage adapter ---
@@ -110,6 +111,15 @@ export async function saveBoardSize(boardSize: BoardSize): Promise<void> {
 export async function loadBoardSize(): Promise<BoardSize> {
   const value = await _get(SIZE_KEY);
   return (value as BoardSize | null) ?? 'small';
+}
+
+export async function saveBoardPosition(boardPosition: BoardPosition): Promise<void> {
+  await _set(POSITION_KEY, boardPosition);
+}
+
+export async function loadBoardPosition(): Promise<BoardPosition> {
+  const value = await _get(POSITION_KEY);
+  return value === 'top' ? 'top' : 'bottom';
 }
 
 export async function savePlayAs(playAs: PlayAs): Promise<void> {

@@ -32,6 +32,7 @@ function createTimerState(overrides?: Partial<GameState>): GameState {
     lastTickTime: Date.now(),
     selectedTimeControlIndex: 0,
     showBoardMarkers: true,
+    boardPosition: 'bottom',
     playAs: 'white',
     playerColor: 'w',
     timers: {

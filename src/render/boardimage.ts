@@ -5,7 +5,7 @@
 
 import type { GameState } from '../state/contracts';
 import type { ChessService } from '../chess/chessservice';
-import { getSelectedPiece, getSelectedMove, getSelectedRow } from '../state/selectors';
+import { getSelectedPiece, getSelectedMove, getSelectedRow, getBoardViewColor } from '../state/selectors';
 import { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
 import {
   CONTAINER_ID_IMAGE_TOP,
@@ -177,7 +177,8 @@ export class BoardRenderer {
   private workPixels: Uint8Array = new Uint8Array(BUF_W * BUF_H);
   private lastFen = '';
   private lastShowBoardMarkers = true;
-  private lastPlayerColor: 'w' | 'b' = 'w';
+  /** Color drawn at the bottom of the board (see getBoardViewColor). */
+  private lastViewColor: 'w' | 'b' = 'w';
   private prevHighlightKeys = new Set<string>();
   private currentHighlightKeys = new Set<string>();
   private cachedTopBmp: Uint8Array = initBmpBuffer();
@@ -196,17 +197,18 @@ export class BoardRenderer {
     const showBoardMarkers = this.largeGrid ? false : state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
-    const playerColorChanged = state.playerColor !== this.lastPlayerColor;
+    const viewColor = getBoardViewColor(state);
+    const viewColorChanged = viewColor !== this.lastViewColor;
     let baseTopDirty = false;
     let baseBottomDirty = false;
 
-    if (fenChanged || markersChanged || playerColorChanged) {
+    if (fenChanged || markersChanged || viewColorChanged) {
       this.prevBasePixels.set(this.basePixels);
-      this.rebuildBase(chess, showBoardMarkers, state.playerColor);
+      this.rebuildBase(chess, showBoardMarkers, viewColor);
       this.lastFen = fen;
       this.lastShowBoardMarkers = showBoardMarkers;
-      this.lastPlayerColor = state.playerColor;
-      if (markersChanged || playerColorChanged) {
+      this.lastViewColor = viewColor;
+      if (markersChanged || viewColorChanged) {
         baseTopDirty = true;
         baseBottomDirty = true;
       } else if (fenChanged) {
@@ -221,7 +223,7 @@ export class BoardRenderer {
     const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys, this.g);
 
     // Fast path: highlight-only changes use dirty tracking (skip when caller needs both halves)
-    if (!fenChanged && !markersChanged && !playerColorChanged && !forceBothHalves) {
+    if (!fenChanged && !markersChanged && !viewColorChanged && !forceBothHalves) {
       const topDirty = highlightDirty.topDirty;
       const bottomDirty = highlightDirty.bottomDirty;
 
@@ -247,8 +249,8 @@ export class BoardRenderer {
     }
 
     // FEN/markers/perspective changed or caller forced both halves: encode dirty halves.
-    const topDirty = forceBothHalves || markersChanged || playerColorChanged || baseTopDirty || highlightDirty.topDirty;
-    const bottomDirty = forceBothHalves || markersChanged || playerColorChanged || baseBottomDirty || highlightDirty.bottomDirty;
+    const topDirty = forceBothHalves || markersChanged || viewColorChanged || baseTopDirty || highlightDirty.topDirty;
+    const bottomDirty = forceBothHalves || markersChanged || viewColorChanged || baseBottomDirty || highlightDirty.bottomDirty;
     if (!topDirty && !bottomDirty) return [];
 
     const tmp = this.prevHighlightKeys;
@@ -300,17 +302,18 @@ export class BoardRenderer {
     const showBoardMarkers = this.largeGrid ? false : state.showBoardMarkers;
     const fenChanged = fen !== this.lastFen;
     const markersChanged = showBoardMarkers !== this.lastShowBoardMarkers;
-    const playerColorChanged = state.playerColor !== this.lastPlayerColor;
+    const viewColor = getBoardViewColor(state);
+    const viewColorChanged = viewColor !== this.lastViewColor;
     let baseTopDirty = false;
     let baseBottomDirty = false;
 
-    if (fenChanged || markersChanged || playerColorChanged) {
+    if (fenChanged || markersChanged || viewColorChanged) {
       this.prevBasePixels.set(this.basePixels);
-      this.rebuildBase(chess, showBoardMarkers, state.playerColor);
+      this.rebuildBase(chess, showBoardMarkers, viewColor);
       this.lastFen = fen;
       this.lastShowBoardMarkers = showBoardMarkers;
-      this.lastPlayerColor = state.playerColor;
-      if (markersChanged || playerColorChanged) {
+      this.lastViewColor = viewColor;
+      if (markersChanged || viewColorChanged) {
         baseTopDirty = true;
         baseBottomDirty = true;
       } else if (fenChanged) {
@@ -324,7 +327,7 @@ export class BoardRenderer {
     for (const h of highlights) this.currentHighlightKeys.add(hlKey(h.file, h.rank, h.style));
     const highlightDirty = getHighlightDirtyHalves(this.prevHighlightKeys, this.currentHighlightKeys, this.g);
 
-    if (!fenChanged && !markersChanged && !playerColorChanged && !forceBothHalves) {
+    if (!fenChanged && !markersChanged && !viewColorChanged && !forceBothHalves) {
       const topDirty = highlightDirty.topDirty;
       const bottomDirty = highlightDirty.bottomDirty;
       if (!topDirty && !bottomDirty) return [];
@@ -352,8 +355,8 @@ export class BoardRenderer {
       return dirty;
     }
 
-    const topDirty = forceBothHalves || markersChanged || playerColorChanged || baseTopDirty || highlightDirty.topDirty;
-    const bottomDirty = forceBothHalves || markersChanged || playerColorChanged || baseBottomDirty || highlightDirty.bottomDirty;
+    const topDirty = forceBothHalves || markersChanged || viewColorChanged || baseTopDirty || highlightDirty.topDirty;
+    const bottomDirty = forceBothHalves || markersChanged || viewColorChanged || baseBottomDirty || highlightDirty.bottomDirty;
     if (!topDirty && !bottomDirty) return [];
 
     const tmpKeys = this.prevHighlightKeys;
@@ -381,10 +384,10 @@ export class BoardRenderer {
     return dirty;
   }
 
-  private rebuildBase(chess: ChessService, showBoardMarkers: boolean = true, playerColor: 'w' | 'b' = 'w'): void {
+  private rebuildBase(chess: ChessService, showBoardMarkers: boolean = true, viewColor: 'w' | 'b' = 'w'): void {
     const pixels = this.basePixels;
     const g = this.g;
-    const flip = playerColor === 'b';
+    const flip = viewColor === 'b';
     pixels.fill(0);
 
     for (let rank = 0; rank < 8; rank++) {
@@ -410,7 +413,7 @@ export class BoardRenderer {
       for (let file = 0; file < 8; file++) {
         const piece = row[file];
         if (piece) {
-          // board[0] is chess rank 8 (display row 0 for White). Flip 180° for Black.
+          // board[0] is chess rank 8 (display row 0 for White). Flip 180° when Black is at the bottom.
           const dRow = flip ? 7 - rank : rank;
           const dFile = flip ? 7 - file : file;
           drawPiece(pixels, dFile, dRow, piece.color, piece.type, g);
@@ -586,7 +589,7 @@ export function rankHalf(rank: number): 'top' | 'bottom' {
 function getHighlights(state: GameState): Highlight[] {
   const highlights: Highlight[] = [];
   const piece = getSelectedPiece(state);
-  const pc = state.playerColor;
+  const pc = getBoardViewColor(state);
 
   switch (state.phase) {
     case 'rowSelect': {

@@ -4,7 +4,7 @@
  * Used by the page composer to build container configs.
  */
 
-import type { GameState, PieceEntry, CarouselMove } from './contracts';
+import type { GameState, PieceEntry, CarouselMove, PlayerColor } from './contracts';
 import {
   MENU_LABELS,
   DIFFICULTY_OPTIONS,
@@ -394,6 +394,15 @@ export function getCustomDifficultyDisplayText(state: GameState): string {
   return lines.join('\n');
 }
 
+/**
+ * The color drawn at the bottom of the board. Normally the human's color; the Position display
+ * option ('top') flips it so the human's pieces sit at the top instead.
+ */
+export function getBoardViewColor(state: Pick<GameState, 'playerColor' | 'boardPosition'>): PlayerColor {
+  if (state.boardPosition !== 'top') return state.playerColor;
+  return state.playerColor === 'w' ? 'b' : 'w';
+}
+
 /** Current value shown inline next to each (binary) Display Option row. */
 function displayOptionValue(state: GameState, option: string): string {
   switch (option) {
@@ -403,6 +412,8 @@ function displayOptionValue(state: GameState, option: string): string {
       return state.boardSize === 'small' ? 'Small' : 'Large';
     case 'markers':
       return state.showBoardMarkers ? 'On' : 'Off';
+    case 'position':
+      return state.boardPosition === 'top' ? 'Top' : 'Bottom';
     default:
       return '';
   }

@@ -16,6 +16,8 @@ import {
   loadBoardAlignment,
   saveBoardSize,
   loadBoardSize,
+  saveBoardPosition,
+  loadBoardPosition,
 } from '../../src/storage/persistence';
 
 const localStorageMock = (() => {
@@ -170,6 +172,22 @@ describe('persistence', () => {
     it('saves and loads small', async () => {
       await saveBoardSize('small');
       expect(await loadBoardSize()).toBe('small');
+    });
+  });
+
+  describe('saveBoardPosition / loadBoardPosition', () => {
+    it('returns bottom when not set', async () => {
+      expect(await loadBoardPosition()).toBe('bottom');
+    });
+
+    it('saves and loads top', async () => {
+      await saveBoardPosition('top');
+      expect(await loadBoardPosition()).toBe('top');
+    });
+
+    it('saves and loads bottom', async () => {
+      await saveBoardPosition('bottom');
+      expect(await loadBoardPosition()).toBe('bottom');
     });
   });
 

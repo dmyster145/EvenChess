@@ -23,6 +23,7 @@ import {
   loadBoardMarkers,
   loadBoardAlignment,
   loadBoardSize,
+  loadBoardPosition,
   loadPlayAs,
   loadGame,
   clearSave,
@@ -40,12 +41,13 @@ import { getCombinedDisplayText } from '../state/selectors';
 import { debugLog } from '../debug/logger';
 
 export async function loadInitialAppState(chess: ChessService): Promise<GameState> {
-  const [persistedDifficulty, persistedCustomSkillLevel, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, persistedPlayAs, savedGame] = await Promise.all([
+  const [persistedDifficulty, persistedCustomSkillLevel, persistedBoardMarkers, persistedBoardAlignment, persistedBoardSize, persistedBoardPosition, persistedPlayAs, savedGame] = await Promise.all([
     loadDifficulty(),
     loadCustomSkillLevel(),
     loadBoardMarkers(),
     loadBoardAlignment(),
     loadBoardSize(),
+    loadBoardPosition(),
     loadPlayAs(),
     loadGame(),
   ]);
@@ -58,6 +60,7 @@ export async function loadInitialAppState(chess: ChessService): Promise<GameStat
     showBoardMarkers: persistedBoardMarkers,
     boardAlignment: persistedBoardAlignment,
     boardSize: persistedBoardSize,
+    boardPosition: persistedBoardPosition,
     playAs: persistedPlayAs,
     // Fresh start: resolve the human's color now ('random' rolls here). A resumed
     // saved game overrides this below with its own persisted playerColor.
@@ -97,6 +100,7 @@ export async function loadInitialAppState(chess: ChessService): Promise<GameStat
     markers: persistedBoardMarkers,
     alignment: persistedBoardAlignment,
     size: persistedBoardSize,
+    position: persistedBoardPosition,
     savedGame: savedGame ? 'yes' : 'no',
   }, 'INIT');
 

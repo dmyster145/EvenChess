@@ -58,6 +58,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     lastTickTime: null,
     selectedTimeControlIndex: 2,
     showBoardMarkers: true,
+    boardPosition: 'bottom',
     playAs: 'white',
     playerColor: 'w',
     ...overrides,
@@ -574,6 +575,23 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'large' });
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
       expect(next.boardSize).toBe('small');
+    });
+
+    it('tapping the position row flips boardPosition and stays put', () => {
+      const bottom = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 3, boardPosition: 'bottom' });
+      const top = reduce(bottom, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(top.boardPosition).toBe('top');
+      expect(top.phase).toBe('displayOptionsSelect');
+      expect(top.menuSelectedIndex).toBe(3);
+      expect(reduce(top, { type: 'TAP', selectedIndex: 0, selectedName: '' }).boardPosition).toBe('bottom');
+    });
+
+    it('scrolling skips the hidden markers row onto Position when the board is large', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'large' });
+      // Settings phases invert the raw SCROLL direction, so 'up' advances to the next row.
+      const next = reduce(state, { type: 'SCROLL', direction: 'up' });
+      expect(next.menuSelectedIndex).toBe(3);
+      expect(reduce(next, { type: 'SCROLL', direction: 'down' }).menuSelectedIndex).toBe(1);
     });
   });
 
@@ -1290,6 +1308,12 @@ describe('reducer', () => {
       // Black (flipped): SCROLL down must invert → previous (wraps rank 1 → rank 4)
       const b = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1', pieces: threeRows, playerColor: 'b' });
       expect(reduce(b, { type: 'SCROLL', direction: 'down' }).selectedPieceId).toBe('w-p-d4');
+      // White with Position: Top is drawn flipped too, so it inverts like Black.
+      const wTop = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1', pieces: threeRows, playerColor: 'w', boardPosition: 'top' });
+      expect(reduce(wTop, { type: 'SCROLL', direction: 'down' }).selectedPieceId).toBe('w-p-d4');
+      // Black with Position: Top is drawn unflipped (White at the bottom), so it does not invert.
+      const bTop = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1', pieces: threeRows, playerColor: 'b', boardPosition: 'top' });
+      expect(reduce(bTop, { type: 'SCROLL', direction: 'down' }).selectedPieceId).toBe('w-p-e2');
     });
   });
 

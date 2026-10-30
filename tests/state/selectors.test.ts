@@ -10,6 +10,7 @@ import {
   getMenuDisplayText,
   getDifficultyDisplayText,
   getDisplayOptionsDisplayText,
+  getBoardViewColor,
   getLogDisplayText,
   getResetConfirmDisplayText,
   getExitConfirmDisplayText,
@@ -82,6 +83,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     lastTickTime: null,
     selectedTimeControlIndex: 2,
     showBoardMarkers: true,
+    boardPosition: 'bottom',
     playAs: 'white',
     playerColor: 'w',
     ...overrides,
@@ -603,7 +605,7 @@ describe('selectors', () => {
   // ── Board Markers Display Text Tests ────────────────────────────────────────
 
   describe('getDisplayOptionsDisplayText', () => {
-    it('shows DISPLAY OPTIONS header and all three rows with inline values', () => {
+    it('shows DISPLAY OPTIONS header and all rows with inline values', () => {
       const state = createTestState({
         phase: 'displayOptionsSelect',
         boardAlignment: 'right',
@@ -615,6 +617,7 @@ describe('selectors', () => {
       expect(text).toContain('Alignment: Right');
       expect(text).toContain('Size: Small');
       expect(text).toContain('Board Markers: On');
+      expect(text).toContain('Position: Bottom');
     });
 
     it('reflects toggled values inline', () => {
@@ -627,6 +630,11 @@ describe('selectors', () => {
       const text = getDisplayOptionsDisplayText(state);
       expect(text).toContain('Alignment: Center');
       expect(text).toContain('Board Markers: Off');
+    });
+
+    it('shows Position: Top when the player is placed at the top', () => {
+      const state = createTestState({ phase: 'displayOptionsSelect', boardPosition: 'top' });
+      expect(getDisplayOptionsDisplayText(state)).toContain('Position: Top');
     });
 
     it('hides the Board Markers row when the board is large', () => {
@@ -925,6 +933,18 @@ describe('selectors', () => {
       const state = createTestState({ phase: 'academySelect' });
       const text = getCombinedDisplayText(state);
       expect(text).toContain('ACADEMY');
+    });
+  });
+
+  describe('getBoardViewColor', () => {
+    it('draws the human at the bottom by default', () => {
+      expect(getBoardViewColor({ playerColor: 'w', boardPosition: 'bottom' })).toBe('w');
+      expect(getBoardViewColor({ playerColor: 'b', boardPosition: 'bottom' })).toBe('b');
+    });
+
+    it('puts the opponent at the bottom when Position is Top', () => {
+      expect(getBoardViewColor({ playerColor: 'w', boardPosition: 'top' })).toBe('b');
+      expect(getBoardViewColor({ playerColor: 'b', boardPosition: 'top' })).toBe('w');
     });
   });
 });

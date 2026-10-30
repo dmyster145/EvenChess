@@ -32,7 +32,7 @@ import {
   PROMOTION_PIECE_KEYS,
 } from './constants';
 import { rankOfSquare } from '../chess/square-utils';
-import { getCandidateRows, getPiecesOnRow, getSelectedRow } from './selectors';
+import { getCandidateRows, getPiecesOnRow, getSelectedRow, getBoardViewColor } from './selectors';
 import { generateRandomSquare, moveCursorAxis, fileRankToSquare, getDefaultCursorPosition } from '../academy/drills';
 import { generateKnightPuzzle, getKnightMoves, isValidKnightMove, getSquareIndices } from '../academy/knight';
 import { getRandomTacticsPuzzle, getRandomMatePuzzle } from '../academy/puzzles';
@@ -351,10 +351,10 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       let idx = cur != null ? rows.indexOf(cur) : 0;
       if (idx < 0) idx = 0;
       // Candidate rows are rank-ascending. White's view has rank 8 at the top, so +1 =
-      // higher rank = band moves UP the screen. When the human plays Black the board is
-      // flipped (rank 1 at top), so the step direction must invert to keep "swipe up =
-      // band moves up the screen".
-      const stepDown = state.playerColor === 'b' ? d === 'up' : d === 'down';
+      // higher rank = band moves UP the screen. When Black is drawn at the bottom (playing
+      // Black, or playing White with Position: Top) the board is flipped (rank 1 at top), so
+      // the step direction must invert to keep "swipe up = band moves up the screen".
+      const stepDown = getBoardViewColor(state) === 'b' ? d === 'up' : d === 'down';
       const next = stepDown
         ? (idx + 1) % rows.length
         : (idx - 1 + rows.length) % rows.length;
@@ -739,6 +739,9 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
       }
       if (selected === 'size') {
         return { ...state, boardSize: state.boardSize === 'small' ? 'large' : 'small' };
+      }
+      if (selected === 'position') {
+        return { ...state, boardPosition: state.boardPosition === 'top' ? 'bottom' : 'top' };
       }
       // markers
       return { ...state, showBoardMarkers: !state.showBoardMarkers };

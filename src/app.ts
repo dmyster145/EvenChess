@@ -22,7 +22,7 @@
 import { ChessService } from './chess/chessservice';
 import { createStore } from './state/store';
 import { buildInitialState } from './state/contracts';
-import type { GameState, Action, BoardSize, BoardAlignment, DifficultyLevel, PlayAs, PlayerColor } from './state/contracts';
+import type { GameState, Action, BoardSize, BoardAlignment, BoardPosition, DifficultyLevel, PlayAs, PlayerColor } from './state/contracts';
 import { mapEvenHubEvent } from './input/actions';
 import { BoardRenderer } from './render/boardimage';
 import { type EvenHubEvent } from '@evenrealities/even_hub_sdk';
@@ -57,6 +57,8 @@ type BackgroundSnapshot = {
   customSkillLevel?: number;
   boardAlignment: BoardAlignment;
   boardSize: BoardSize;
+  /** Optional: present only on snapshots written after the Position option shipped. */
+  boardPosition?: BoardPosition;
   showBoardMarkers: boolean;
   playAs: PlayAs;
   playerColor: PlayerColor;
@@ -176,6 +178,7 @@ export async function initApp(): Promise<void> {
       customSkillLevel: s.customSkillLevel,
       boardAlignment: s.boardAlignment,
       boardSize: s.boardSize,
+      boardPosition: s.boardPosition,
       showBoardMarkers: s.showBoardMarkers,
       playAs: s.playAs,
       playerColor: s.playerColor,
@@ -202,6 +205,7 @@ export async function initApp(): Promise<void> {
       customSkillLevel: snap.customSkillLevel ?? fresh.customSkillLevel,
       boardAlignment: snap.boardAlignment ?? fresh.boardAlignment,
       boardSize: snap.boardSize ?? fresh.boardSize,
+      boardPosition: snap.boardPosition ?? fresh.boardPosition,
       showBoardMarkers: snap.showBoardMarkers ?? fresh.showBoardMarkers,
       playAs: snap.playAs ?? fresh.playAs,
       playerColor: snap.playerColor ?? fresh.playerColor,

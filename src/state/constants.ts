@@ -19,16 +19,17 @@ export const MENU_INDEX = {
   EXIT: 6,
 } as const;
 
-export const DISPLAY_OPTIONS_OPTIONS: readonly string[] = ['alignment', 'size', 'markers'];
-export const DISPLAY_OPTIONS_LABELS: readonly string[] = ['Alignment', 'Size', 'Board Markers'];
+export const DISPLAY_OPTIONS_OPTIONS: readonly string[] = ['alignment', 'size', 'markers', 'position'];
+export const DISPLAY_OPTIONS_LABELS: readonly string[] = ['Alignment', 'Size', 'Board Markers', 'Position'];
 export const DISPLAY_OPTIONS_OPTION_COUNT = DISPLAY_OPTIONS_OPTIONS.length;
 export const DISPLAY_OPTIONS_INDEX = {
   ALIGNMENT: 0,
   SIZE: 1,
   MARKERS: 2,
+  POSITION: 3,
 } as const;
 
-// Board alignment/size/markers are binary toggles flipped directly from the Display Options menu
+// Board alignment/size/markers/position are binary toggles flipped directly from the Display Options menu
 // (no sub-menu), so only the option key sets in DISPLAY_OPTIONS_OPTIONS are needed here; the
 // value↔label mapping lives inline in selectors' displayOptionValue().
 

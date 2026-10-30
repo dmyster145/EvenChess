@@ -45,6 +45,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     lastTickTime: null,
     selectedTimeControlIndex: 2,
     showBoardMarkers: true,
+    boardPosition: 'bottom',
     playAs: 'white',
     playerColor: 'w',
     ...overrides,
