@@ -153,28 +153,4 @@ describe('input/actions', () => {
     });
   });
 
-  describe('mapEvenHubEvent — native menu (SDK 0.0.14 menuObject)', () => {
-    const state = buildInitialState(new ChessService());
-
-    it('maps menuItemClickEvent to MENU_ITEM_CLICK with the itemID', () => {
-      const event = { menuItemClickEvent: { itemID: 3 } } as unknown as EvenHubEvent;
-      const action = mapEvenHubEvent(event, state);
-      expect(action).not.toBeNull();
-      expect(action!.type).toBe('MENU_ITEM_CLICK');
-      if (action!.type === 'MENU_ITEM_CLICK') {
-        expect(action.itemID).toBe(3);
-      }
-    });
-
-    it('ignores a zero/invalid itemID (0 is the reserved protobuf value)', () => {
-      expect(mapEvenHubEvent({ menuItemClickEvent: { itemID: 0 } } as unknown as EvenHubEvent, state)).toBeNull();
-      expect(mapEvenHubEvent({ menuItemClickEvent: {} } as unknown as EvenHubEvent, state)).toBeNull();
-    });
-
-    it('does not run touchpad debounce/cooldown for menu clicks (fires every time)', () => {
-      const event = { menuItemClickEvent: { itemID: 1 } } as unknown as EvenHubEvent;
-      expect(mapEvenHubEvent(event, state)?.type).toBe('MENU_ITEM_CLICK');
-      expect(mapEvenHubEvent(event, state)?.type).toBe('MENU_ITEM_CLICK');
-    });
-  });
 });

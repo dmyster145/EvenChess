@@ -12,7 +12,6 @@ import {
   MENU_OPTIONS,
   MENU_OPTION_COUNT,
   MENU_INDEX,
-  NATIVE_MENU_OPTIONS,
   DIFFICULTY_OPTIONS,
   DIFFICULTY_OPTION_COUNT,
   DISPLAY_OPTIONS_OPTIONS,
@@ -28,6 +27,7 @@ import {
   TIME_CONTROL_COUNT,
   DRILL_OPTIONS,
   DRILL_OPTION_COUNT,
+  GESTURE_DISAMBIGUATION_MS,
   PROMOTION_OPTION_COUNT,
   PROMOTION_PIECE_KEYS,
 } from './constants';
@@ -38,45 +38,16 @@ import { generateKnightPuzzle, getKnightMoves, isValidKnightMove, getSquareIndic
 import { getRandomTacticsPuzzle, getRandomMatePuzzle } from '../academy/puzzles';
 import { getRandomFamousGame, STARTING_FEN } from '../academy/pgn';
 
-/** Menu sub-screens that can fall back to the hand-rolled 'menu' list. */
-const MENU_SUB_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
-  'modeSelect', 'bulletSetup', 'academySelect', 'difficultySelect', 'customDifficultySelect',
-  'displayOptionsSelect', 'playAsSelect', 'resetConfirm', 'exitConfirm', 'viewLog',
-]);
-
-/** Gameplay phases a native-menu sub-screen returns to when it closes. */
+/** Gameplay phases the bullet clock may resume in after a system overlay closes. */
 const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'idle', 'rowSelect', 'pieceSelect', 'destSelect', 'promotionSelect',
 ]);
 
 /**
- * Pure reducer. Wraps the core state machine with one post-processing step: a menu sub-screen
- * opened via the native OS context menu returns to gameplay (not the hand-rolled list) when it
- * closes — see `menuInvokedNative`. Side-effects (move execution, engine requests) are handled by
- * the store subscriber layer in app.ts.
+ * Pure reducer — side-effects (move execution, engine requests) are handled
+ * by the store subscriber layer in app.ts.
  */
 export function reduce(state: GameState, action: Action): GameState {
-  const next = reduceCore(state, action);
-  if (next === state) return next;
-
-  // A native-initiated sub-screen just fell back to the hand-rolled 'menu' list — the user never
-  // opened that list, and the OS menu can't be reopened programmatically, so return to gameplay.
-  if (state.menuInvokedNative && next.phase === 'menu' && MENU_SUB_PHASES.has(state.phase)) {
-    return closeNativeSubMenu(next);
-  }
-  // Native flow ended in gameplay by some other path (e.g. reset confirmed, mode changed) — clear
-  // the marker so it never leaks into a later hand-rolled menu interaction.
-  if (next.menuInvokedNative && GAME_PHASES.has(next.phase)) {
-    return { ...next, menuInvokedNative: false };
-  }
-  return next;
-}
-
-function reduceCore(state: GameState, action: Action): GameState {
-  // During gameOver the app is locked to "start a new game" (DOUBLE_TAP). The hand-rolled menu is
-  // unreachable here (handleDoubleTap starts a new game rather than opening it), so a native-menu
-  // click is a no-op too — otherwise it would drop the user into a sub-phase whose SCROLL/TAP are
-  // blocked by this very guard, leaving only double-tap (which starts a new game) to escape.
   if (state.gameOver && action.type !== 'NEW_GAME' && action.type !== 'OPEN_MENU' && action.type !== 'CLOSE_MENU' && action.type !== 'DOUBLE_TAP' && action.type !== 'RESTORE_STATE') {
     return state;
   }
@@ -207,9 +178,6 @@ function reduceCore(state: GameState, action: Action): GameState {
     case 'MENU_SELECT':
       return handleMenuSelect(state, action.option);
 
-    case 'MENU_ITEM_CLICK':
-      return handleMenuItemClick(state, action.itemID);
-
     case 'CONFIRM_EXIT':
       return handleConfirmExit(state, action.save);
 
@@ -281,17 +249,15 @@ function reduceCore(state: GameState, action: Action): GameState {
     case 'TIMER_TICK':
       return handleTimerTick(state);
 
-    // Freeze the bullet clock while the native OS menu (a system overlay) is open. Only pauses a
+    // Freeze the bullet clock while a system overlay is open. Only pauses a
     // RUNNING clock; bulletPausedForMenu records that so resume knows this clock was ticking.
     case 'BULLET_PAUSE':
       return state.mode === 'bullet' && state.timerActive && state.timers
         ? { ...state, timerActive: false, bulletPausedForMenu: true }
         : state;
 
-    // Resume after the overlay closes. Only if this clock was paused by the menu (never starts a
-    // not-yet-started clock). Reset lastTickTime so the paused span isn't charged. Guarded to a live
-    // game phase so a click that dove into a sub-screen (e.g. Difficulty) stays paused — that
-    // sub-screen resumes the clock itself when it closes back to gameplay.
+    // Resume after the overlay closes. Only if this clock was paused (never starts a not-yet-started
+    // clock). Reset lastTickTime so the paused span isn't charged. Guarded to a live game phase.
     case 'BULLET_RESUME':
       return state.bulletPausedForMenu && state.mode === 'bullet' && state.timers && !state.gameOver && !state.timerActive && GAME_PHASES.has(state.phase)
         ? { ...state, timerActive: true, lastTickTime: Date.now(), bulletPausedForMenu: false }
@@ -373,6 +339,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
         phase: 'rowSelect',
         selectedPieceId: initial.id,
         selectedMoveIndex: 0,
+        phaseEnteredAt: Date.now(),
         ...(startTimer && { timerActive: true, lastTickTime: Date.now() }),
       };
     }
@@ -612,6 +579,7 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         phase: 'rowSelect',
         selectedPieceId: initial.id,
         selectedMoveIndex: 0,
+        phaseEnteredAt: Date.now(),
       };
     }
 
@@ -623,6 +591,7 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         phase: 'pieceSelect',
         selectedPieceId: piece.id,
         selectedMoveIndex: 0,
+        phaseEnteredAt: Date.now(),
       };
     }
 
@@ -855,17 +824,25 @@ function handleDoubleTap(state: GameState): GameState {
   }
   switch (state.phase) {
     case 'idle':
-      // No-op. The menu is opened via the glasses' native OS context menu (SDK 0.0.14), not this
-      // gesture; double-tap from idle used to open the hand-rolled list, which is now retired.
-      return state;
+      return handleOpenMenu(state);
 
     case 'rowSelect':
-      // Back out to the idle "tap to speak / scroll to begin" screen.
+      // Back out to the idle "tap to speak / scroll to begin" screen. The settings
+      // menu is one more double-tap away (idle → menu), so swiping into row select
+      // by mistake no longer drops the user straight into settings.
       return { ...state, phase: 'idle', selectedPieceId: null, selectedMoveIndex: 0 };
 
-    case 'pieceSelect':
+    case 'pieceSelect': {
+      // Defensive: a fused scroll+double-tap now lands in rowSelect (handled above),
+      // so this branch is normally unreachable — kept as a guard in case a fast
+      // double-tap slips through right after descending into pieceSelect.
+      const timeSinceEntry = Date.now() - state.phaseEnteredAt;
+      if (timeSinceEntry < GESTURE_DISAMBIGUATION_MS) {
+        return handleOpenMenu(state);
+      }
       // Back up one level to row selection (keep selectedPieceId so the row is preserved).
       return { ...state, phase: 'rowSelect', selectedMoveIndex: 0 };
+    }
 
     case 'destSelect':
       return { ...state, phase: 'pieceSelect', selectedMoveIndex: 0 };
@@ -1051,35 +1028,7 @@ function handleOpenMenu(state: GameState): GameState {
     phase: 'menu',
     menuSelectedIndex: 0,
     previousPhase,
-    // Opening the hand-rolled list clears any stale native marker: sub-screens reached from here
-    // should return to this list, not skip straight to gameplay.
-    menuInvokedNative: false,
     ...(pauseBulletTimer && { timerActive: false, bulletPausedForMenu: true }),
-  };
-}
-
-/**
- * Close a native-menu sub-screen back to gameplay (mirrors handleCloseMenu, but skips the
- * hand-rolled list). Resumes the bullet timer if we're returning to an active game phase.
- */
-function closeNativeSubMenu(state: GameState): GameState {
-  const target = state.previousPhase ?? 'idle';
-  // Resume only a clock the menu actually paused (bulletPausedForMenu) — never start one that
-  // wasn't running when the menu was opened.
-  const resumeBulletTimer =
-    state.bulletPausedForMenu && state.mode === 'bullet' && state.timers && !state.gameOver &&
-    (target === 'idle' || target === 'rowSelect' || target === 'pieceSelect' || target === 'destSelect');
-  return {
-    ...state,
-    phase: target,
-    menuSelectedIndex: 0,
-    previousPhase: null,
-    menuInvokedNative: false,
-    // A native Cancel out of the Play As → reset confirmation must not keep the deferred choice.
-    pendingPlayAs: null,
-    // Leaving the menu flow: clear the pause marker (resume below if it applies).
-    bulletPausedForMenu: false,
-    ...(resumeBulletTimer && { timerActive: true, lastTickTime: Date.now() }),
   };
 }
 
@@ -1159,25 +1108,6 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
     default:
       return state;
   }
-}
-
-/**
- * Native OS context-menu item selected (SDK 0.0.14 `menuObject` → `menuItemClickEvent`). The
- * itemID is 1-based into NATIVE_MENU_OPTIONS (Exit excluded — the OS menu's own "close" exits).
- * Since the OS menu is invocable from any phase, compose the same transition the hand-rolled menu
- * uses: handleOpenMenu sets previousPhase and pauses the bullet timer (so backing out of the
- * sub-phase lands in the menu, then the game), then handleMenuSelect routes to the sub-phase.
- */
-function handleMenuItemClick(state: GameState, itemID: number): GameState {
-  const option = NATIVE_MENU_OPTIONS[itemID - 1];
-  if (!option) return state;
-  const opened = handleOpenMenu(state);
-  // handleOpenMenu returns the same reference (no-op) while the engine is thinking — respect that
-  // so a native-menu click during engine turn is ignored, matching the hand-rolled menu.
-  if (opened === state) return state;
-  // Mark this as a native-menu flow so the sub-screen returns to gameplay (not the hand-rolled
-  // list) when it closes — the reduce() wrapper reads menuInvokedNative to do that.
-  return { ...handleMenuSelect(opened, option), menuInvokedNative: true };
 }
 
 function handleConfirmExit(state: GameState, save: boolean): GameState {

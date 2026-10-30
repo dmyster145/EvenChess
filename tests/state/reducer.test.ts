@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reduce } from '../../src/state/reducer';
 import type { GameState, PieceEntry, Action } from '../../src/state/contracts';
-import { MAX_HISTORY_LENGTH, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX, NATIVE_MENU_OPTIONS } from '../../src/state/constants';
+import { MAX_HISTORY_LENGTH, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX } from '../../src/state/constants';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -50,10 +50,10 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     menuSelectedIndex: 0,
     hasUnsavedChanges: false,
     previousPhase: null,
-    menuInvokedNative: false,
     difficulty: 'casual',
     customSkillLevel: 5,
     logScrollOffset: 0,
+    phaseEnteredAt: Date.now(),
     timerActive: false,
     lastTickTime: null,
     selectedTimeControlIndex: 2,
@@ -250,22 +250,38 @@ describe('reducer', () => {
   });
 
   describe('DOUBLE_TAP', () => {
-    it('double-tap from pieceSelect backs out to rowSelect (never opens a menu)', () => {
-      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' });
+    it('goes back to rowSelect from pieceSelect (after gesture disambiguation window)', () => {
+      // phaseEnteredAt needs to be old enough to pass the gesture disambiguation
+      const state = createTestState({
+        phase: 'pieceSelect',
+        selectedPieceId: 'w-n-g1',
+        phaseEnteredAt: Date.now() - 500, // 500ms ago, past the 200ms window
+      });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('rowSelect');
       expect(next.selectedPieceId).toBe('w-n-g1'); // kept so the row is preserved
     });
 
-    it('backs out to idle from rowSelect on double-tap; a second double-tap from idle is a no-op', () => {
+    it('backs out to idle from rowSelect on double-tap, then to menu on a second', () => {
       const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-n-g1' });
       const backToIdle = reduce(state, { type: 'DOUBLE_TAP' });
       expect(backToIdle.phase).toBe('idle');
       expect(backToIdle.selectedPieceId).toBeNull();
       expect(backToIdle.selectedMoveIndex).toBe(0);
-      // Double-tap from idle no longer opens a menu — the native OS menu is the only entry point.
-      const stillIdle = reduce(backToIdle, { type: 'DOUBLE_TAP' });
-      expect(stillIdle.phase).toBe('idle');
+      // A second double-tap from idle opens the settings menu.
+      const toMenu = reduce(backToIdle, { type: 'DOUBLE_TAP' });
+      expect(toMenu.phase).toBe('menu');
+    });
+
+    it('opens menu from pieceSelect within gesture disambiguation window', () => {
+      // If double-tap arrives within 200ms of entering pieceSelect, it opens menu
+      const state = createTestState({
+        phase: 'pieceSelect',
+        selectedPieceId: 'w-n-g1',
+        phaseEnteredAt: Date.now(), // Just entered
+      });
+      const next = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(next.phase).toBe('menu');
     });
 
     it('goes back to pieceSelect from destSelect', () => {
@@ -1131,10 +1147,10 @@ describe('reducer', () => {
   // ── Double Tap Navigation Tests ─────────────────────────────────────────────
 
   describe('double tap navigation', () => {
-    it('double-tap from idle is a no-op (the native OS menu is the only entry point)', () => {
+    it('opens menu from idle', () => {
       const state = createTestState({ phase: 'idle' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
-      expect(next.phase).toBe('idle');
+      expect(next.phase).toBe('menu');
     });
 
     it('menu double-tap closes the menu (back to game) without arming the exit dialog', () => {
@@ -1277,124 +1293,12 @@ describe('reducer', () => {
     });
   });
 
-  describe('MENU_ITEM_CLICK (native OS menu, SDK 0.0.14)', () => {
-    // NATIVE_MENU_OPTIONS = ['playAs','mode','viewLog','difficulty','displayOptions','reset'] (Exit excluded).
-    const cases: Array<[number, string]> = [
-      [1, 'playAsSelect'],
-      [2, 'modeSelect'],
-      [3, 'viewLog'],
-      [4, 'difficultySelect'],
-      [5, 'displayOptionsSelect'],
-      [6, 'resetConfirm'],
-    ];
-    it.each(cases)('itemID %i routes to the %s sub-phase from idle', (itemID, phase) => {
-      const next = reduce(createTestState({ phase: 'idle' }), { type: 'MENU_ITEM_CLICK', itemID });
-      expect(next.phase).toBe(phase);
-    });
-
-    it('sets previousPhase so backing out of the sub-phase returns through the menu', () => {
-      const next = reduce(createTestState({ phase: 'idle' }), { type: 'MENU_ITEM_CLICK', itemID: 4 });
-      expect(next.previousPhase).toBe('idle');
-    });
-
-    it('is invocable mid-move (from pieceSelect), preserving that phase as previousPhase', () => {
-      const next = reduce(createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' }), { type: 'MENU_ITEM_CLICK', itemID: 2 });
-      expect(next.phase).toBe('modeSelect');
-      expect(next.previousPhase).toBe('pieceSelect');
-    });
-
-    it('ignores an out-of-range itemID', () => {
-      const state = createTestState({ phase: 'idle' });
-      expect(reduce(state, { type: 'MENU_ITEM_CLICK', itemID: 99 })).toBe(state);
-      // Exit is not a native item — its old MENU index (6) is out of the 1..6 native range only if
-      // Exit were included; guard the count explicitly so a future menu change can't silently expose it.
-      expect(NATIVE_MENU_OPTIONS).not.toContain('exit');
-    });
-
-    it('is ignored while the engine is thinking (matches hand-rolled menu)', () => {
-      const state = createTestState({ phase: 'idle', engineThinking: true });
-      expect(reduce(state, { type: 'MENU_ITEM_CLICK', itemID: 1 })).toBe(state);
-    });
-
-    it('is a no-op during gameOver (menu is unreachable then; double-tap starts a new game)', () => {
-      const state = createTestState({ phase: 'idle', gameOver: 'Checkmate! White wins' });
-      expect(reduce(state, { type: 'MENU_ITEM_CLICK', itemID: 4 })).toBe(state);
-    });
-
-    it('pauses the bullet timer on open, like the hand-rolled menu', () => {
-      const state = createTestState({ phase: 'idle', mode: 'bullet', timerActive: true, timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 } });
-      const next = reduce(state, { type: 'MENU_ITEM_CLICK', itemID: 4 });
-      expect(next.timerActive).toBe(false);
-    });
-
-    it('marks the flow native so it can return to gameplay', () => {
-      const next = reduce(createTestState({ phase: 'idle' }), { type: 'MENU_ITEM_CLICK', itemID: 4 });
-      expect(next.phase).toBe('difficultySelect');
-      expect(next.menuInvokedNative).toBe(true);
-    });
-  });
-
-  describe('native sub-menu returns to gameplay, not the hand-rolled list', () => {
-    it('difficulty: back out (double-tap) returns to gameplay, clearing the native marker', () => {
-      let s = reduce(createTestState({ phase: 'idle' }), { type: 'MENU_ITEM_CLICK', itemID: 4 });
-      expect(s.phase).toBe('difficultySelect');
-      s = reduce(s, { type: 'DOUBLE_TAP' });
-      expect(s.phase).toBe('idle');
-      expect(s.menuInvokedNative).toBe(false);
-    });
-
-    it('Play As → confirm dialog → Cancel returns to gameplay (the reported bug)', () => {
-      // Game in progress so picking a side routes through the reset confirmation.
-      let s = reduce(createTestState({ phase: 'idle', history: ['e4', 'e5'] }), { type: 'MENU_ITEM_CLICK', itemID: 1 });
-      expect(s.phase).toBe('playAsSelect');
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // pick a side → confirm
-      expect(s.phase).toBe('resetConfirm');
-      expect(s.menuInvokedNative).toBe(true);
-      s = reduce(s, { type: 'TAP', selectedIndex: 1, selectedName: '' }); // Cancel (default index = No)
-      expect(s.phase).toBe('idle'); // returns to gameplay, NOT the hand-rolled 'menu' list
-      expect(s.menuInvokedNative).toBe(false);
-      expect(s.pendingReset).toBeFalsy(); // Cancel must NOT reset the board (the reported regression)
-    });
-
-    it('Play As → confirm dialog → Confirm flags the reset (new game with the chosen side)', () => {
-      let s = reduce(createTestState({ phase: 'idle', history: ['e4', 'e5'] }), { type: 'MENU_ITEM_CLICK', itemID: 1 });
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // pick a side → confirm dialog
-      expect(s.phase).toBe('resetConfirm');
-      s = { ...s, menuSelectedIndex: 0 }; // move cursor to Confirm
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // Confirm
-      expect(s.phase).toBe('idle');
-      expect(s.pendingReset).toBe(true); // side-effect will reset + start a new game
-    });
-
-    it('preserves the underlying game phase when returning (opened mid-move)', () => {
-      let s = reduce(createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' }), { type: 'MENU_ITEM_CLICK', itemID: 5 });
-      expect(s.phase).toBe('displayOptionsSelect');
-      s = reduce(s, { type: 'DOUBLE_TAP' });
-      expect(s.phase).toBe('pieceSelect');
-    });
-
-    it('resumes the bullet timer when a native sub-menu closes back to gameplay', () => {
-      const base = createTestState({ phase: 'idle', mode: 'bullet', timerActive: true, timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 } });
-      let s = reduce(base, { type: 'MENU_ITEM_CLICK', itemID: 4 });
-      expect(s.timerActive).toBe(false); // paused while the sub-menu is open
-      s = reduce(s, { type: 'DOUBLE_TAP' });
-      expect(s.phase).toBe('idle');
-      expect(s.timerActive).toBe(true); // resumed
-    });
-
-    it('return-to-gameplay is gated on the native flag (a non-native sub-phase falls back to the list)', () => {
-      // The hand-rolled top-level list is no longer reachable via input, but the reducer's
-      // return-to-gameplay interception must stay gated on menuInvokedNative — so a sub-phase that
-      // was NOT opened via the native menu falls back to 'menu' (the safety net), not gameplay.
-      const s0 = createTestState({ phase: 'difficultySelect', menuInvokedNative: false, previousPhase: 'idle' });
-      const s1 = reduce(s0, { type: 'DOUBLE_TAP' });
-      expect(s1.phase).toBe('menu');
-    });
-  });
-
   describe('Play As choice is deferred until reset is confirmed', () => {
+    const openPlayAs = (state: GameState) =>
+      reduce(reduce(state, { type: 'DOUBLE_TAP' }), { type: 'MENU_SELECT', option: 'playAs' });
+
     it('in-progress: picking a side defers to pendingPlayAs without changing playAs', () => {
-      let s = reduce(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }), { type: 'MENU_ITEM_CLICK', itemID: 1 });
+      let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       expect(s.phase).toBe('playAsSelect');
       s = { ...s, menuSelectedIndex: 1 }; // 'black'
       s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
@@ -1404,7 +1308,7 @@ describe('reducer', () => {
     });
 
     it('in-progress: Cancel leaves the side unchanged and clears the deferred choice', () => {
-      let s = reduce(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }), { type: 'MENU_ITEM_CLICK', itemID: 1 });
+      let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       s = { ...s, menuSelectedIndex: 1 }; // black
       s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → resetConfirm (cursor on Cancel)
       s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // Cancel
@@ -1413,7 +1317,7 @@ describe('reducer', () => {
     });
 
     it('in-progress: double-tap back also discards the deferred choice', () => {
-      let s = reduce(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }), { type: 'MENU_ITEM_CLICK', itemID: 1 });
+      let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       s = { ...s, menuSelectedIndex: 1 };
       s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → resetConfirm
       s = reduce(s, { type: 'DOUBLE_TAP' });
@@ -1422,7 +1326,7 @@ describe('reducer', () => {
     });
 
     it('in-progress: Confirm commits the chosen side and flags the reset', () => {
-      let s = reduce(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }), { type: 'MENU_ITEM_CLICK', itemID: 1 });
+      let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       s = { ...s, menuSelectedIndex: 1 }; // black
       s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → resetConfirm
       s = { ...s, menuSelectedIndex: 0 }; // Confirm
@@ -1433,7 +1337,7 @@ describe('reducer', () => {
     });
 
     it('fresh board: applies immediately without a confirmation', () => {
-      let s = reduce(createTestState({ phase: 'idle', playAs: 'white', history: [] }), { type: 'MENU_ITEM_CLICK', itemID: 1 });
+      let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: [] }));
       s = { ...s, menuSelectedIndex: 1 }; // black
       s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
       expect(s.phase).toBe('idle');
@@ -1487,16 +1391,15 @@ describe('reducer', () => {
       expect(reduce(s, { type: 'BULLET_RESUME' })).toBe(s);
     });
 
-    it('a native menu opened before the first move does not start the clock on back-out', () => {
-      // Fresh bullet game, clock not started. Simulate: OS overlay open (BULLET_PAUSE, no-op),
-      // click a menu item -> sub-phase, back out -> closeNativeSubMenu. The clock must stay stopped.
+    it('a menu opened before the first move does not start the clock on close', () => {
+      // Fresh bullet game, clock not started: open the menu and close it again. The clock must
+      // stay stopped.
       let s = bullet({ timerActive: false });
-      s = reduce(s, { type: 'BULLET_PAUSE' });          // no-op (nothing running)
-      s = reduce(s, { type: 'MENU_ITEM_CLICK', itemID: 4 }); // -> difficultySelect
-      expect(s.phase).toBe('difficultySelect');
-      s = reduce(s, { type: 'DOUBLE_TAP' });            // back out -> gameplay
+      s = reduce(s, { type: 'DOUBLE_TAP' });            // -> menu
+      expect(s.phase).toBe('menu');
+      s = reduce(s, { type: 'DOUBLE_TAP' });            // close -> gameplay
       expect(s.phase).toBe('idle');
-      expect(s.timerActive).toBe(false);                // NOT started (finding #1)
+      expect(s.timerActive).toBe(false);                // NOT started
     });
   });
 });

@@ -47,7 +47,7 @@ Chess/
 
 ## Prerequisites
 
-- **Even Realities:** G2 glasses and the [Even App](https://www.evenrealities.com/) **version 2.2.9 or newer** (required by SDK 0.0.14; the native glasses menu only appears on 2.2.9+). This lets you open the widget and see the chess HUD on your glasses.
+- **Even Realities:** G2 glasses and the [Even App](https://www.evenrealities.com/) **version 2.2.9 or newer** (required by SDK 0.0.14). This lets you open the widget and see the chess HUD on your glasses.
 - **Node.js:** v20.19.0 or newer. [Download Node.js](https://nodejs.org/) if you don’t have it; the installer is enough.
 
 ## Setup
@@ -76,14 +76,14 @@ Chess/
 
 4. **Try it**
    - On your **phone:** Open the same URL in a browser to see the [help page](index.html) (getting started, modes, controls).
-   - On your **glasses:** Scroll to move the cursor, tap to select. Open the menu (Play As, Mode, Difficulty, etc.) with the glasses' system-menu gesture: a short press, then a long press.
+   - On your **glasses:** Scroll to move the cursor, tap to select. Double-tap from idle to open the menu (Play As, Mode, Difficulty, etc.).
 
 ## Usage on the glasses
 
 - **Scroll:** Move the selection on the board or in menus.
 - **Tap:** Select a square, confirm a move, or choose a menu item.
-- **System-menu gesture (short press, then long press):** Open the glasses' built-in menu: Play As, Mode, View Log, Difficulty, Display Options, Reset. The OS draws it and it works from any screen. It also has Close (exits Chess), display, and brightness controls.
-- **Double-tap:** Back up one step during selection (move to piece to row).
+- **Double-tap (from idle):** Open the menu: Play As, Mode, View Log, Difficulty, Display Options, Reset, Exit.
+- **Double-tap (during selection):** Back up one step (move to piece to row).
 
 ## Scripts
 
@@ -109,7 +109,7 @@ Output is in `dist/`. Deploy that folder to any static host, then open the deplo
 - **Play vs AI:** Play White, Black, or Random against Stockfish; Easy, Casual, Serious, or Custom difficulty. Games auto-save.
 - **Bullet Blitz:** Timed game with optional increment (e.g. 1+0, 3+0, 5+5).
 - **Academy:** Coordinate drill, Tactics, Mate-in-one, Knight Path, PGN Study (famous games and openings).
-- **Menu:** Play As, Mode, View Log, Difficulty, Display Options (alignment / size / board markers A–H · 1–8), Reset. Open it with the glasses' system-menu gesture (short press, then long press); the system menu's own Close exits Chess. Difficulty, display options, and Play As are saved.
+- **Menu:** Play As, Mode, View Log, Difficulty, Display Options (alignment / size / board markers A–H · 1–8), Reset, Exit. Double-tap from idle to open it. Difficulty, display options, and Play As are saved.
 
 Full behavior and tips are on the in-app help page ([index.html](index.html)).
 

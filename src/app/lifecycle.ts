@@ -74,11 +74,11 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
   let attached = false;
   let isHidden = false;
   // Set when a FOREGROUND_ENTER arrives while we already believe we're showing — i.e. an overlay
-  // (the SDK 0.0.14 native OS context menu, or any system overlay) appeared on top of the app. The
+  // (e.g. the glasses' system menu) appeared on top of the app. The
   // paired FOREGROUND_EXIT then means the overlay dismissed, NOT a genuine background. See the
   // overlay-disambiguation note in onHubEvent's normal-lifecycle branch.
   let overlayActive = false;
-  // True while an overlay (native OS menu) paused a running bullet clock — so its dismissal knows to
+  // True while an overlay paused a running bullet clock — so its dismissal knows to
   // resume it, and a not-yet-started clock is never started by opening/closing the menu.
   let overlayPausedBullet = false;
 
@@ -250,17 +250,17 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
 
     // --- Normal lifecycle ---
-    // Overlay disambiguation (SDK 0.0.14 native menu, §3): the OS context menu — like the exit
+    // Overlay disambiguation: a system overlay (e.g. the glasses' system menu) — like the exit
     // dialog — surfaces as FOREGROUND_ENTER (appeared) then FOREGROUND_EXIT (dismissed), the
     // INVERSE order of a genuine background (FOREGROUND_EXIT to leave, FOREGROUND_ENTER to return).
     // We tell them apart by isHidden at ENTER time: a FOREGROUND_ENTER received while we already
     // believe we're showing means an overlay appeared, so the paired FOREGROUND_EXIT is that overlay
     // dismissing — NOT a real background. Treating that EXIT as a background is what would suspend
-    // the bullet timer and latch the app "hidden" every time the user closed the OS menu.
+    // the bullet timer and latch the app "hidden" every time the user closed the system menu.
     if (eventType === FOREGROUND_ENTER) {
       if (!isHidden) {
         overlayActive = true;
-        // Pause the bullet clock while the overlay (native OS menu) is up — matching the hand-rolled
+        // Pause the bullet clock while the overlay is up — matching the hand-rolled
         // menu, which pauses via handleOpenMenu. Only when it's actually running, so we can decide
         // on dismiss whether to resume (and never start a not-yet-started clock).
         const st = deps.store.getState();
@@ -278,8 +278,8 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     if (eventType === FOREGROUND_EXIT) {
       if (overlayActive) {
         overlayActive = false;
-        // Resume the bullet clock the overlay paused. The reducer no-ops if a menu click dove into a
-        // sub-screen (not a game phase) — that sub-screen resumes on its way back to gameplay.
+        // Resume the bullet clock the overlay paused. The reducer no-ops unless we're back in a game
+        // phase.
         if (overlayPausedBullet) {
           deps.store.dispatch({ type: 'BULLET_RESUME' });
           overlayPausedBullet = false;
