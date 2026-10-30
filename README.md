@@ -47,7 +47,7 @@ Chess/
 
 ## Prerequisites
 
-- **Even Realities:** G2 glasses and the [Even App](https://www.evenrealities.com/) **version 2.2.9 or newer** (required by SDK 0.0.14). This lets you open the widget and see the chess HUD on your glasses.
+- **Even Realities:** G2 glasses and the [Even App](https://www.evenrealities.com/) **version 2.2.10 or newer** (required by SDK 0.0.16). This lets you open the widget and see the chess HUD on your glasses.
 - **Node.js:** v20.19.0 or newer. [Download Node.js](https://nodejs.org/) if you don’t have it; the installer is enough.
 
 ## Setup
