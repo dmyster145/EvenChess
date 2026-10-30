@@ -13,7 +13,7 @@ import {
   DISPLAY_OPTIONS_LABELS,
   PLAY_AS_OPTIONS,
   PLAY_AS_LABELS,
-  MAX_MOVES_DISPLAY,
+  LOG_MAX_VISIBLE,
   MODE_LABELS,
   MODE_OPTIONS,
   TIME_CONTROLS,
@@ -457,16 +457,19 @@ export function getLogDisplayText(state: GameState): string {
     return lines.join('\n');
   }
 
-  lines.push('White | Black');
-
+  // A window of LOG_MAX_VISIBLE move pairs starting at logScrollOffset (the reducer opens the log
+  // at the end and scrolls the offset); the header shows which moves are on screen.
   const moveCount = Math.ceil(state.history.length / 2);
-  const startMove = moveCount > MAX_MOVES_DISPLAY ? moveCount - MAX_MOVES_DISPLAY : 0;
-  
-  if (startMove > 0) {
-    lines.push(`... ${startMove} earlier moves`);
+  const maxOffset = Math.max(0, moveCount - LOG_MAX_VISIBLE);
+  const startMove = Math.min(Math.max(0, state.logScrollOffset), maxOffset);
+  const endMove = Math.min(moveCount, startMove + LOG_MAX_VISIBLE);
+  if (moveCount > LOG_MAX_VISIBLE) {
+    lines[1] = `MOVE LOG ${startMove + 1}-${endMove}/${moveCount} ${ARROW_UPDOWN}`;
   }
 
-  for (let i = startMove; i < moveCount; i++) {
+  lines.push('White | Black');
+
+  for (let i = startMove; i < endMove; i++) {
     const whiteMove = state.history[i * 2] ?? '';
     const blackMove = state.history[i * 2 + 1] ?? '';
     const moveNum = i + 1;
@@ -564,7 +567,7 @@ export function getCoordinateDrillDisplayText(state: GameState): string {
     const yourGuess = fileRankToSquare(academy.cursorFile, academy.cursorRank).toUpperCase();
     lines.push(`X WRONG (${yourGuess})`);
     lines.push('');
-    lines.push('Tap: try again');
+    lines.push('Tap: next square');
   } else {
     // Show current selection with axis indicator
     const file = getFileLetter(academy.cursorFile).toUpperCase();
@@ -605,7 +608,7 @@ export function getKnightPathDisplayText(state: GameState): string {
     lines.push('X TOO MANY MOVES');
     lines.push(`Moves: ${kp.movesTaken}/${kp.optimalMoves}`);
     lines.push('');
-    lines.push('Tap: try again');
+    lines.push('Tap: next puzzle');
   } else {
     lines.push(`${kp.startSquare.toUpperCase()} → ${kp.targetSquare.toUpperCase()}`);
     lines.push(`Moves: ${kp.movesTaken}/${kp.optimalMoves}`);
@@ -678,14 +681,16 @@ export function getPgnStudyDisplayText(state: GameState): string {
       lines.push('');
       lines.push('Tap: next game');
     } else {
-      // Show the last few moves
-      const startIdx = Math.max(0, moveIndex - 3);
-      for (let i = startIdx; i <= moveIndex; i++) {
+      // Show the last few moves played. moveIndex counts moves played, so the board shows the
+      // position after moves[moveIndex - 1]; that move carries the '>' marker.
+      const lastPlayed = moveIndex - 1;
+      const startIdx = Math.max(0, lastPlayed - 3);
+      for (let i = startIdx; i <= lastPlayed; i++) {
         const mn = Math.floor(i / 2) + 1;
         const isWhite = i % 2 === 0;
         const move = pgn.moves[i] ?? '';
         const prefix = isWhite ? `${mn}.` : '';
-        const marker = i === moveIndex ? '>' : ' ';
+        const marker = i === lastPlayed ? '>' : ' ';
         lines.push(`${marker}${prefix}${move}`);
       }
       lines.push('');
@@ -784,8 +789,9 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
     case 'idle': {
       lines.push('');
       const v = state.voice;
-      const statusActive =
-        !!v?.status && (v.statusExpiresAt == null || v.statusExpiresAt > Date.now());
+      // Timed statuses are cleared by VOICE_STATUS_EXPIRE (scheduled in side-effects.ts), so the
+      // selector only needs to know whether one is set.
+      const statusActive = !!v?.status;
       if (v?.pendingConfirm) {
         lines.push(`Heard: ${expandMoveForLog(v.pendingConfirm.san)}`);
         lines.push('Tap to confirm · Double-tap aborts');

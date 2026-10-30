@@ -78,7 +78,27 @@ export type SideEffectsController = {
 };
 
 export function createSideEffects(deps: SideEffectsDeps): SideEffectsController {
+  // One pending timer for the current timed voice status (see VoiceUiState.statusExpiresAt).
+  let voiceStatusTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleVoiceStatusExpiry(expiresAt: number | null): void {
+    if (voiceStatusTimer) {
+      clearTimeout(voiceStatusTimer);
+      voiceStatusTimer = null;
+    }
+    if (expiresAt == null) return;
+    voiceStatusTimer = setTimeout(() => {
+      voiceStatusTimer = null;
+      deps.store.dispatch({ type: 'VOICE_STATUS_EXPIRE', expiresAt });
+    }, Math.max(0, expiresAt - Date.now()));
+  }
+
   function onStateChange(state: GameState, prevState: GameState): void {
+    const expiresAt = state.voice?.statusExpiresAt ?? null;
+    if (expiresAt !== (prevState.voice?.statusExpiresAt ?? null)) {
+      scheduleVoiceStatusExpiry(expiresAt);
+    }
+
     // Pending move → engine response. Race #6 fix: dispatch via the store and let the
     // turnLoop's own promise chain run; no `queueMicrotask` of an async function. The
     // turnLoop dispatches its result back into the store, which triggers the next

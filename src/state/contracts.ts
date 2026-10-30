@@ -19,7 +19,10 @@ export interface VoiceUiState {
   listening: boolean;
   /** Short message shown on the glasses (heard text, error, prompt). null = none. */
   status: string | null;
-  /** Epoch ms after which `status` is stale; null = until next state change. */
+  /**
+   * Epoch ms at which a timed `status` clears; null = shown until replaced. side-effects.ts
+   * schedules VOICE_STATUS_EXPIRE for this time.
+   */
   statusExpiresAt: number | null;
   /**
    * A matched move awaiting explicit confirmation. While set, the idle screen shows
@@ -255,6 +258,8 @@ export type Action =
   | { type: 'VOICE_LISTEN_START' }
   | { type: 'VOICE_LISTEN_END' }
   | { type: 'VOICE_STATUS'; message: string; durationMs?: number; keepListening?: boolean }
+  /** A timed voice status reached its expiry; clears it only if it is still the same status. */
+  | { type: 'VOICE_STATUS_EXPIRE'; expiresAt: number }
   | { type: 'VOICE_MOVE_CANDIDATE'; move: CarouselMove }
   | { type: 'VOICE_CONFIRM' }
   | { type: 'VOICE_ABORT' };

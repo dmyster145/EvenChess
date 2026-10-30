@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reduce } from '../../src/state/reducer';
 import type { GameState, PieceEntry, Action } from '../../src/state/contracts';
-import { MAX_HISTORY_LENGTH, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX } from '../../src/state/constants';
+import { MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX, DRILL_OPTIONS } from '../../src/state/constants';
 import { baseGameState } from '../helpers/game-state';
 import { ChessService } from '../../src/chess/chessservice';
+import { fileRankToSquare } from '../../src/chess/square-utils';
+import { getKnightMoves, getSquareIndices } from '../../src/academy/knight';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -647,17 +649,17 @@ describe('reducer', () => {
       expect(next.timerActive).toBe(false);
     });
 
-    it('sets bullet mode and goes to bulletSetup', () => {
+    it('opens bulletSetup without committing bullet mode', () => {
       const state = createTestState({ phase: 'modeSelect', mode: 'play' });
       const next = reduce(state, { type: 'SET_MODE', mode: 'bullet' });
-      expect(next.mode).toBe('bullet');
+      expect(next.mode).toBe('play');
       expect(next.phase).toBe('bulletSetup');
     });
 
-    it('sets academy mode and goes to academySelect', () => {
+    it('opens academySelect without committing academy mode', () => {
       const state = createTestState({ phase: 'modeSelect', mode: 'play' });
       const next = reduce(state, { type: 'SET_MODE', mode: 'academy' });
-      expect(next.mode).toBe('academy');
+      expect(next.mode).toBe('play');
       expect(next.phase).toBe('academySelect');
     });
   });
@@ -670,11 +672,11 @@ describe('reducer', () => {
       expect(next.menuSelectedIndex).toBe(1);
     });
 
-    it('tap selects mode', () => {
-      const state = createTestState({ phase: 'modeSelect', menuSelectedIndex: 1 });
+    it('tap on Bullet Blitz opens its setup; the mode is unchanged until a game starts', () => {
+      const state = createTestState({ phase: 'modeSelect', menuSelectedIndex: 1, mode: 'play' });
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
-      expect(next.mode).toBe('bullet');
       expect(next.phase).toBe('bulletSetup');
+      expect(next.mode).toBe('play');
     });
   });
 
@@ -1094,41 +1096,19 @@ describe('reducer', () => {
 
   // ── History Capping Tests ───────────────────────────────────────────────────
 
-  describe('history capping', () => {
-    it('caps history at MAX_HISTORY_LENGTH on player move', () => {
-      const longHistory = Array.from({ length: MAX_HISTORY_LENGTH }, (_, i) => `move${i}`);
+  describe('move history', () => {
+    it('keeps the full history past 200 plies (no cap, so move numbers stay right)', () => {
+      const longHistory = Array.from({ length: 250 }, (_, i) => `move${i}`);
       const state = createTestState({
         phase: 'destSelect',
         selectedPieceId: 'w-n-g1',
         selectedMoveIndex: 0,
         history: longHistory,
       });
-      
       const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
-      
-      expect(next.history.length).toBe(MAX_HISTORY_LENGTH);
-      expect(next.history[next.history.length - 1]).toBe('Nf3');
-    });
-
-    it('caps history at MAX_HISTORY_LENGTH on engine move', () => {
-      const longHistory = Array.from({ length: MAX_HISTORY_LENGTH }, (_, i) => `move${i}`);
-      const state = createTestState({
-        history: longHistory,
-        engineThinking: true,
-      });
-      
-      const next = reduce(state, {
-        type: 'ENGINE_MOVE',
-        uci: 'e7e5',
-        san: 'e5',
-        fen: 'new-fen',
-        turn: 'w',
-        pieces: [],
-        inCheck: false,
-      });
-      
-      expect(next.history.length).toBe(MAX_HISTORY_LENGTH);
-      expect(next.history[next.history.length - 1]).toBe('e5');
+      expect(next.history.length).toBe(251);
+      expect(next.history[0]).toBe('move0');
+      expect(next.history[250]).toBe('Nf3');
     });
   });
 
@@ -1440,6 +1420,226 @@ describe('reducer', () => {
       s = reduce(s, { type: 'DOUBLE_TAP' });            // close -> gameplay
       expect(s.phase).toBe('idle');
       expect(s.timerActive).toBe(false);                // NOT started
+    });
+  });
+
+  // ── Review batch B2 regressions ─────────────────────────────────────────────
+
+  describe('bullet clock start (any way the player begins a move)', () => {
+    const bulletIdle = (over?: Partial<GameState>) => createTestState({
+      mode: 'bullet', phase: 'idle', timerActive: false, lastTickTime: null,
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 }, ...over,
+    });
+
+    it('starts on a scroll from idle', () => {
+      const next = reduce(bulletIdle(), { type: 'SCROLL', direction: 'down' });
+      expect(next.phase).toBe('rowSelect');
+      expect(next.timerActive).toBe(true);
+      expect(next.lastTickTime).not.toBeNull();
+    });
+
+    it('starts on a tap from idle', () => {
+      const next = reduce(bulletIdle(), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.phase).toBe('rowSelect');
+      expect(next.timerActive).toBe(true);
+    });
+
+    it('starts when voice input starts', () => {
+      const next = reduce(bulletIdle(), { type: 'VOICE_LISTEN_START' });
+      expect(next.voice?.listening).toBe(true);
+      expect(next.timerActive).toBe(true);
+    });
+
+    it('does not start outside Bullet mode', () => {
+      const next = reduce(createTestState({ mode: 'play' }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(next.timerActive).toBe(false);
+    });
+  });
+
+  describe('moves are blocked while it is not the player\'s turn', () => {
+    const blocked: Array<[string, Partial<GameState>]> = [
+      ['the engine is thinking', { engineThinking: true }],
+      ['a move is still being played', { pendingMove: { uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' } }],
+      ['it is the engine\'s turn (resumed game)', { turn: 'b', playerColor: 'w' }],
+    ];
+    it.each(blocked)('idle scroll and tap do nothing while %s', (_why, over) => {
+      const state = createTestState({ phase: 'idle', ...over });
+      expect(reduce(state, { type: 'SCROLL', direction: 'down' })).toBe(state);
+      expect(reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' })).toBe(state);
+    });
+
+    it('allows selection on the player\'s own turn as Black', () => {
+      const state = createTestState({ phase: 'idle', turn: 'b', playerColor: 'b' });
+      expect(reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' }).phase).toBe('rowSelect');
+    });
+  });
+
+  describe('menu exits never leave the clock flagged as paused', () => {
+    const runningBullet = () => createTestState({
+      mode: 'bullet', phase: 'idle', timerActive: true, lastTickTime: 1,
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 }, history: ['e4', 'e5'],
+    });
+
+    it('reset confirm, then opening and closing the menu, does not start a fresh clock', () => {
+      let s = reduce(runningBullet(), { type: 'DOUBLE_TAP' });       // menu (clock paused)
+      expect(s.timerActive).toBe(false);
+      s = reduce(s, { type: 'MENU_SELECT', option: 'reset' });
+      s = reduce({ ...s, menuSelectedIndex: 0 }, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // Confirm
+      expect(s.pendingReset).toBe(true);
+      s = reduce(s, { type: 'NEW_GAME' });
+      s = reduce(s, { type: 'DOUBLE_TAP' });                          // open menu
+      s = reduce(s, { type: 'DOUBLE_TAP' });                          // close menu
+      expect(s.phase).toBe('idle');
+      expect(s.history).toEqual([]);
+      expect(s.timerActive).toBe(false);
+    });
+
+    it('applying Play As on a fresh board clears the pause flag', () => {
+      let s = reduce({ ...runningBullet(), history: [] }, { type: 'DOUBLE_TAP' });
+      expect(s.bulletPausedForMenu).toBe(true);
+      s = reduce(s, { type: 'MENU_SELECT', option: 'playAs' });
+      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(s.phase).toBe('idle');
+      expect(s.bulletPausedForMenu).toBe(false);
+    });
+  });
+
+  describe('Mode: Bullet and Academy commit only when started', () => {
+    it('peeking at Academy and backing out keeps the running bullet game and its clock', () => {
+      const timers = { whiteMs: 30000, blackMs: 60000, incrementMs: 0 };
+      let s = createTestState({ mode: 'bullet', phase: 'idle', timerActive: true, lastTickTime: 1, timers, history: ['e4'] });
+      s = reduce(s, { type: 'DOUBLE_TAP' });                          // menu, clock paused
+      s = reduce(s, { type: 'MENU_SELECT', option: 'mode' });
+      s = reduce({ ...s, menuSelectedIndex: 2 }, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // Academy
+      expect(s.phase).toBe('academySelect');
+      s = reduce(s, { type: 'DOUBLE_TAP' });                          // → modeSelect
+      s = reduce(s, { type: 'DOUBLE_TAP' });                          // → menu
+      s = reduce(s, { type: 'DOUBLE_TAP' });                          // → game
+      expect(s.phase).toBe('idle');
+      expect(s.mode).toBe('bullet');
+      expect(s.timers).toEqual(timers);
+      expect(s.timerActive).toBe(true);
+    });
+
+    it('peeking at Bullet Blitz from Play and backing out leaves an untimed Play game', () => {
+      let s = createTestState({ mode: 'play', phase: 'modeSelect', previousPhase: 'idle', menuSelectedIndex: 1 });
+      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → bulletSetup
+      s = reduce(s, { type: 'DOUBLE_TAP' });                          // → modeSelect
+      expect(s.mode).toBe('play');
+      expect(reduce(s, { type: 'NEW_GAME' }).timers).toBeUndefined();
+    });
+
+    it('starting a time control commits Bullet mode with fresh clocks', () => {
+      const s = reduce(createTestState({ mode: 'play', phase: 'bulletSetup', selectedTimeControlIndex: 0 }),
+        { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(s.mode).toBe('bullet');
+      expect(s.phase).toBe('idle');
+      expect(s.timers).toEqual({ whiteMs: TIME_CONTROLS[0]!.initialMs, blackMs: TIME_CONTROLS[0]!.initialMs, incrementMs: TIME_CONTROLS[0]!.incrementMs });
+    });
+
+    it('starting a drill commits Academy mode and stops any bullet clock', () => {
+      const s = reduce(createTestState({
+        mode: 'bullet', phase: 'academySelect', menuSelectedIndex: 0, timerActive: false,
+        timers: { whiteMs: 1, blackMs: 1, incrementMs: 0 },
+      }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(s.mode).toBe('academy');
+      expect(s.phase).toBe('coordinateDrill');
+      expect(s.timers).toBeUndefined();
+    });
+  });
+
+  describe('new game after game over resets every per-game field', () => {
+    it('clears last-move squares, promotion, log offset, and pause flags; resets bullet clocks', () => {
+      const s = reduce(createTestState({
+        gameOver: 'Checkmate', mode: 'bullet', selectedTimeControlIndex: 1, history: ['e4'],
+        lastMoveToSquare: 'g1', playerLastMoveToSquare: 'g1', pendingPromotionMove: { from: 'e7', to: 'e8' },
+        selectedPromotionIndex: 2, logScrollOffset: 3, bulletPausedForMenu: true, pendingPlayAs: 'black',
+        timers: { whiteMs: 5, blackMs: 0, incrementMs: 0 },
+      }), { type: 'DOUBLE_TAP' });
+      expect(s.gameOver).toBeNull();
+      expect(s.history).toEqual([]);
+      expect(s.lastMoveToSquare).toBeNull();
+      expect(s.playerLastMoveToSquare).toBeNull();
+      expect(s.pendingPromotionMove).toBeNull();
+      expect(s.selectedPromotionIndex).toBe(0);
+      expect(s.logScrollOffset).toBe(0);
+      expect(s.bulletPausedForMenu).toBe(false);
+      expect(s.pendingPlayAs).toBeNull();
+      expect(s.timers?.whiteMs).toBe(TIME_CONTROLS[1]!.initialMs);
+    });
+  });
+
+  describe('flag fall ends the game like checkmate', () => {
+    it('returns to idle and clears the half-made selection', () => {
+      const now = 1_000_000;
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        const s = reduce(createTestState({
+          mode: 'bullet', phase: 'promotionSelect', selectedPieceId: 'w-n-g1', selectedMoveIndex: 1,
+          pendingPromotionMove: { from: 'e7', to: 'e8' }, timerActive: true, lastTickTime: now - 5000,
+          timers: { whiteMs: 1000, blackMs: 60000, incrementMs: 0 },
+        }), { type: 'TIMER_TICK' });
+        expect(s.gameOver).toBe('Black wins on time!');
+        expect(s.phase).toBe('idle');
+        expect(s.selectedPieceId).toBeNull();
+        expect(s.pendingPromotionMove).toBeNull();
+        expect(s.timers?.whiteMs).toBe(0);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+  });
+
+  describe('back-navigation returns to the menu item that led there', () => {
+    it('View Log double-tap highlights View Log', () => {
+      const s = reduce(createTestState({ phase: 'viewLog' }), { type: 'DOUBLE_TAP' });
+      expect(s.phase).toBe('menu');
+      expect(s.menuSelectedIndex).toBe(MENU_INDEX.VIEW_LOG);
+    });
+
+    it.each([
+      ['Cancel', (s: GameState) => reduce({ ...s, menuSelectedIndex: 1 }, { type: 'TAP', selectedIndex: 0, selectedName: '' })],
+      ['double-tap', (s: GameState) => reduce(s, { type: 'DOUBLE_TAP' })],
+    ])('%s from a Play-As confirmation highlights Play As; from Reset highlights Reset', (_how, back) => {
+      const fromPlayAs = back(createTestState({ phase: 'resetConfirm', pendingPlayAs: 'black' }));
+      expect(fromPlayAs.menuSelectedIndex).toBe(MENU_INDEX.PLAY_AS);
+      const fromReset = back(createTestState({ phase: 'resetConfirm', pendingPlayAs: null }));
+      expect(fromReset.menuSelectedIndex).toBe(MENU_INDEX.RESET);
+    });
+  });
+
+  describe('Knight Path cursor', () => {
+    it('starts on a legal knight move, so the first tap makes a move', () => {
+      let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(s.phase).toBe('knightPathDrill');
+      const kp = s.academyState!.knightPath!;
+      const cursor = fileRankToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
+      expect(getKnightMoves(kp.startSquare)).toContain(cursor);
+      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      expect(s.academyState!.knightPath!.movesTaken).toBe(1);
+    });
+
+    it('a first scroll from a non-move square lands on the first legal move', () => {
+      let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const start = getSquareIndices(s.academyState!.knightPath!.startSquare);
+      s = { ...s, academyState: { ...s.academyState!, cursorFile: start.file, cursorRank: start.rank } };
+      s = reduce(s, { type: 'SCROLL', direction: 'down' });
+      const cursor = fileRankToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
+      expect(cursor).toBe(getKnightMoves(s.academyState!.knightPath!.startSquare)[0]);
+    });
+  });
+
+  describe('VOICE_STATUS_EXPIRE', () => {
+    it('clears the status it was scheduled for', () => {
+      const s = createTestState({ voice: { listening: false, status: "Didn't catch that", statusExpiresAt: 42, pendingConfirm: null } });
+      const next = reduce(s, { type: 'VOICE_STATUS_EXPIRE', expiresAt: 42 });
+      expect(next.voice?.status).toBeNull();
+      expect(next.voice?.statusExpiresAt).toBeNull();
+    });
+
+    it('ignores a stale expiry for a status that has since been replaced', () => {
+      const s = createTestState({ voice: { listening: false, status: 'Played e4', statusExpiresAt: 99, pendingConfirm: null } });
+      expect(reduce(s, { type: 'VOICE_STATUS_EXPIRE', expiresAt: 42 })).toBe(s);
     });
   });
 });

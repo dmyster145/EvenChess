@@ -184,6 +184,20 @@ export async function initApp(): Promise<void> {
       playerColor: s.playerColor,
     } satisfies BackgroundSnapshot;
   });
+  /**
+   * Ask the engine to move whenever a live game is on its turn: a new game where the human plays
+   * Black, or a game restored from a save or background snapshot taken while the engine was
+   * thinking (its search did not survive). The reducer blocks manual input until it replies.
+   */
+  function resumeEngineIfItsTurn(): void {
+    const s = store.getState();
+    if (s.gameOver || s.turn === s.playerColor) return;
+    if (s.mode !== 'play' && s.mode !== 'bullet') return;
+    void turnLoop.requestEngineMove().catch((err) => {
+      console.error('[app] engine resume failed:', err);
+    });
+  }
+
   onBackgroundRestore(BACKGROUND_STATE_KEY, (saved) => {
     const snap = saved as Partial<BackgroundSnapshot> | undefined;
     if (!snap || snap.version !== BACKGROUND_STATE_VERSION || !snap.fen) {
@@ -218,6 +232,7 @@ export async function initApp(): Promise<void> {
     store.dispatch({ type: 'RESTORE_STATE', state: restored });
     flush.setForceFullRefresh();
     branding.forceNextRefresh();
+    resumeEngineIfItsTurn();
   });
 
   attachDebugCopyApi();
@@ -327,22 +342,9 @@ export async function initApp(): Promise<void> {
     }
   });
 
-  void turnLoop.init().then(() => {
-    // Cold start as Black: the engine (White) makes the opening move. Only for a fresh
-    // game (resumed saves keep their position; the engine isn't re-driven on restore).
-    const s = store.getState();
-    if (
-      s.history.length === 0 &&
-      !s.gameOver &&
-      s.turn === 'w' &&
-      s.playerColor === 'b' &&
-      (s.mode === 'play' || s.mode === 'bullet')
-    ) {
-      void turnLoop.requestEngineMove().catch((err) => {
-        console.error('[app] cold-start engine move failed:', err);
-      });
-    }
-  });
+  // Cold start: the engine moves first as White when the human plays Black, and a resumed save
+  // taken while the engine was thinking hands the move back to it.
+  void turnLoop.init().then(resumeEngineIfItsTurn);
 
   // Reinit controller is exposed via the debug menu only. Holds references to the unsubscribe
   // setters so it can replace them after a reinit without leaking listeners.

@@ -495,6 +495,29 @@ describe('selectors', () => {
       expect(text).toContain('1.');
       expect(text).toContain('2.');
     });
+
+    // 12 plies = 6 move pairs, one more than the 5-pair window.
+    const twelvePlies = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'c3', 'Nf6', 'd4', 'exd4', 'cxd4', 'Bb4+'];
+    const loggedMoveNumbers = (text: string) =>
+      text.split('\n').map((l) => /^(\d+)\. /.exec(l)?.[1]).filter(Boolean).map(Number);
+
+    it('shows a 5-move window that follows logScrollOffset', () => {
+      const atStart = getLogDisplayText(createTestState({ phase: 'viewLog', history: twelvePlies, logScrollOffset: 0 }));
+      const scrolled = getLogDisplayText(createTestState({ phase: 'viewLog', history: twelvePlies, logScrollOffset: 1 }));
+      expect(loggedMoveNumbers(atStart)).toEqual([1, 2, 3, 4, 5]);
+      expect(loggedMoveNumbers(scrolled)).toEqual([2, 3, 4, 5, 6]);
+      expect(scrolled).toContain('MOVE LOG 2-6/6');
+    });
+
+    it('clamps an out-of-range offset to the last window', () => {
+      const text = getLogDisplayText(createTestState({ phase: 'viewLog', history: twelvePlies, logScrollOffset: 99 }));
+      expect(loggedMoveNumbers(text)).toEqual([2, 3, 4, 5, 6]);
+    });
+
+    it('omits the range header when every move fits', () => {
+      const text = getLogDisplayText(createTestState({ phase: 'viewLog', history: ['e4', 'e5'] }));
+      expect(text).not.toMatch(/MOVE LOG \d/);
+    });
   });
 
   // ── Carousel Display Text Tests ─────────────────────────────────────────────
@@ -894,6 +917,26 @@ describe('selectors', () => {
       const text = getPgnStudyDisplayText(state);
       expect(text).toContain('Immortal Game');
     });
+
+    const pgnAt = (currentMoveIndex: number) => createTestState({
+      phase: 'pgnStudy',
+      academyState: {
+        drillType: 'pgn', score: { correct: 0, total: 0 }, cursorFile: 0, cursorRank: 0,
+        navAxis: 'file', feedback: 'none',
+        pgnStudy: { gameName: 'Test', moves: ['e4', 'e5', 'Nf3', 'Nc6'], currentMoveIndex, fen: 'startpos', guessMode: false },
+      },
+    });
+    const markedLine = (text: string) => text.split('\n').find((l) => l.startsWith('>'));
+
+    it('marks the move just played (the board shows the position after it)', () => {
+      expect(markedLine(getPgnStudyDisplayText(pgnAt(1)))).toBe('>1.e4');
+      expect(markedLine(getPgnStudyDisplayText(pgnAt(2)))).toBe('>e5');
+      expect(markedLine(getPgnStudyDisplayText(pgnAt(3)))).toBe('>2.Nf3');
+    });
+
+    it('does not list moves that have not been played yet', () => {
+      expect(getPgnStudyDisplayText(pgnAt(1))).not.toContain('e5');
+    });
   });
 
   // ── Combined Display Text Tests ─────────────────────────────────────────────
@@ -935,6 +978,40 @@ describe('selectors', () => {
       const state = createTestState({ phase: 'academySelect' });
       const text = getCombinedDisplayText(state);
       expect(text).toContain('ACADEMY');
+    });
+  });
+
+  describe('drill feedback prompts match what a tap does (load the next question)', () => {
+    it('coordinate drill: wrong answer says "next square", not "try again"', () => {
+      const text = getCoordinateDrillDisplayText(createTestState({
+        phase: 'coordinateDrill',
+        academyState: { drillType: 'coordinate', score: { correct: 0, total: 1 }, cursorFile: 4, cursorRank: 4, navAxis: 'rank', feedback: 'incorrect', targetSquare: 'e4' },
+      }));
+      expect(text).toContain('Tap: next square');
+      expect(text).not.toContain('try again');
+    });
+
+    it('knight path: too many moves says "next puzzle", not "try again"', () => {
+      const text = getKnightPathDisplayText(createTestState({
+        phase: 'knightPathDrill',
+        academyState: {
+          drillType: 'knightPath', score: { correct: 0, total: 1 }, cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback: 'incorrect',
+          knightPath: { startSquare: 'a1', targetSquare: 'c5', currentSquare: 'b3', optimalMoves: 2, movesTaken: 4, path: ['a1'] },
+        },
+      }));
+      expect(text).toContain('Tap: next puzzle');
+      expect(text).not.toContain('try again');
+    });
+  });
+
+  describe('voice status on the idle screen', () => {
+    it('shows a timed status until it is cleared, without reading the clock', () => {
+      const text = getCombinedDisplayText(createTestState({
+        phase: 'idle', voice: { listening: false, status: "Didn't catch that", statusExpiresAt: 1, pendingConfirm: null },
+      }));
+      // statusExpiresAt is long past; the selector still shows it because clearing is the
+      // reducer's job (VOICE_STATUS_EXPIRE), not a render-time clock check.
+      expect(text).toContain("Didn't catch that");
     });
   });
 

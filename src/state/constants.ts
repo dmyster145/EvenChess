@@ -70,16 +70,14 @@ export const PLAY_AS_OPTIONS: readonly ('white' | 'black' | 'random')[] = ['whit
 export const PLAY_AS_LABELS: readonly string[] = ['White', 'Black', 'Random'];
 export const PLAY_AS_OPTION_COUNT = PLAY_AS_OPTIONS.length;
 
-/** SDK text container limit is 2000 chars; 40 move pairs stays well under */
-export const MAX_MOVES_DISPLAY = 40;
+/** Move pairs shown at once in View Log; scrolling moves this window through the game. */
 export const LOG_MAX_VISIBLE = 5;
 
 export const DISPLAY_WIDTH = 576;
 
-export const MAX_HISTORY_LENGTH = 200;
-
 /**
- * Gesture disambiguation: if double-tap arrives within this time after entering
- * pieceSelect from a scroll, treat it as menu open intent (not back from pieceSelect).
+ * Gesture disambiguation: a double-tap within this time of a tap entering pieceSelect is treated as
+ * one quick double-tap whose first half was read as that tap, so it opens the menu instead of
+ * backing up to rowSelect (see handleDoubleTap 'pieceSelect').
  */
 export const GESTURE_DISAMBIGUATION_MS = 200;

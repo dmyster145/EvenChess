@@ -20,7 +20,6 @@ import {
   PLAY_AS_OPTIONS,
   PLAY_AS_OPTION_COUNT,
   LOG_MAX_VISIBLE,
-  MAX_HISTORY_LENGTH,
   MODE_OPTIONS,
   MODE_OPTION_COUNT,
   TIME_CONTROLS,
@@ -42,6 +41,80 @@ import { getRandomFamousGame, STARTING_FEN } from '../academy/pgn';
 const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'idle', 'rowSelect', 'pieceSelect', 'destSelect', 'promotionSelect',
 ]);
+
+/**
+ * True when the human may begin selecting a move: it is their turn and no engine search or
+ * not-yet-played move is in flight. Blocks moving the engine's pieces while it thinks, and on a
+ * resumed game where the engine is still to move.
+ */
+function playerMayMove(state: GameState): boolean {
+  return !state.engineThinking && !state.pendingMove && state.turn === state.playerColor;
+}
+
+/**
+ * Bullet clock start: the clock runs from the moment the player begins their first move, whether
+ * they scroll, tap, or start voice input. Returns the fields to merge (empty when not applicable).
+ */
+function bulletClockStart(state: GameState): Partial<GameState> {
+  return state.mode === 'bullet' && state.timers && !state.timerActive
+    ? { timerActive: true, lastTickTime: Date.now() }
+    : {};
+}
+
+/** Fresh bullet clocks for the selected time control (empty outside Bullet mode). */
+function bulletClockReset(state: GameState): Partial<GameState> {
+  if (state.mode !== 'bullet') return {};
+  const tc = TIME_CONTROLS[state.selectedTimeControlIndex] ?? TIME_CONTROLS[2];
+  return {
+    timers: { whiteMs: tc.initialMs, blackMs: tc.initialMs, incrementMs: tc.incrementMs },
+    timerActive: false,
+    lastTickTime: null,
+  };
+}
+
+/**
+ * The one definition of "start a new game" in state: used by NEW_GAME, by double-tap after game
+ * over, and by starting a Bullet game. The chess board itself is reset by side-effects.ts.
+ */
+function startFreshGame(state: GameState): GameState {
+  return {
+    ...state,
+    phase: 'idle',
+    selectedPieceId: null,
+    selectedMoveIndex: 0,
+    pendingPromotionMove: null,
+    selectedPromotionIndex: 0,
+    history: [],
+    lastMove: null,
+    lastMoveToSquare: null,
+    playerLastMoveToSquare: null,
+    engineThinking: false,
+    gameOver: null,
+    pendingMove: null,
+    hasUnsavedChanges: false,
+    menuSelectedIndex: 0,
+    previousPhase: null,
+    logScrollOffset: 0,
+    pendingReset: false,
+    pendingPlayAs: null,
+    bulletPausedForMenu: false,
+    ...bulletClockReset(state),
+  };
+}
+
+/** End the game (checkmate, draw, or flag fall): back to idle with any half-made selection cleared. */
+function endGame(state: GameState, reason: string): GameState {
+  return {
+    ...state,
+    phase: 'idle',
+    gameOver: reason,
+    engineThinking: false,
+    selectedPieceId: null,
+    selectedMoveIndex: 0,
+    pendingPromotionMove: null,
+    selectedPromotionIndex: 0,
+  };
+}
 
 /**
  * Pure reducer — side-effects (move execution, engine requests) are handled
@@ -66,16 +139,14 @@ export function reduce(state: GameState, action: Action): GameState {
       return handlePlayerMoveSan(state, action.san);
 
     case 'VOICE_LISTEN_START':
-      if (
-        state.phase !== 'idle' ||
-        state.gameOver ||
-        state.engineThinking ||
-        state.pendingMove ||
-        state.turn !== state.playerColor
-      ) {
+      if (state.phase !== 'idle' || state.gameOver || !playerMayMove(state)) {
         return state;
       }
-      return { ...state, voice: { listening: true, status: 'Listening… speak your move', statusExpiresAt: null, pendingConfirm: null } };
+      return {
+        ...state,
+        ...bulletClockStart(state),
+        voice: { listening: true, status: 'Listening… speak your move', statusExpiresAt: null, pendingConfirm: null },
+      };
 
     case 'VOICE_LISTEN_END':
       return state.voice ? { ...state, voice: { ...state.voice, listening: false } } : state;
@@ -93,6 +164,12 @@ export function reduce(state: GameState, action: Action): GameState {
         },
       };
     }
+
+    case 'VOICE_STATUS_EXPIRE':
+      // Ignore a stale timer: only clear the status it was scheduled for.
+      return state.voice && state.voice.statusExpiresAt === action.expiresAt
+        ? { ...state, voice: { ...state.voice, status: null, statusExpiresAt: null } }
+        : state;
 
     case 'VOICE_MOVE_CANDIDATE':
       return handleVoiceMoveCandidate(state, action.move);
@@ -115,44 +192,10 @@ export function reduce(state: GameState, action: Action): GameState {
       return handleEngineMove(state, action);
 
     case 'GAME_OVER':
-      return { ...state, phase: 'idle', gameOver: action.reason, engineThinking: false };
+      return endGame(state, action.reason);
 
-    case 'NEW_GAME': {
-      const bulletTimerReset =
-        state.mode === 'bullet' && state.selectedTimeControlIndex != null
-          ? (() => {
-              const tc = TIME_CONTROLS[state.selectedTimeControlIndex] ?? TIME_CONTROLS[2];
-              return {
-                timers: { whiteMs: tc.initialMs, blackMs: tc.initialMs, incrementMs: tc.incrementMs },
-                timerActive: false,
-                lastTickTime: null,
-              };
-            })()
-          : {};
-      return {
-        ...state,
-        phase: 'idle',
-        selectedPieceId: null,
-        selectedMoveIndex: 0,
-        pendingPromotionMove: null,
-        selectedPromotionIndex: 0,
-        history: [],
-        lastMove: null,
-        lastMoveToSquare: null,
-        playerLastMoveToSquare: null,
-        engineThinking: false,
-        gameOver: null,
-        pendingMove: null,
-        hasUnsavedChanges: false,
-        menuSelectedIndex: 0,
-        previousPhase: null,
-        logScrollOffset: 0,
-        // Reset intent (set by resetConfirm confirm) is consumed here.
-        pendingReset: false,
-        pendingPlayAs: null,
-        ...bulletTimerReset,
-      };
-    }
+    case 'NEW_GAME':
+      return startFreshGame(state);
 
     case 'REFRESH':
       return {
@@ -300,6 +343,21 @@ function initialPieceForRowSelect(state: GameState): PieceEntry | null {
   return state.pieces[0] ?? null;
 }
 
+/** Idle → rowSelect (scroll or tap), starting the bullet clock on the player's first move. */
+function beginMoveSelection(state: GameState): GameState {
+  if (!playerMayMove(state)) return state;
+  const initial = initialPieceForRowSelect(state);
+  if (!initial) return state;
+  return {
+    ...state,
+    phase: 'rowSelect',
+    selectedPieceId: initial.id,
+    selectedMoveIndex: 0,
+    phaseEnteredAt: Date.now(),
+    ...bulletClockStart(state),
+  };
+}
+
 /**
  * Scroll (swipe) handling during gameplay:
  * - SCROLL_BOTTOM_EVENT → direction 'down' → next item (+1 in spatial order).
@@ -329,20 +387,8 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     ? (direction === 'down' ? 'up' : 'down')
     : direction;
   switch (state.phase) {
-    case 'idle': {
-      if (state.pieces.length === 0) return state;
-      const initial = initialPieceForRowSelect(state);
-      if (!initial) return state;
-      const startTimer = state.mode === 'bullet' && state.timers && !state.timerActive;
-      return {
-        ...state,
-        phase: 'rowSelect',
-        selectedPieceId: initial.id,
-        selectedMoveIndex: 0,
-        phaseEnteredAt: Date.now(),
-        ...(startTimer && { timerActive: true, lastTickTime: Date.now() }),
-      };
-    }
+    case 'idle':
+      return beginMoveSelection(state);
 
     case 'rowSelect': {
       const rows = getCandidateRows(state);
@@ -516,12 +562,13 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
         state.academyState.cursorFile,
         state.academyState.cursorRank
       );
-      let currentIdx = validMoves.indexOf(currentHighlight.toLowerCase());
-      if (currentIdx === -1) currentIdx = 0;
-
-      const nextIdx = d === 'down'
-        ? (currentIdx + 1) % validMoves.length
-        : (currentIdx - 1 + validMoves.length) % validMoves.length;
+      const currentIdx = validMoves.indexOf(currentHighlight.toLowerCase());
+      // Cursor not on a legal move yet: the first scroll lands on the first (or last) move.
+      const nextIdx = currentIdx === -1
+        ? (d === 'down' ? 0 : validMoves.length - 1)
+        : d === 'down'
+          ? (currentIdx + 1) % validMoves.length
+          : (currentIdx - 1 + validMoves.length) % validMoves.length;
 
       const nextSquare = validMoves[nextIdx]!;
       const nextPos = getSquareIndices(nextSquare);
@@ -570,18 +617,8 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
 
 function handleTap(state: GameState, _selectedIndex: number, _selectedName: string): GameState {
   switch (state.phase) {
-    case 'idle': {
-      if (state.pieces.length === 0) return state;
-      const initial = initialPieceForRowSelect(state);
-      if (!initial) return state;
-      return {
-        ...state,
-        phase: 'rowSelect',
-        selectedPieceId: initial.id,
-        selectedMoveIndex: 0,
-        phaseEnteredAt: Date.now(),
-      };
-    }
+    case 'idle':
+      return beginMoveSelection(state);
 
     case 'rowSelect': {
       const piece = selectedPieceEntry(state) ?? state.pieces[0];
@@ -623,7 +660,7 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         };
       }
 
-      const newHistory = [...state.history, move.san].slice(-MAX_HISTORY_LENGTH);
+      const newHistory = [...state.history, move.san];
       return {
         ...state,
         phase: 'idle',
@@ -650,7 +687,7 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         san: `${pm.to}=${promotion.toUpperCase()}`,
         promotion,
       };
-      const newHistory = [...state.history, move.san].slice(-MAX_HISTORY_LENGTH);
+      const newHistory = [...state.history, move.san];
       return {
         ...state,
         phase: 'idle',
@@ -686,8 +723,8 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
     case 'resetConfirm': {
       if (state.menuSelectedIndex === 0) {
         // Confirm: commit any deferred Play As choice, then flag the reset explicitly so
-        // side-effects.ts performs it. Keying on the flag (not the resetConfirm→idle transition)
-        // lets a native-menu Cancel return to gameplay without tripping a reset. Cleared by NEW_GAME.
+        // side-effects.ts performs it (keyed on the flag, not on the resetConfirm→idle transition).
+        // The NEW_GAME it dispatches clears the flag, the clock, and the menu's pause marker.
         return {
           ...state,
           playAs: state.pendingPlayAs ?? state.playAs,
@@ -696,10 +733,8 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
           previousPhase: null,
           pendingReset: true,
         };
-      } else {
-        // Cancel: discard any deferred Play As choice so the side stays unchanged.
-        return { ...state, pendingPlayAs: null, phase: 'menu', menuSelectedIndex: MENU_INDEX.RESET };
       }
+      return cancelResetConfirm(state);
     }
 
     case 'difficultySelect': {
@@ -760,7 +795,7 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
       }
       // Fresh board: apply immediately — the playAsSelect→idle transition is picked up by the
       // new-game side-effect.
-      return { ...state, playAs: chosen, phase: 'idle', menuSelectedIndex: 0 };
+      return { ...state, playAs: chosen, phase: 'idle', menuSelectedIndex: 0, bulletPausedForMenu: false };
     }
 
     case 'modeSelect': {
@@ -794,36 +829,18 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
   }
 }
 
-function applyNewGameAfterGameOver(state: GameState): GameState {
-  const base: GameState = {
-    ...state,
-    phase: 'idle',
-    selectedPieceId: null,
-    selectedMoveIndex: 0,
-    history: [],
-    lastMove: null,
-    engineThinking: false,
-    gameOver: null,
-    pendingMove: null,
-    hasUnsavedChanges: false,
-    menuSelectedIndex: 0,
-    previousPhase: null,
-  };
-  if (state.mode === 'bullet' && state.selectedTimeControlIndex != null) {
-    const tc = TIME_CONTROLS[state.selectedTimeControlIndex] ?? TIME_CONTROLS[2];
-    return {
-      ...base,
-      timers: { whiteMs: tc.initialMs, blackMs: tc.initialMs, incrementMs: tc.incrementMs },
-      timerActive: false,
-      lastTickTime: null,
-    };
-  }
-  return base;
+/**
+ * Back out of the reset confirmation (Cancel or double-tap). Discards any deferred Play As choice
+ * so the side stays unchanged, and returns to the menu item that led here.
+ */
+function cancelResetConfirm(state: GameState): GameState {
+  const menuSelectedIndex = state.pendingPlayAs ? MENU_INDEX.PLAY_AS : MENU_INDEX.RESET;
+  return { ...state, pendingPlayAs: null, phase: 'menu', menuSelectedIndex };
 }
 
 function handleDoubleTap(state: GameState): GameState {
   if (state.gameOver) {
-    return applyNewGameAfterGameOver(state);
+    return startFreshGame(state);
   }
   switch (state.phase) {
     case 'idle':
@@ -836,9 +853,9 @@ function handleDoubleTap(state: GameState): GameState {
       return { ...state, phase: 'idle', selectedPieceId: null, selectedMoveIndex: 0 };
 
     case 'pieceSelect': {
-      // Defensive: a fused scroll+double-tap now lands in rowSelect (handled above),
-      // so this branch is normally unreachable — kept as a guard in case a fast
-      // double-tap slips through right after descending into pieceSelect.
+      // A double-tap arriving within GESTURE_DISAMBIGUATION_MS of entering pieceSelect means the
+      // touchpad reported the first half of a quick double-tap as a TAP (rowSelect → pieceSelect);
+      // treat the gesture as the menu double-tap. Later double-taps back up one level.
       const timeSinceEntry = Date.now() - state.phaseEnteredAt;
       if (timeSinceEntry < GESTURE_DISAMBIGUATION_MS) {
         return handleOpenMenu(state);
@@ -861,10 +878,10 @@ function handleDoubleTap(state: GameState): GameState {
       return handleCloseMenu(state);
 
     case 'viewLog':
-      return { ...state, phase: 'menu', menuSelectedIndex: 0 };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG };
 
     case 'resetConfirm':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.RESET, pendingPlayAs: null };
+      return cancelResetConfirm(state);
 
     case 'exitConfirm':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.EXIT };
@@ -926,7 +943,7 @@ function handleEngineMove(
   state: GameState,
   action: Extract<Action, { type: 'ENGINE_MOVE' }>,
 ): GameState {
-  const newHistory = [...state.history, action.san].slice(-MAX_HISTORY_LENGTH);
+  const newHistory = [...state.history, action.san];
   const lastMoveToSquare = action.uci.length >= 4 ? action.uci.slice(2, 4) : null;
   return {
     ...state,
@@ -992,7 +1009,7 @@ function handleVoiceMoveCandidate(state: GameState, move: GameState['pendingMove
 function handleVoiceConfirm(state: GameState): GameState {
   const move = state.voice?.pendingConfirm;
   if (!move || !voiceMoveAllowed(state)) return state;
-  const newHistory = [...state.history, move.san].slice(-MAX_HISTORY_LENGTH);
+  const newHistory = [...state.history, move.san];
   return {
     ...state,
     phase: 'idle',
@@ -1123,6 +1140,11 @@ function handleConfirmExit(state: GameState, save: boolean): GameState {
 }
 
 
+/**
+ * Mode menu choice. Play applies immediately (the current board continues untimed). Bullet and
+ * Academy only open their setup screens: the mode is committed when a time control or drill is
+ * actually started, so backing out leaves the current game, mode, and clock untouched.
+ */
 function handleSetMode(state: GameState, mode: GameMode): GameState {
   switch (mode) {
     case 'play':
@@ -1132,6 +1154,7 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
         phase: 'idle',
         timerActive: false,
         timers: undefined,
+        bulletPausedForMenu: false,
         academyState: undefined,
         menuSelectedIndex: 0,
         previousPhase: null,
@@ -1139,23 +1162,10 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
       };
 
     case 'bullet':
-      return {
-        ...state,
-        mode: 'bullet',
-        phase: 'bulletSetup',
-        logScrollOffset: 0,
-      };
+      return { ...state, phase: 'bulletSetup' };
 
     case 'academy':
-      return {
-        ...state,
-        mode: 'academy',
-        phase: 'academySelect',
-        menuSelectedIndex: 0,
-        timerActive: false,
-        timers: undefined,
-        logScrollOffset: 0,
-      };
+      return { ...state, phase: 'academySelect', menuSelectedIndex: 0 };
 
     default:
       return state;
@@ -1163,34 +1173,7 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
 }
 
 function handleStartBulletGame(state: GameState, timeControlIndex: number): GameState {
-  const timeControl = TIME_CONTROLS[timeControlIndex] ?? TIME_CONTROLS[2];
-  return {
-    ...state,
-    phase: 'idle',
-    selectedPieceId: null,
-    selectedMoveIndex: 0,
-    pendingPromotionMove: null,
-    selectedPromotionIndex: 0,
-    history: [],
-    lastMove: null,
-    lastMoveToSquare: null,
-    playerLastMoveToSquare: null,
-    engineThinking: false,
-    gameOver: null,
-    pendingMove: null,
-    hasUnsavedChanges: false,
-    menuSelectedIndex: 0,
-    previousPhase: null,
-    logScrollOffset: 0,
-    timers: {
-      whiteMs: timeControl.initialMs,
-      blackMs: timeControl.initialMs,
-      incrementMs: timeControl.incrementMs,
-    },
-    timerActive: false,
-    lastTickTime: null,
-    selectedTimeControlIndex: timeControlIndex,
-  };
+  return startFreshGame({ ...state, mode: 'bullet', selectedTimeControlIndex: timeControlIndex });
 }
 
 function handleTimerTick(state: GameState): GameState {
@@ -1205,13 +1188,10 @@ function handleTimerTick(state: GameState): GameState {
   // Check for timeout
   if (newTime === 0) {
     const winner = activeColor === 'w' ? 'Black' : 'White';
-    return {
-      ...state,
-      timers: { ...state.timers, [key]: 0 },
-      lastTickTime: now,
-      timerActive: false,
-      gameOver: `${winner} wins on time!`,
-    };
+    return endGame(
+      { ...state, timers: { ...state.timers, [key]: 0 }, lastTickTime: now, timerActive: false },
+      `${winner} wins on time!`,
+    );
   }
 
   return {
@@ -1234,7 +1214,7 @@ function handleApplyIncrement(state: GameState, color: 'w' | 'b'): GameState {
 }
 
 
-function handleStartDrill(state: GameState, drillType: DrillType): GameState {
+function handleStartDrill(prev: GameState, drillType: DrillType): GameState {
   const pos = getDefaultCursorPosition();
   const baseState = {
     drillType,
@@ -1243,6 +1223,16 @@ function handleStartDrill(state: GameState, drillType: DrillType): GameState {
     cursorRank: pos.rank,
     navAxis: 'file' as const,
     feedback: 'none' as const,
+  };
+
+  // Starting a drill is what commits Academy mode (see handleSetMode); any bullet clock stops.
+  const state: GameState = {
+    ...prev,
+    mode: 'academy',
+    timers: undefined,
+    timerActive: false,
+    bulletPausedForMenu: false,
+    logScrollOffset: 0,
   };
 
   switch (drillType) {
@@ -1258,14 +1248,14 @@ function handleStartDrill(state: GameState, drillType: DrillType): GameState {
 
     case 'knightPath': {
       const puzzle = generateKnightPuzzle(2, 4);
-      const startPos = getSquareIndices(puzzle.start);
+      const cursor = firstKnightMoveCursor(puzzle.start);
       return {
         ...state,
         phase: 'knightPathDrill',
         academyState: {
           ...baseState,
-          cursorFile: startPos.file,
-          cursorRank: startPos.rank,
+          cursorFile: cursor.file,
+          cursorRank: cursor.rank,
           knightPath: {
             startSquare: puzzle.start,
             targetSquare: puzzle.target,
@@ -1414,6 +1404,12 @@ function handleNextDrillQuestion(state: GameState): GameState {
   };
 }
 
+/** Knight Path cursor starts on the knight's first legal move, so the first tap is a real move. */
+function firstKnightMoveCursor(square: string): { file: number; rank: number } {
+  const first = getKnightMoves(square)[0];
+  return getSquareIndices(first ?? square);
+}
+
 function handleKnightPathTap(state: GameState): GameState {
   if (!state.academyState) return state;
 
@@ -1421,13 +1417,13 @@ function handleKnightPathTap(state: GameState): GameState {
 
   if (academy.feedback !== 'none') {
     const puzzle = generateKnightPuzzle(2, 4);
-    const startPos = getSquareIndices(puzzle.start);
+    const cursor = firstKnightMoveCursor(puzzle.start);
     return {
       ...state,
       academyState: {
         ...academy,
-        cursorFile: startPos.file,
-        cursorRank: startPos.rank,
+        cursorFile: cursor.file,
+        cursorRank: cursor.rank,
         feedback: 'none',
         knightPath: {
           startSquare: puzzle.start,
@@ -1495,17 +1491,14 @@ function handleKnightPathTap(state: GameState): GameState {
   }
 
   // Continue puzzle from new position
-  const newPos = getSquareIndices(moveTarget);
-  const validMoves = getKnightMoves(moveTarget);
-  const firstValidMove = validMoves[0];
-  const firstMovePos = firstValidMove ? getSquareIndices(firstValidMove) : newPos;
+  const cursor = firstKnightMoveCursor(moveTarget);
 
   return {
     ...state,
     academyState: {
       ...academy,
-      cursorFile: firstMovePos.file,
-      cursorRank: firstMovePos.rank,
+      cursorFile: cursor.file,
+      cursorRank: cursor.rank,
       knightPath: newKnightPath,
     },
   };
