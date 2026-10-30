@@ -50,7 +50,7 @@ function detectCastle(words: string[]): 'k' | 'q' | undefined {
   if (!words.some((w) => w === 'castle' || w === 'castles')) return undefined;
   if (words.some((w) => w === 'queenside' || w === 'long')) return 'q';
   if (words.some((w) => w === 'kingside' || w === 'short')) return 'k';
-  // "castle queen [side]" / "castle king [side]"
+  // "castle queen side" / "castle king side" (the recognizer's grammar spells them as two words)
   const ci = words.findIndex((w) => w === 'castle' || w === 'castles');
   const rest = words.slice(ci + 1);
   if (rest.includes('queen')) return 'q';
@@ -116,14 +116,15 @@ export function parseVoiceCommand(transcript: string): VoiceIntent {
     intent.piece = (toks[leadingPieceIdx] as { k: 'piece'; v: PieceType }).v;
   }
 
-  // Promotion: a piece token after a "promote" word, OR a trailing piece token after
-  // the destination square when no piece is leading (e.g. "e8 queen").
+  // Promotion: a piece token after a "promote" word, OR a trailing piece token after the
+  // destination square when the moving piece is unnamed or a pawn ("e8 queen", "pawn e8 queen").
+  const pawnOrUnnamed = !intent.piece || intent.piece === 'p';
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i]!;
     if (t.k !== 'piece') continue;
     if (i === leadingPieceIdx && intent.piece) continue;
     const afterPromote = promoteAt >= 0 && i > promoteAt;
-    const trailing = lastSquareAt >= 0 && i >= lastSquareAt && !intent.piece;
+    const trailing = lastSquareAt >= 0 && i >= lastSquareAt && pawnOrUnnamed;
     if (afterPromote || trailing) {
       intent.promotion = t.v;
       break;

@@ -76,4 +76,18 @@ describe('parseVoiceCommand', () => {
     expect(parseVoiceCommand('')).toEqual({});
     expect(parseVoiceCommand('hello there')).toEqual({});
   });
+
+  it('keeps a trailing promotion piece after a leading "pawn"', () => {
+    expect(parseVoiceCommand('pawn e8 queen')).toMatchObject({ piece: 'p', to: 'e8', promotion: 'q' });
+    expect(parseVoiceCommand('pawn to e eight knight')).toMatchObject({ piece: 'p', to: 'e8', promotion: 'n' });
+  });
+
+  it('does not treat a trailing piece as a promotion when a non-pawn piece moves', () => {
+    expect(parseVoiceCommand('rook e8 queen').promotion).toBeUndefined();
+  });
+
+  it('parses castling spelled as the grammar emits it ("king side" / "queen side")', () => {
+    expect(parseVoiceCommand('castle king side').castle).toBe('k');
+    expect(parseVoiceCommand('castle queen side').castle).toBe('q');
+  });
 });

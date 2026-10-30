@@ -115,4 +115,44 @@ describe('resolveVoiceMove', () => {
     expect(resolveVoiceMove(parseVoiceCommand(''), mkState([knightB1])).kind).toBe('unparsed');
     expect(resolveVoiceMove({ to: 'zz' }, mkState([knightB1])).kind).toBe('unparsed');
   });
+
+  describe('promotion vs a normal move to the same square', () => {
+    // A knight on d6 can also go to e8, so both a promotion and a normal move land there.
+    const knightD6: PieceEntry = {
+      id: 'w-n-d6', label: 'Knight D6', color: 'w', type: 'n', square: 'd6',
+      moves: [{ uci: 'd6e8', san: 'Ne8', from: 'd6', to: 'e8' }],
+    };
+
+    it('a spoken promotion piece picks the pawn promotion, not the other piece\'s move', () => {
+      const r = resolveVoiceMove(parseVoiceCommand('e8 queen'), mkState([pawnE7, knightD6]));
+      expect(r.kind).toBe('move');
+      if (r.kind === 'move') expect(r.move.uci).toBe('e7e8q');
+    });
+
+    it('with no promotion piece spoken, the normal move wins', () => {
+      const r = resolveVoiceMove(parseVoiceCommand('e8'), mkState([pawnE7, knightD6]));
+      expect(r.kind).toBe('move');
+      if (r.kind === 'move') expect(r.move.uci).toBe('d6e8');
+    });
+  });
+
+  describe('follow-up prompts ask for the whole move (each utterance is parsed alone)', () => {
+    it('needsPromotion suggests a full command with the square', () => {
+      const r = resolveVoiceMove(parseVoiceCommand('e8'), mkState([pawnE7]));
+      expect(r.kind).toBe('needsPromotion');
+      if (r.kind === 'needsPromotion') expect(r.message).toContain('"E8 queen"');
+    });
+
+    it('ambiguous suggests a full command naming the source square', () => {
+      const r = resolveVoiceMove(parseVoiceCommand('knight c3'), mkState([knightB1, knightE2]));
+      expect(r.kind).toBe('ambiguous');
+      if (r.kind === 'ambiguous') expect(r.message).toMatch(/"knight (B1|E2) to C3"/);
+    });
+
+    it('the suggested command resolves to a single move', () => {
+      const r = resolveVoiceMove(parseVoiceCommand('knight b1 to c3'), mkState([knightB1, knightE2]));
+      expect(r.kind).toBe('move');
+      if (r.kind === 'move') expect(r.move.uci).toBe('b1c3');
+    });
+  });
 });

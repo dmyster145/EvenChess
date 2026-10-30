@@ -4,8 +4,11 @@
  * Two consumers:
  *  - the Vosk recognizer (VOICE_GRAMMAR): the constrained word list that bounds the
  *    decoder so a small offline model only has to choose among chess words.
- *  - the parser (the *_WORDS maps): tolerant homophone → canonical maps, since even a
- *    grammar-constrained model still confuses acoustically similar tokens.
+ *  - the parser (the *_WORDS maps): word → canonical maps. With the grammar applied the
+ *    decoder can only emit VOICE_GRAMMAR words, so the extra homophone entries ("night",
+ *    "see", "for", ...) only matter for unconstrained text: the injectTranscript debug hook,
+ *    tests, or a future recognizer without a grammar. They are kept so the parser stays
+ *    tolerant of free text.
  *
  * Files accept BOTH plain letters ("c") and NATO phonetic ("charlie") per the agreed
  * UX. Ranks accept digit-words ("three"). Pieces accept common ASR slips ("night").
@@ -25,7 +28,9 @@ export const VOICE_GRAMMAR: string[] = [
   'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
   // connectors / actions
   'to', 'takes', 'take', 'capture', 'captures', 'from', 'on',
-  'castle', 'castles', 'kingside', 'queenside', 'short', 'long',
+  // "king side" / "queen side": 'kingside'/'queenside' are not words in the bundled model's
+  // vocabulary, so they could never be decoded; 'king'/'queen' are already listed above.
+  'castle', 'castles', 'side', 'short', 'long',
   'promote', 'promotes', 'promotion', 'equals',
   'check', 'mate',
   // allow the decoder to emit unknowns instead of force-fitting noise to a word

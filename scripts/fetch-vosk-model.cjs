@@ -19,6 +19,8 @@ const { execFileSync } = require('child_process');
 const MODEL_URL = 'https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip';
 const OUT_DIR = path.join(__dirname, '..', 'public', 'vosk');
 const OUT_FILE = path.join(OUT_DIR, 'model.tar.gz');
+/** Abort a stalled download after this long without data. */
+const IDLE_TIMEOUT_MS = 60_000;
 
 if (fs.existsSync(OUT_FILE)) {
   console.log('[fetch-vosk-model] public/vosk/model.tar.gz already exists — skipping.');
@@ -28,23 +30,37 @@ if (fs.existsSync(OUT_FILE)) {
 function download(url, dest, redirects = 0) {
   return new Promise((resolve, reject) => {
     if (redirects > 5) return reject(new Error('too many redirects'));
-    https
-      .get(url, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume();
-          return resolve(download(res.headers.location, dest, redirects + 1));
-        }
-        if (res.statusCode !== 200) {
-          res.resume();
-          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-        }
-        const file = fs.createWriteStream(dest);
-        res.pipe(file);
-        file.on('finish', () => file.close(() => resolve()));
-        file.on('error', reject);
-      })
-      .on('error', reject);
+    const req = https.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        // Location may be relative; resolve it against the URL that redirected.
+        return resolve(download(new URL(res.headers.location, url).toString(), dest, redirects + 1));
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+      }
+      const file = fs.createWriteStream(dest);
+      // pipe() does not forward errors from the response, so handle each stream's failures.
+      res.on('error', reject);
+      res.on('aborted', () => reject(new Error('download aborted')));
+      file.on('error', reject);
+      file.on('finish', () => file.close(() => resolve()));
+      res.pipe(file);
+    });
+    req.on('error', reject);
+    req.setTimeout(IDLE_TIMEOUT_MS, () => req.destroy(new Error(`no data for ${IDLE_TIMEOUT_MS / 1000}s`)));
   });
+}
+
+/** The extracted model folder: the directory holding the model's am/ and conf/ subfolders. */
+function findModelDir(root) {
+  for (const d of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(root, d.name);
+    if (fs.existsSync(path.join(dir, 'am')) && fs.existsSync(path.join(dir, 'conf'))) return dir;
+  }
+  return null;
 }
 
 (async () => {
@@ -56,16 +72,19 @@ function download(url, dest, redirects = 0) {
 
     console.log('[fetch-vosk-model] extracting…');
     execFileSync('unzip', ['-q', zipPath, '-d', tmp], { stdio: 'inherit' });
-    const top = fs
-      .readdirSync(tmp, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)[0];
-    if (!top) throw new Error('no model folder found in archive');
-    fs.renameSync(path.join(tmp, top), path.join(tmp, 'model'));
+    const modelDir = findModelDir(tmp);
+    if (!modelDir) throw new Error('no model folder (with am/ and conf/) found in archive');
+    fs.renameSync(modelDir, path.join(tmp, 'model'));
 
     fs.mkdirSync(OUT_DIR, { recursive: true });
     console.log('[fetch-vosk-model] packaging public/vosk/model.tar.gz …');
-    execFileSync('tar', ['-czf', OUT_FILE, '-C', tmp, 'model'], { stdio: 'inherit' });
+    // Package to a temp file and move it into place only on success: a partial OUT_FILE would
+    // make every later run skip ("already exists") and ship a broken model.
+    const tmpTar = path.join(tmp, 'model.tar.gz');
+    execFileSync('tar', ['-czf', tmpTar, '-C', tmp, 'model'], { stdio: 'inherit' });
+    const partFile = `${OUT_FILE}.part`;
+    fs.copyFileSync(tmpTar, partFile);
+    fs.renameSync(partFile, OUT_FILE); // same directory, so the rename is atomic
 
     const mb = (fs.statSync(OUT_FILE).size / 1e6).toFixed(1);
     console.log(`[fetch-vosk-model] done — ${mb} MB at public/vosk/model.tar.gz`);

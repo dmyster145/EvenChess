@@ -78,15 +78,17 @@ export function resolveVoiceMove(intent: VoiceIntent, state: GameState): Resolve
     return { kind: 'illegal', message: `No ${what} can reach ${to.toUpperCase()}` };
   }
 
-  // Promotion: candidates split into promotion vs normal.
+  // Promotion: candidates split into promotion vs normal. A spoken promotion piece means the
+  // pawn promotion; with none spoken, a normal move to the square wins if there is one.
   const promo = candidates.filter((c) => c.move.promotion);
   const normal = candidates.filter((c) => !c.move.promotion);
 
-  if (promo.length > 0 && normal.length === 0) {
+  if (promo.length > 0 && (normal.length === 0 || intent.promotion)) {
     if (!intent.promotion) {
+      // Each utterance is parsed on its own, so ask for the whole move again, not one word.
       return {
         kind: 'needsPromotion',
-        message: `Promote to? say queen, rook, bishop or knight`,
+        message: `Promote to? Say e.g. "${to.toUpperCase()} queen"`,
       };
     }
     candidates = promo.filter((c) => c.move.promotion === intent.promotion);
@@ -94,7 +96,6 @@ export function resolveVoiceMove(intent: VoiceIntent, state: GameState): Resolve
       return { kind: 'illegal', message: `Can't promote there` };
     }
   } else {
-    // Non-promotion intent wins when a normal move exists.
     candidates = normal.length > 0 ? normal : candidates;
   }
 
@@ -103,7 +104,10 @@ export function resolveVoiceMove(intent: VoiceIntent, state: GameState): Resolve
   if (sources.length > 1) {
     const what = intent.piece ? PIECE_NAME[intent.piece] : 'piece';
     const list = sources.map((s) => s.toUpperCase()).join(' or ');
-    return { kind: 'ambiguous', message: `Which ${what}? ${list}` };
+    // Ask for the whole move including its square, since a lone "B1" would be parsed as a
+    // destination (and could match a different move).
+    const example = `${what === 'piece' ? '' : `${what.toLowerCase()} `}${sources[0]!.toUpperCase()} to ${to.toUpperCase()}`;
+    return { kind: 'ambiguous', message: `Which ${what}, ${list}? Say e.g. "${example}"` };
   }
 
   return { kind: 'move', move: candidates[0]!.move };

@@ -12,16 +12,18 @@
 
 import type { Store } from '../state/store';
 import type { EvenHubBridge } from '../evenhub/bridge';
-import { createRecognizer, type Recognizer } from './recognizer';
+import { createVoskEngine, type Recognizer, type VoiceEngine } from './recognizer';
 import { parseVoiceCommand } from './parse';
 import { resolveVoiceMove } from './resolve';
 import { payloadToFloat32, meanAbsAmplitude, type AudioPayload } from './pcm';
 
 export interface VoiceControllerDeps {
   store: Store;
-  bridge: EvenHubBridge;
+  bridge: Pick<EvenHubBridge, 'audioControl'>;
   /** Relative URL of the bundled Vosk model archive (offline). */
   modelUrl: string;
+  /** Speech engine; defaults to Vosk. Tests pass a fake. */
+  engine?: VoiceEngine;
 }
 
 const SPEECH_AMPLITUDE = 0.012;
@@ -29,11 +31,13 @@ const SILENCE_MS = 900;
 const MIN_LISTEN_MS = 400;
 const MAX_LISTEN_MS = 7000;
 const RESULT_TIMEOUT_MS = 1800;
+/** After finalize(), wait this long for the last result segment(s) before resolving. */
+const RESULT_SETTLE_MS = 120;
 const ENDPOINT_POLL_MS = 150;
 const ERROR_STATUS_MS = 3500;
 
 export interface VoiceController {
-  /** Begin a fresh preload of the model (call once at app init to warm the cache). */
+  /** Begin loading the model (call once at app init so the first press is instant). */
   warm(): void;
   /** Attempt to start listening. Returns false if voice isn't usable right now. */
   start(): boolean;
@@ -50,30 +54,40 @@ export interface VoiceController {
   abort(): void;
   /** Debug/verification: run parse→resolve→dispatch on a transcript, no audio. */
   injectTranscript(text: string): void;
-  /** Mic-off + recognizer teardown. Idempotent. Call on every exit path. */
+  /** Mic-off + recognizer and model teardown. Idempotent. Call on every exit path. */
   dispose(): void;
 }
 
 export function createVoiceController(deps: VoiceControllerDeps): VoiceController {
-  const { store, bridge, modelUrl } = deps;
+  const { store, bridge } = deps;
+  const engine = deps.engine ?? createVoskEngine(deps.modelUrl);
 
-  let recognizer: Recognizer | null = null;
+  let engineReady = false;
+  // A failed model load disables voice for the session: retrying would re-download the
+  // ~40 MB model on every press. The manual carousel keeps working.
   let modelFailed = false;
   let warming = false;
+  /** Incremented whenever a session starts, is cancelled, or the controller is disposed. */
+  let session = 0;
   let starting = false;
   let listening = false;
   let finalizing = false;
+  let recognizer: Recognizer | null = null;
+  /** Result segments for this utterance (Vosk splits a command at its own pauses). */
+  let segments: string[] = [];
 
   let heardSpeech = false;
   let lastVoiceAt = 0;
   let startedAt = 0;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let resultTimer: ReturnType<typeof setTimeout> | null = null;
+  let settleTimer: ReturnType<typeof setTimeout> | null = null;
   let maxTimer: ReturnType<typeof setTimeout> | null = null;
 
   function clearTimers(): void {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (resultTimer) { clearTimeout(resultTimer); resultTimer = null; }
+    if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
     if (maxTimer) { clearTimeout(maxTimer); maxTimer = null; }
   }
 
@@ -92,12 +106,17 @@ export function createVoiceController(deps: VoiceControllerDeps): VoiceControlle
     void bridge.audioControl(false);
   }
 
+  /** End the current session on every path: timers, recognizer, mic, and the store's flag. */
   function endSession(): void {
     listening = false;
     finalizing = false;
     heardSpeech = false;
+    segments = [];
     clearTimers();
+    recognizer?.dispose();
+    recognizer = null;
     stopMic();
+    if (store.getState().voice?.listening) store.dispatch({ type: 'VOICE_LISTEN_END' });
   }
 
   function resolveAndDispatch(text: string): void {
@@ -124,10 +143,15 @@ export function createVoiceController(deps: VoiceControllerDeps): VoiceControlle
     if (hasPendingConfirm()) store.dispatch({ type: 'VOICE_ABORT' });
   }
 
-  function handleTranscript(text: string): void {
-    if (!listening && !finalizing) return;
+  /** The utterance is over: resolve everything heard, or report that nothing was. */
+  function completeUtterance(): void {
+    const text = segments.join(' ').trim();
     endSession();
-    resolveAndDispatch(text);
+    if (text) {
+      resolveAndDispatch(text);
+    } else {
+      store.dispatch({ type: 'VOICE_STATUS', message: 'Didn’t catch that', durationMs: ERROR_STATUS_MS });
+    }
   }
 
   function finalizeUtterance(): void {
@@ -135,86 +159,103 @@ export function createVoiceController(deps: VoiceControllerDeps): VoiceControlle
     finalizing = true;
     clearTimers();
     recognizer?.finalize();
-    resultTimer = setTimeout(() => {
-      if (!finalizing) return;
-      endSession();
-      store.dispatch({ type: 'VOICE_STATUS', message: 'Didn’t catch that', durationMs: ERROR_STATUS_MS });
-    }, RESULT_TIMEOUT_MS);
+    resultTimer = setTimeout(completeUtterance, RESULT_TIMEOUT_MS);
   }
 
   function onEndpointPoll(): void {
     if (!listening) return;
+    if (!eligible()) {
+      cancel(); // the game moved on (e.g. the screen changed) while listening
+      return;
+    }
     const now = Date.now();
     if (now - startedAt > MIN_LISTEN_MS && heardSpeech && now - lastVoiceAt > SILENCE_MS) {
       finalizeUtterance();
     }
   }
 
-  async function ensureRecognizer(): Promise<Recognizer | null> {
-    if (recognizer) return recognizer;
-    try {
-      recognizer = await createRecognizer(modelUrl, {
-        onFinal: handleTranscript,
-        onPartial: (t) => {
-          if (listening && t) {
-            store.dispatch({ type: 'VOICE_STATUS', message: `Hearing: ${t}`, keepListening: true });
-          }
-        },
-        onError: (e) => {
-          console.error('[voice] recognizer error:', e);
-        },
-      });
-      return recognizer;
-    } catch (err) {
-      console.error('[voice] model load failed:', err);
-      modelFailed = true;
-      return null;
-    }
+  function openRecognizer(mySession: number): Recognizer {
+    const current = () => mySession === session && (listening || finalizing);
+    return engine.open({
+      onResult: (text) => {
+        if (!current()) return;
+        if (text) segments.push(text);
+        // Mid-utterance segments are only collected; the controller's own silence detection
+        // decides when the command is over. After finalize(), resolve once results settle.
+        if (finalizing) {
+          if (settleTimer) clearTimeout(settleTimer);
+          settleTimer = setTimeout(completeUtterance, RESULT_SETTLE_MS);
+        }
+      },
+      onPartial: (t) => {
+        if (current() && !finalizing && t) {
+          const heard = [...segments, t].join(' ');
+          store.dispatch({ type: 'VOICE_STATUS', message: `Hearing: ${heard}`, keepListening: true });
+        }
+      },
+      onError: (e) => {
+        console.error('[voice] recognizer error:', e);
+      },
+    });
   }
 
   function warm(): void {
-    if (modelFailed || recognizer || warming) return;
+    if (modelFailed || engineReady || warming) return;
     warming = true;
-    void ensureRecognizer().finally(() => {
+    engine.load().then(
+      () => { engineReady = true; },
+      (err) => {
+        console.error('[voice] model load failed:', err);
+        modelFailed = true;
+      },
+    ).finally(() => {
       warming = false;
     });
   }
 
   function start(): boolean {
     if (modelFailed || starting || listening || !eligible()) return false;
-    // Recognizer must be ready for the press to feel instant. If it isn't, kick a
+    // The model must be ready for the press to feel instant. If it isn't, kick a
     // preload and let this tap fall through to the manual carousel.
-    if (!recognizer) {
+    if (!engineReady) {
       warm();
       return false;
     }
+    const mySession = ++session;
     starting = true;
     void (async () => {
       try {
         const ok = await bridge.audioControl(true);
+        // Cancelled or disposed while the mic was starting: abandon this session.
+        if (mySession !== session) {
+          stopMic();
+          return;
+        }
         if (!ok || !eligible()) {
           stopMic();
-          starting = false;
           store.dispatch({ type: 'VOICE_STATUS', message: 'Mic unavailable', durationMs: ERROR_STATUS_MS });
           return;
         }
         listening = true;
         finalizing = false;
         heardSpeech = false;
+        segments = [];
         startedAt = Date.now();
         lastVoiceAt = startedAt;
+        recognizer = openRecognizer(mySession);
         store.dispatch({ type: 'VOICE_LISTEN_START' });
         pollTimer = setInterval(onEndpointPoll, ENDPOINT_POLL_MS);
         maxTimer = setTimeout(finalizeUtterance, MAX_LISTEN_MS);
       } finally {
-        starting = false;
+        if (mySession === session) starting = false;
       }
     })();
     return true;
   }
 
   function feed(payload: AudioPayload): void {
-    if (!listening || !recognizer) return;
+    // No audio after finalize(): it would start a new utterance that is never finalized.
+    if (!listening || finalizing || !recognizer) return;
     const samples = payloadToFloat32(payload);
     if (samples.length === 0) return;
     if (meanAbsAmplitude(samples) >= SPEECH_AMPLITUDE) {
@@ -225,16 +266,20 @@ export function createVoiceController(deps: VoiceControllerDeps): VoiceControlle
   }
 
   function cancel(): void {
-    if (!listening && !starting) return;
+    if (!listening && !starting && !finalizing) return;
+    session++;
+    starting = false;
     endSession();
     store.dispatch({ type: 'VOICE_STATUS', message: '' });
   }
 
   function dispose(): void {
+    session++;
+    starting = false;
     endSession();
     abort();
-    recognizer?.dispose();
-    recognizer = null;
+    engine.release();
+    engineReady = false;
   }
 
   return {
