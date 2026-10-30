@@ -69,10 +69,10 @@ export async function loadInitialAppState(chess: ChessService): Promise<GameStat
 
   if (savedGame) {
     try {
-      chess.loadFen(savedGame.fen);
-      if (chess.isCheckmate()) {
-        // Resuming into a finished position confuses the user and the branding/state recovery
-        // code; start a new game instead.
+      // An unreadable position, or a finished one (checkmate, stalemate, or any draw), can't be
+      // resumed: it would show the saved move log over the wrong board, or a dead board with no
+      // game-over message. Start a new game instead.
+      if (!chess.loadFen(savedGame.fen) || chess.isGameOver()) {
         chess.reset();
         void clearSave();
       } else {

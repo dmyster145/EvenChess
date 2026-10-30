@@ -81,6 +81,9 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
   // True while an overlay paused a running bullet clock — so its dismissal knows to
   // resume it, and a not-yet-started clock is never started by opening/closing the menu.
   let overlayPausedBullet = false;
+  // True while a genuine background paused a running bullet clock, so the return resumes it
+  // without charging the time away (same policy as the overlay path).
+  let hiddenPausedBullet = false;
 
   // Firmware emits duplicate sys events ~50–100ms apart for one physical transition. Dedupe
   // identical consecutive sys events within 600ms before any state-changing decision.
@@ -109,6 +112,15 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     attached = false;
     overlayActive = false;
     overlayPausedBullet = false;
+    hiddenPausedBullet = false;
+  }
+
+  /** Pause a running bullet clock; returns true if this call paused it. */
+  function pauseRunningBullet(): boolean {
+    const st = deps.store.getState();
+    if (st.mode !== 'bullet' || !st.timerActive) return false;
+    deps.store.dispatch({ type: 'BULLET_PAUSE' });
+    return true;
   }
 
   // --- Genuine background / foreground (no exit dialog pending) ---
@@ -120,6 +132,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
     isHidden = true;
     debugLog('lifecycle hide', { reason }, 'LCY');
+    hiddenPausedBullet = pauseRunningBullet();
     deps.bulletTimer.suspend();
     deps.autosave.flushNow();
   }
@@ -137,6 +150,10 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     deps.deviceFlags.isDeviceConnected = true;
     if (!wasWearing || !wasConnected) {
       debugLog('lifecycle device-status reset', { reason, wasWearing, wasConnected }, 'LCY');
+    }
+    if (hiddenPausedBullet) {
+      hiddenPausedBullet = false;
+      deps.store.dispatch({ type: 'BULLET_RESUME' });
     }
     deps.bulletTimer.resume();
     deps.flush.setForceFullRefresh();
@@ -185,6 +202,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     deps.bridge.clearExitDialog();
     deps.flush.cancel();
     deps.branding.cancel();
+    deps.bulletTimer.suspend();
     deps.autosave.flushNow();
     void (async () => {
       try {
@@ -263,11 +281,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
         // Pause the bullet clock while the overlay is up — matching the hand-rolled
         // menu, which pauses via handleOpenMenu. Only when it's actually running, so we can decide
         // on dismiss whether to resume (and never start a not-yet-started clock).
-        const st = deps.store.getState();
-        if (st.mode === 'bullet' && st.timerActive) {
-          deps.store.dispatch({ type: 'BULLET_PAUSE' });
-          overlayPausedBullet = true;
-        }
+        overlayPausedBullet = pauseRunningBullet();
         debugLog('overlay appeared (foreground-enter while showing) — pausing bullet clock if running', { paused: overlayPausedBullet }, 'LCY');
         return;
       }

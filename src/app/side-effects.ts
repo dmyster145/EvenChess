@@ -110,8 +110,9 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
 
     // System exit dialog request — fire-and-forget at the SDK level.
     // Menu "Exit" item tapped (reducer armed pendingSystemExitDialog) → surface the ER system exit
-    // dialog. Cancel any in-flight text/image sends first so minimal JS work races the
-    // shutDownPageContainer(1) call, then arm the bridge's exit-dialog flag via requestSystemExit().
+    // dialog. Cancel the pending (debounced) flush and branding sync so no new sends race the
+    // shutDownPageContainer(1) call; requestSystemExit() arms the bridge's exit-dialog flag, which
+    // keeps the scheduling at the end of this function off until the dialog is answered.
     if (state.pendingSystemExitDialog && !prevState.pendingSystemExitDialog) {
       deps.flush.cancel();
       deps.branding.cancel();
@@ -230,6 +231,10 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
 
     // Menu / reset / mode-switch side effects (calls back into ChessService).
     handleMenuSideEffects(state, prevState, deps.chess, deps.store, deps.turnLoop);
+
+    // While the system exit dialog is up, leave the page alone (see lifecycle.ts): no new sends.
+    // lifecycle.ts schedules a flush itself if the user answers "No".
+    if (deps.bridge.isExitDialogPending()) return;
 
     // Branding state may have changed (gameOver, inCheck) — schedule a sync.
     deps.branding.schedule();

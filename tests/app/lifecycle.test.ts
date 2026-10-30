@@ -216,6 +216,39 @@ describe('createLifecycle', () => {
     expect(autosave.flushes).toBe(1);
   });
 
+  it('a genuine background pauses a running bullet clock; the return resumes it without charging the time away', async () => {
+    const start = Date.now();
+    store = createStore({
+      ...buildInitialState(chess),
+      mode: 'bullet', phase: 'idle',
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
+      timerActive: true, lastTickTime: start,
+    });
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT)); // backgrounded
+    expect(store.getState().timerActive).toBe(false);
+    await vi.advanceTimersByTimeAsync(30_000);                         // 30s away
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT)); // back
+    expect(store.getState().timerActive).toBe(true);
+    expect(store.getState().lastTickTime).toBeGreaterThanOrEqual(start + 30_000);
+    store.dispatch({ type: 'TIMER_TICK' });
+    expect(store.getState().timers?.whiteMs).toBe(60000);              // the 30s was not charged
+  });
+
+  it('a background does not start a clock that was not running', async () => {
+    store = createStore({
+      ...buildInitialState(chess),
+      mode: 'bullet', phase: 'idle',
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
+      timerActive: false, lastTickTime: null,
+    });
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT));
+    expect(store.getState().timerActive).toBe(false);
+  });
+
   it('pauses a running bullet clock when the overlay opens and resumes it on close', async () => {
     store = createStore({
       ...buildInitialState(chess),
@@ -291,6 +324,7 @@ describe('createLifecycle', () => {
     expect(flush.cancels).toBe(1);
     expect(branding.cancels).toBe(1);
     expect(autosave.flushes).toBe(1);
+    expect(bulletTimer.suspended).toBe(1); // no TIMER_TICKs (and their flushes) after shutdown
     expect(bridge.shutdownCalls).toBe(1);
     bridge.resolveShutdown();
     await vi.advanceTimersByTimeAsync(0);

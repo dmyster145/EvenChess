@@ -225,7 +225,8 @@ export type Action =
   | { type: 'TAP'; selectedIndex: number; selectedName: string }
   | { type: 'DOUBLE_TAP' }
   | { type: 'PLAYER_MOVE_SAN'; san: string }
-  | { type: 'ENGINE_MOVE'; uci: string; san: string; fen: string; turn: 'w' | 'b'; pieces: PieceEntry[]; inCheck: boolean }
+  /** endsGame: this move ends the game (checkmate/draw); the bullet clock stops immediately. */
+  | { type: 'ENGINE_MOVE'; uci: string; san: string; fen: string; turn: 'w' | 'b'; pieces: PieceEntry[]; inCheck: boolean; endsGame?: boolean }
   | { type: 'ENGINE_THINKING' }
   | { type: 'ENGINE_ERROR' }
   | { type: 'GAME_OVER'; reason: string }

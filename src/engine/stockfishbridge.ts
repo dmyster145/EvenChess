@@ -7,29 +7,39 @@ import { Chess } from 'chess.js';
 import type { EngineProfile } from '../state/contracts';
 
 const MULTIPV_COUNT = 5;
+/** A search that fails this many times in a row switches the session to random moves. */
+const MAX_CONSECUTIVE_FAILURES = 3;
+const WORKER_URL = '/stockfish/stockfish.wasm.js';
+
+export type WorkerFactory = (url: string) => Worker;
 
 export class StockfishBridge {
   private worker: Worker | null = null;
   private ready = false;
   private workerFailed = false;
+  private consecutiveFailures = 0;
+  /** Set after a timed-out search: its late `bestmove` must not answer the next search. */
+  private discardNextBestmove = false;
   private pendingResolve: ((bestmove: string) => void) | null = null;
   private pendingAddVariety = false;
   private topMovesByMultipv: Record<number, string> = {};
   private boundOnBestMove = this.onBestMove.bind(this);
   private fallbackChess: Chess | null = null;
 
+  constructor(private readonly createWorker: WorkerFactory = (url) => new Worker(url, { type: 'classic' })) {}
+
   async init(): Promise<void> {
-    const workerUrl = '/stockfish/stockfish.wasm.js';
     try {
       if (typeof WebAssembly !== 'object') {
         throw new Error('WebAssembly not supported');
       }
-      this.worker = new Worker(workerUrl, { type: 'classic' });
+      this.worker = this.createWorker(WORKER_URL);
       await this.waitForReady();
       this.ready = true;
       console.log('[StockfishBridge] Engine ready (WASM).');
     } catch (err) {
       console.warn('[StockfishBridge] WASM init failed, using fallback mode:', err);
+      this.worker?.terminate();
       this.worker = null;
       this.ready = false;
     }
@@ -45,7 +55,10 @@ export class StockfishBridge {
 
     const workerMove = await new Promise<string | null>((resolve) => {
       const timeout = setTimeout(() => {
+        // Stop the overdue search; its eventual bestmove is stale and must be ignored.
         this.pendingResolve = null;
+        this.discardNextBestmove = true;
+        this.send('stop');
         resolve(null);
       }, profile.movetime + 2000);
 
@@ -65,15 +78,26 @@ export class StockfishBridge {
     });
 
     if (workerMove) {
+      this.consecutiveFailures = 0;
       return workerMove;
     }
 
-    this.workerFailed = true;
-    console.warn(
-      '[StockfishBridge] Engine returned no valid move (placeholder or missing Stockfish WASM). ' +
-      'Using random moves; difficulty (Easy/Casual/Serious) has no effect. ' +
-      'See stockfish-worker.js or Stockfish WASM docs to enable real engine strength.'
-    );
+    // A single slow or empty search is treated as transient: play a random move this turn and
+    // try the engine again next time. Only repeated failures give up on it for the session.
+    this.consecutiveFailures += 1;
+    if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      this.workerFailed = true;
+      console.warn(
+        `[StockfishBridge] Stockfish failed ${MAX_CONSECUTIVE_FAILURES} searches in a row; using random ` +
+        `moves for the rest of the session. Check that ${WORKER_URL} and its .wasm are served ` +
+        '(the postinstall script copies them into public/stockfish/).',
+      );
+    } else {
+      console.warn(
+        `[StockfishBridge] Search returned no move (${this.consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}); ` +
+        'playing a random move this turn.',
+      );
+    }
     return this.fallbackMove(fen, profile);
   }
 
@@ -103,21 +127,31 @@ export class StockfishBridge {
         return;
       }
 
+      const cleanup = () => {
+        clearTimeout(timeout);
+        this.worker?.removeEventListener('message', onMessage);
+        this.worker?.removeEventListener('error', onError);
+      };
       const timeout = setTimeout(() => {
+        cleanup();
         reject(new Error('Stockfish init timeout'));
       }, 10_000);
 
       const onMessage = (event: MessageEvent) => {
-        const line = String(event.data);
-        if (line.includes('uciok') || line.includes('readyok')) {
-          clearTimeout(timeout);
-          this.worker?.removeEventListener('message', onMessage);
+        if (String(event.data).includes('uciok')) {
+          cleanup();
           this.worker?.addEventListener('message', this.boundOnBestMove);
           resolve();
         }
       };
+      // A missing or broken worker script fails immediately instead of waiting out the timeout.
+      const onError = (event: Event) => {
+        cleanup();
+        reject(new Error(`Stockfish worker failed to load: ${(event as ErrorEvent).message ?? 'error'}`));
+      };
 
       this.worker.addEventListener('message', onMessage);
+      this.worker.addEventListener('error', onError);
       this.send('uci');
     });
   }
@@ -142,6 +176,10 @@ export class StockfishBridge {
     }
 
     if (line.startsWith('bestmove')) {
+      if (this.discardNextBestmove) {
+        this.discardNextBestmove = false;
+        return;
+      }
       const parts = line.split(' ');
       const move = parts[1] ?? null;
       const isValidMove = move && move !== '0000' && move !== '(none)';

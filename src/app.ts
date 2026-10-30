@@ -21,8 +21,7 @@
 
 import { ChessService } from './chess/chessservice';
 import { createStore } from './state/store';
-import { buildInitialState } from './state/contracts';
-import type { GameState, Action, BoardSize, BoardAlignment, BoardPosition, DifficultyLevel, PlayAs, PlayerColor } from './state/contracts';
+import type { Action } from './state/contracts';
 import { mapEvenHubEvent } from './input/actions';
 import { BoardRenderer } from './render/boardimage';
 import { type EvenHubEvent } from '@evenrealities/even_hub_sdk';
@@ -44,25 +43,7 @@ import { createSideEffects } from './app/side-effects';
 import { createVoiceController } from './voice/controller';
 import { createReinit } from './app/bridge-reinit';
 import { loadInitialAppState, setupTextOnlyStartup, upgradeToFullLayout, runStorageProbe } from './app/init';
-
-const BACKGROUND_STATE_KEY = 'evenchess';
-const BACKGROUND_STATE_VERSION = 3;
-
-type BackgroundSnapshot = {
-  version: typeof BACKGROUND_STATE_VERSION;
-  fen: string;
-  turn: 'w' | 'b';
-  difficulty: DifficultyLevel;
-  /** Optional: present only on snapshots written after the Custom difficulty shipped. */
-  customSkillLevel?: number;
-  boardAlignment: BoardAlignment;
-  boardSize: BoardSize;
-  /** Optional: present only on snapshots written after the Position option shipped. */
-  boardPosition?: BoardPosition;
-  showBoardMarkers: boolean;
-  playAs: PlayAs;
-  playerColor: PlayerColor;
-};
+import { BACKGROUND_STATE_KEY, buildBackgroundSnapshot, restoreFromBackgroundSnapshot } from './app/background-snapshot';
 
 /**
  * App exit affordance & the ER SDK defect (for reference).
@@ -163,27 +144,9 @@ export async function initApp(): Promise<void> {
   // Push-to-talk voice move input. Model is bundled (offline); see public/vosk/.
   const voice = createVoiceController({ store, bridge, modelUrl: '/vosk/model.tar.gz' });
 
-  // Background-state shim. Trimmed to 6 fields per the rework plan — the prior full GameState
-  // snapshot blocked the JS thread on background transitions for long games (race #8). The move
-  // log is recovered from saveGame() on cold start; mid-session background restore preserves the
-  // current position only, which is the right tradeoff for the phone-pickup-and-look-at-glasses
-  // workflow this shim exists for.
-  setBackgroundState(BACKGROUND_STATE_KEY, () => {
-    const s = store.getState();
-    return {
-      version: BACKGROUND_STATE_VERSION,
-      fen: s.fen,
-      turn: s.turn,
-      difficulty: s.difficulty,
-      customSkillLevel: s.customSkillLevel,
-      boardAlignment: s.boardAlignment,
-      boardSize: s.boardSize,
-      boardPosition: s.boardPosition,
-      showBoardMarkers: s.showBoardMarkers,
-      playAs: s.playAs,
-      playerColor: s.playerColor,
-    } satisfies BackgroundSnapshot;
-  });
+  // Background-state shim: the host carries this snapshot across its headless-WebView migration
+  // (see app/background-snapshot.ts for what is kept and why).
+  setBackgroundState(BACKGROUND_STATE_KEY, () => buildBackgroundSnapshot(store.getState()));
   /**
    * Ask the engine to move whenever a live game is on its turn: a new game where the human plays
    * Black, or a game restored from a save or background snapshot taken while the engine was
@@ -199,33 +162,11 @@ export async function initApp(): Promise<void> {
   }
 
   onBackgroundRestore(BACKGROUND_STATE_KEY, (saved) => {
-    const snap = saved as Partial<BackgroundSnapshot> | undefined;
-    if (!snap || snap.version !== BACKGROUND_STATE_VERSION || !snap.fen) {
-      debugLog('background-restore skipped', { reason: 'version-or-shape', version: snap?.version }, 'BG');
+    const restored = restoreFromBackgroundSnapshot(saved, chess);
+    if (!restored) {
+      debugLog('background-restore skipped', { reason: 'missing, other version, or bad position' }, 'BG');
       return;
     }
-    try {
-      chess.loadFen(snap.fen);
-    } catch (err) {
-      console.error('[app] background-restore loadFen failed', err);
-      return;
-    }
-    const fresh = buildInitialState(chess);
-    const restored: GameState = {
-      ...fresh,
-      fen: snap.fen,
-      turn: snap.turn ?? fresh.turn,
-      difficulty: snap.difficulty ?? fresh.difficulty,
-      customSkillLevel: snap.customSkillLevel ?? fresh.customSkillLevel,
-      boardAlignment: snap.boardAlignment ?? fresh.boardAlignment,
-      boardSize: snap.boardSize ?? fresh.boardSize,
-      boardPosition: snap.boardPosition ?? fresh.boardPosition,
-      showBoardMarkers: snap.showBoardMarkers ?? fresh.showBoardMarkers,
-      playAs: snap.playAs ?? fresh.playAs,
-      playerColor: snap.playerColor ?? fresh.playerColor,
-      pieces: chess.getPiecesWithMoves(),
-      inCheck: chess.isInCheck(),
-    };
     if (rendererRef.current.largeGrid !== (restored.boardSize === 'large')) {
       rendererRef.current = new BoardRenderer({ largeGrid: restored.boardSize === 'large' });
     }

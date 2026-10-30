@@ -960,6 +960,7 @@ function handleEngineMove(
     selectedMoveIndex: 0,
     pendingMove: null,
     hasUnsavedChanges: true,
+    ...(action.endsGame && { timerActive: false }),
   };
 }
 
