@@ -8,42 +8,47 @@ import type { BrandingController } from '../../src/app/branding';
 import type { BulletTimerController } from '../../src/app/bullet-timer';
 import type { AutosaveController } from '../../src/app/autosave';
 import type { EvenHubBridge } from '../../src/evenhub/bridge';
-import { OsEventTypeList } from '@evenrealities/even_hub_sdk';
+import { OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 
 const SYSTEM_EXIT = (OsEventTypeList as unknown as { SYSTEM_EXIT_EVENT?: number }).SYSTEM_EXIT_EVENT ?? 7;
 
+/** A host sys event as the SDK delivers it (the SDK's own class adds a toJson we never call). */
+function sys(eventType: number): EvenHubEvent {
+  return { sysEvent: { eventType } } as unknown as EvenHubEvent;
+}
+
 interface BridgeRecorder {
-  cleared: number;
+  clearPendingCalls: number;
   shutdownCalls: number;
   forceResets: number;
   updatePages: number;
   clearExitDialogCalls: number;
-  exitDialogPending: boolean;
+  dialogPending: boolean;
   resolveShutdown: () => void;
 }
 
 function makeBridge(): EvenHubBridge & BridgeRecorder {
   let resolveShutdown = (): void => {};
   const recorder: Partial<EvenHubBridge> & BridgeRecorder = {
-    cleared: 0,
+    clearPendingCalls: 0,
     shutdownCalls: 0,
     forceResets: 0,
     updatePages: 0,
     clearExitDialogCalls: 0,
-    exitDialogPending: false,
+    dialogPending: false,
     resolveShutdown: () => resolveShutdown(),
     clearPending() {
-      this.cleared += 1;
+      this.clearPendingCalls += 1;
     },
     forceResetImageTransport() {
       this.forceResets += 1;
     },
     isExitDialogPending() {
-      return this.exitDialogPending;
+      return this.dialogPending;
     },
     clearExitDialog() {
       this.clearExitDialogCalls += 1;
-      this.exitDialogPending = false;
+      this.dialogPending = false;
     },
     async updatePage() {
       this.updatePages += 1;
@@ -157,18 +162,18 @@ describe('createLifecycle', () => {
 
   it('FOREGROUND_EXIT (no exit dialog) suspends timer + flushes autosave', () => {
     const lifecycle = makeLifecycle();
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bulletTimer.suspended).toBe(1);
     expect(autosave.flushes).toBe(1);
-    expect(bridge.cleared).toBe(0);
+    expect(bridge.clearPendingCalls).toBe(0);
   });
 
   it('FOREGROUND_ENTER (no exit dialog) resumes timer + force-refreshes, after a FG_EXIT', async () => {
     const lifecycle = makeLifecycle();
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     // Advance past the sys-event dedup window so the ENTER isn't swallowed.
     await vi.advanceTimersByTimeAsync(700);
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT));
     expect(bulletTimer.resumed).toBe(1);
     expect(flush.forces).toBeGreaterThanOrEqual(1);
     expect(flush.flushNows).toBe(1);
@@ -176,8 +181,8 @@ describe('createLifecycle', () => {
 
   it('duplicate sys events within 600ms are deduped', () => {
     const lifecycle = makeLifecycle();
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bulletTimer.suspended).toBe(1);
     expect(autosave.flushes).toBe(1);
   });
@@ -189,9 +194,9 @@ describe('createLifecycle', () => {
 
   it('native menu open (ENTER while showing) then close (EXIT) does NOT suspend the timer or hide', async () => {
     const lifecycle = makeLifecycle();
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } }); // menu appeared
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT)); // menu appeared
     await vi.advanceTimersByTimeAsync(700);
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });  // menu dismissed
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));  // menu dismissed
     expect(bulletTimer.suspended).toBe(0);
     expect(autosave.flushes).toBe(0);
     expect(bulletTimer.resumed).toBe(0);
@@ -200,13 +205,13 @@ describe('createLifecycle', () => {
   it('a genuine background AFTER an overlay cycle still suspends the timer', async () => {
     const lifecycle = makeLifecycle();
     // Overlay cycle.
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT));
     await vi.advanceTimersByTimeAsync(700);
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bulletTimer.suspended).toBe(0);
     // Real background later (past the dedup window): EXIT with no overlay pending → onHide.
     await vi.advanceTimersByTimeAsync(700);
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bulletTimer.suspended).toBe(1);
     expect(autosave.flushes).toBe(1);
   });
@@ -219,10 +224,10 @@ describe('createLifecycle', () => {
       timerActive: true, lastTickTime: Date.now(),
     });
     const lifecycle = makeLifecycle();
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } }); // menu opens
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT)); // menu opens
     expect(store.getState().timerActive).toBe(false); // paused
     await vi.advanceTimersByTimeAsync(700);
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } }); // menu closes
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT)); // menu closes
     expect(store.getState().timerActive).toBe(true); // resumed
   });
 
@@ -234,10 +239,10 @@ describe('createLifecycle', () => {
       timerActive: false,
     });
     const lifecycle = makeLifecycle();
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT));
     expect(store.getState().timerActive).toBe(false);
     await vi.advanceTimersByTimeAsync(700);
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(store.getState().timerActive).toBe(false); // still not started
   });
 
@@ -250,9 +255,9 @@ describe('createLifecycle', () => {
   // intact by not touching it.
 
   it('exit dialog: FOREGROUND_ENTER (sys=4) leaves the page untouched, does NOT resume as a foreground', () => {
-    bridge.exitDialogPending = true;
+    bridge.dialogPending = true;
     const lifecycle = makeLifecycle({ imageContainersActive: true });
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT));
     // No rebuild while the dialog is up — the firmware retains the last board frame.
     expect(bridge.updatePages).toBe(0);
     expect(flush.schedules).toBe(0);
@@ -262,9 +267,9 @@ describe('createLifecycle', () => {
   });
 
   it('exit dialog: FOREGROUND_EXIT (sys=5) = "No" — clears flag, gentle resync, board left intact (no rebuild, no reload)', () => {
-    bridge.exitDialogPending = true;
+    bridge.dialogPending = true;
     const lifecycle = makeLifecycle({ imageContainersActive: true });
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bridge.clearExitDialogCalls).toBe(1);
     // Must NOT treat as background.
     expect(bulletTimer.suspended).toBe(0);
@@ -278,10 +283,10 @@ describe('createLifecycle', () => {
   });
 
   it('exit dialog: SYSTEM_EXIT (sys=7) = "Yes" — cleans up and shuts down', async () => {
-    bridge.exitDialogPending = true;
+    bridge.dialogPending = true;
     const lifecycle = makeLifecycle();
     lifecycle.attach();
-    lifecycle.onHubEvent({ sysEvent: { eventType: SYSTEM_EXIT } });
+    lifecycle.onHubEvent(sys(SYSTEM_EXIT));
     expect(bridge.clearExitDialogCalls).toBe(1);
     expect(flush.cancels).toBe(1);
     expect(branding.cancels).toBe(1);
@@ -292,15 +297,15 @@ describe('createLifecycle', () => {
   });
 
   it('exit dialog cancel then a genuine later background works normally', async () => {
-    bridge.exitDialogPending = true;
+    bridge.dialogPending = true;
     const lifecycle = makeLifecycle({ imageContainersActive: true });
     // "No" tapped — flag cleared.
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
-    expect(bridge.exitDialogPending).toBe(false);
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
+    expect(bridge.dialogPending).toBe(false);
     expect(bulletTimer.suspended).toBe(0);
     await vi.advanceTimersByTimeAsync(700);
     // A genuine background later (no exit dialog pending) now suspends normally.
-    lifecycle.onHubEvent({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } });
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bulletTimer.suspended).toBe(1);
   });
 

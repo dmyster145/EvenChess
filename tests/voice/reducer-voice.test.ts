@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { reduce } from '../../src/state/reducer';
 import type { GameState, PieceEntry, CarouselMove } from '../../src/state/contracts';
+import { baseGameState } from '../helpers/game-state';
 
 function createState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -10,6 +11,7 @@ function createState(overrides?: Partial<GameState>): GameState {
     },
   ];
   return {
+    ...baseGameState(),
     fen: 'startpos', turn: 'w', pieces, phase: 'idle',
     selectedPieceId: null, selectedMoveIndex: 0, pendingPromotionMove: null,
     selectedPromotionIndex: 0, mode: 'play', history: [], lastMove: null,

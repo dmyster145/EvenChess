@@ -28,7 +28,6 @@ function makeFakeBridge(): EvenHubBridge & FakeBridge {
   const imageCalls: FakeBridge['imageCalls'] = [];
   const textCalls: FakeBridge['textCalls'] = [];
   const fake: Partial<EvenHubBridge> & FakeBridge = {
-    kind: 'v2',
     imageCalls,
     textCalls,
     updateImage(id, _name, payload) {

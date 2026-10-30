@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reduce } from '../../src/state/reducer';
 import type { GameState, PieceEntry, Action } from '../../src/state/contracts';
 import { MAX_HISTORY_LENGTH, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX } from '../../src/state/constants';
+import { baseGameState } from '../helpers/game-state';
+import { ChessService } from '../../src/chess/chessservice';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -30,6 +32,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
   ];
 
   return {
+    ...baseGameState(),
     fen: 'startpos',
     turn: 'w',
     pieces,
@@ -309,13 +312,26 @@ describe('reducer', () => {
   });
 
   describe('ENGINE_MOVE', () => {
-    it('records the engine move and returns to idle', () => {
-      const state = createTestState({ engineThinking: true });
-      const action: Action = { type: 'ENGINE_MOVE', uci: 'e7e5', san: 'e5' };
+    it('applies the engine position, records the move, and returns to idle', () => {
+      const chess = new ChessService();
+      chess.makeMove('e2', 'e4');
+      const state = createTestState({
+        phase: 'rowSelect', engineThinking: true, history: ['e4'], fen: chess.getFen(), turn: 'b',
+      });
+      chess.makeMove('e7', 'e5');
+      const action: Action = {
+        type: 'ENGINE_MOVE', uci: 'e7e5', san: 'e5',
+        fen: chess.getFen(), turn: 'w', pieces: chess.getPiecesWithMoves(), inCheck: false,
+      };
       const next = reduce(state, action);
+      expect(next.phase).toBe('idle');
       expect(next.engineThinking).toBe(false);
+      expect(next.fen).toBe(action.fen);
+      expect(next.turn).toBe('w');
+      expect(next.pieces).toBe(action.pieces);
       expect(next.lastMove).toBe('e5');
-      expect(next.history).toContain('e5');
+      expect(next.lastMoveToSquare).toBe('e5');
+      expect(next.history).toEqual(['e4', 'e5']);
       expect(next.pendingMove).toBeNull();
     });
   });

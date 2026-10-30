@@ -6,9 +6,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { tickTimer, applyIncrement, isTimeExpired, formatTime } from '../../src/bullet/clock';
 import type { GameState } from '../../src/state/contracts';
+import { baseGameState } from '../helpers/game-state';
 
 function createTimerState(overrides?: Partial<GameState>): GameState {
   return {
+    ...baseGameState(),
     fen: 'startpos',
     turn: 'w',
     pieces: [],

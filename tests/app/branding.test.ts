@@ -13,7 +13,6 @@ interface FakeBridge {
 function makeFakeBridge(): EvenHubBridge & FakeBridge {
   const brandSends: Array<unknown> = [];
   const fake: Partial<EvenHubBridge> & FakeBridge = {
-    kind: 'v2',
     brandSends,
     updateImage(id, _name, payload) {
       if (id === CONTAINER_ID_BRAND) brandSends.push(payload);

@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "eslint src/",
+    "lint": "eslint src/ tests/",
     "test": "vitest run",
     "test:watch": "vitest",
     "fetch:voice-model": "node scripts/fetch-vosk-model.cjs",

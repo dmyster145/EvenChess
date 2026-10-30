@@ -5,7 +5,6 @@
  * helper. Each fake exposes call sequencing recorders so tests can assert the order and content
  * of SDK calls without mocking the entire SDK module.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EvenHubBridge } from '../../src/evenhub/bridge';

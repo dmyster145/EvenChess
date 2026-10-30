@@ -15,7 +15,7 @@ describe('pcm', () => {
   });
 
   it('reads Int16 from a base64 string', () => {
-    const b64 = Buffer.from(bytes).toString('base64');
+    const b64 = btoa(String.fromCharCode(...bytes));
     expect(Array.from(payloadToInt16(b64))).toEqual([0, 1, -1, 32767, -32768]);
   });
 

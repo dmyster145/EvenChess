@@ -5,7 +5,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { createStore } from '../../src/state/store';
-import type { GameState, PieceEntry, Action } from '../../src/state/contracts';
+import type { GameState, PieceEntry } from '../../src/state/contracts';
+import { baseGameState } from '../helpers/game-state';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -22,6 +23,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
   ];
 
   return {
+    ...baseGameState(),
     fen: 'startpos',
     turn: 'w',
     pieces,
@@ -105,7 +107,7 @@ describe('dispatch', () => {
     store.subscribe(listener);
     store.dispatch({ type: 'SCROLL', direction: 'down' });
 
-    const [newState, prevState] = listener.mock.calls[0];
+    const [newState, prevState] = listener.mock.calls[0]!;
     expect(prevState.phase).toBe('idle');
     expect(newState.phase).toBe('rowSelect');
   });

@@ -33,7 +33,7 @@ const localStorageMock = (() => {
   };
 })();
 
-Object.defineProperty(global, 'localStorage', { value: localStorageMock, writable: true });
+Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock, writable: true });
 
 describe('persistence', () => {
   beforeEach(() => {

@@ -8,6 +8,7 @@ venv/
 .env.local
 *.log
 dist/
+*.tsbuildinfo
 build/
 *.egg-info/
 

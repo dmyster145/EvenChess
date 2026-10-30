@@ -109,7 +109,6 @@ describe('ChessService', () => {
     const knight = pieces.find((p) => p.square === 'f3');
     expect(knight).toBeDefined();
     expect(knight!.moves.length).toBeGreaterThan(0);
-    const firstMove = knight!.moves[0];
-    expect(firstMove.san).toBe('Nxe5'); // capture should be first
+    expect(knight!.moves[0]?.san).toBe('Nxe5'); // capture should be first
   });
 });

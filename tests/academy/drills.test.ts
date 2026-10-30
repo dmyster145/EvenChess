@@ -30,7 +30,7 @@ describe('generateRandomSquare', () => {
     const files = new Set<string>();
     for (let i = 0; i < 1000; i++) {
       const square = generateRandomSquare();
-      files.add(square[0]);
+      files.add(square.charAt(0));
     }
     expect(files.size).toBe(8);
   });
@@ -39,7 +39,7 @@ describe('generateRandomSquare', () => {
     const ranks = new Set<string>();
     for (let i = 0; i < 1000; i++) {
       const square = generateRandomSquare();
-      ranks.add(square[1]);
+      ranks.add(square.charAt(1));
     }
     expect(ranks.size).toBe(8);
   });

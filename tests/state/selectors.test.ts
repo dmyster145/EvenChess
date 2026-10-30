@@ -29,6 +29,7 @@ import {
 } from '../../src/state/selectors';
 import { MENU_INDEX } from '../../src/state/constants';
 import type { GameState, PieceEntry } from '../../src/state/contracts';
+import { baseGameState } from '../helpers/game-state';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -56,6 +57,7 @@ function createTestState(overrides?: Partial<GameState>): GameState {
   ];
 
   return {
+    ...baseGameState(),
     fen: 'test-fen',
     turn: 'w',
     pieces,

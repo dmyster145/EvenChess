@@ -4,6 +4,10 @@ import { OsEventTypeList, List_ItemEvent, Text_ItemEvent, Sys_ItemEvent, type Ev
 import { buildInitialState } from '../../src/state/contracts';
 import { ChessService } from '../../src/chess/chessservice';
 
+// The mappers read the current phase (selection phases dedupe scrolls more aggressively); the
+// idle state is the neutral default for these tests.
+const idle = buildInitialState(new ChessService());
+
 describe('input/actions', () => {
   beforeEach(() => {
     resetScrollDebounce();
@@ -19,7 +23,7 @@ describe('input/actions', () => {
         currentSelectItemIndex: 2,
         currentSelectItemName: 'Nf3',
       });
-      const action = mapListEvent(event);
+      const action = mapListEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('TAP');
       if (action!.type === 'TAP') {
@@ -32,7 +36,7 @@ describe('input/actions', () => {
       const event = new List_ItemEvent({
         eventType: OsEventTypeList.DOUBLE_CLICK_EVENT,
       });
-      const action = mapListEvent(event);
+      const action = mapListEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('DOUBLE_TAP');
     });
@@ -44,7 +48,7 @@ describe('input/actions', () => {
       const event = new List_ItemEvent({
         eventType: OsEventTypeList.SCROLL_TOP_EVENT,
       });
-      const action = mapListEvent(event);
+      const action = mapListEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('SCROLL');
       if (action!.type === 'SCROLL') {
@@ -56,7 +60,7 @@ describe('input/actions', () => {
       const event = new List_ItemEvent({
         eventType: OsEventTypeList.SCROLL_BOTTOM_EVENT,
       });
-      const action = mapListEvent(event);
+      const action = mapListEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('SCROLL');
       if (action!.type === 'SCROLL') {
@@ -68,7 +72,7 @@ describe('input/actions', () => {
       const event = new List_ItemEvent({
         eventType: OsEventTypeList.ABNORMAL_EXIT_EVENT,
       });
-      const action = mapListEvent(event);
+      const action = mapListEvent(event, idle);
       expect(action).toBeNull();
     });
   });
@@ -78,7 +82,7 @@ describe('input/actions', () => {
       const event = new Text_ItemEvent({
         eventType: OsEventTypeList.CLICK_EVENT,
       });
-      const action = mapTextEvent(event);
+      const action = mapTextEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('TAP');
     });
@@ -88,7 +92,7 @@ describe('input/actions', () => {
       const event = new Text_ItemEvent({
         eventType: OsEventTypeList.SCROLL_BOTTOM_EVENT,
       });
-      const action = mapTextEvent(event);
+      const action = mapTextEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('SCROLL');
       if (action!.type === 'SCROLL') {
@@ -100,7 +104,7 @@ describe('input/actions', () => {
       const event = new Text_ItemEvent({
         eventType: OsEventTypeList.DOUBLE_CLICK_EVENT,
       });
-      const action = mapTextEvent(event);
+      const action = mapTextEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('DOUBLE_TAP');
     });
@@ -111,7 +115,7 @@ describe('input/actions', () => {
       const event = new Sys_ItemEvent({
         eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT,
       });
-      const action = mapSysEvent(event);
+      const action = mapSysEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('FOREGROUND_ENTER');
     });
@@ -120,7 +124,7 @@ describe('input/actions', () => {
       const event = new Sys_ItemEvent({
         eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT,
       });
-      const action = mapSysEvent(event);
+      const action = mapSysEvent(event, idle);
       expect(action).not.toBeNull();
       expect(action!.type).toBe('FOREGROUND_EXIT');
     });
@@ -129,28 +133,49 @@ describe('input/actions', () => {
   describe('firmware duplicate-event dedup (ER point 3)', () => {
     it('drops a duplicate DOUBLE_CLICK within the 600ms window', () => {
       const ev = () => new Sys_ItemEvent({ eventType: OsEventTypeList.DOUBLE_CLICK_EVENT });
-      const first = mapSysEvent(ev());
+      const first = mapSysEvent(ev(), idle);
       expect(first?.type).toBe('DOUBLE_TAP');
-      // Firmware echoes the same physical double-tap ~50–100ms later — must be dropped so the
-      // menu→exit-dialog short-circuit only fires shutDownPageContainer(1) once.
-      const echo = mapSysEvent(ev());
+      // Firmware echoes the same physical double-tap ~50–100ms later — must be dropped, or one
+      // double-tap from idle would open the menu and the echo would immediately close it.
+      const echo = mapSysEvent(ev(), idle);
       expect(echo).toBeNull();
     });
 
     it('drops a duplicate CLICK within the 130ms window', () => {
       const ev = () => new Sys_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT });
-      const first = mapSysEvent(ev());
+      const first = mapSysEvent(ev(), idle);
       expect(first?.type).toBe('TAP');
-      const echo = mapSysEvent(ev());
+      const echo = mapSysEvent(ev(), idle);
       expect(echo).toBeNull();
     });
 
     it('dedup is cross-channel (list CLICK then text CLICK echo is dropped)', () => {
-      const listClick = mapListEvent(new List_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT }));
+      const listClick = mapListEvent(new List_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT }), idle);
       expect(listClick?.type).toBe('TAP');
-      const textEcho = mapTextEvent(new Text_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT }));
+      const textEcho = mapTextEvent(new Text_ItemEvent({ eventType: OsEventTypeList.CLICK_EVENT }), idle);
       expect(textEcho).toBeNull();
     });
   });
 
+
+  describe('mapEvenHubEvent', () => {
+    it('routes a listEvent through the list mapper', () => {
+      const event = { listEvent: new List_ItemEvent({ eventType: OsEventTypeList.DOUBLE_CLICK_EVENT }) } as EvenHubEvent;
+      expect(mapEvenHubEvent(event, idle)).toEqual({ type: 'DOUBLE_TAP' });
+    });
+
+    it('routes a textEvent through the text mapper', () => {
+      const event = { textEvent: new Text_ItemEvent({ eventType: OsEventTypeList.DOUBLE_CLICK_EVENT }) } as EvenHubEvent;
+      expect(mapEvenHubEvent(event, idle)).toEqual({ type: 'DOUBLE_TAP' });
+    });
+
+    it('routes a sysEvent through the sys mapper', () => {
+      const event = { sysEvent: new Sys_ItemEvent({ eventType: OsEventTypeList.DOUBLE_CLICK_EVENT }) } as EvenHubEvent;
+      expect(mapEvenHubEvent(event, idle)).toEqual({ type: 'DOUBLE_TAP' });
+    });
+
+    it('returns null for an event with no list, text, or sys payload', () => {
+      expect(mapEvenHubEvent({} as EvenHubEvent, idle)).toBeNull();
+    });
+  });
 });
