@@ -108,7 +108,7 @@ Output is in `dist/`. Deploy that folder to any static host, then open the deplo
 
 - **Play vs AI:** Play White, Black, or Random against Stockfish; Easy, Casual, Serious, or Custom difficulty. Games auto-save.
 - **Bullet Blitz:** Timed game with optional increment (e.g. 1+0, 3+0, 5+5).
-- **Academy:** Coordinate drill, Tactics, Mate-in-one, Knight Path, PGN Study (famous games and openings).
+- **Academy:** Coordinate drill, Tactics, Mate-in-one, Knight Path, PGN Study (famous games, move by move).
 - **Menu:** Play As, Mode, View Log, Difficulty, Display Options (alignment / size / board markers A–H · 1–8 / position: your pieces at the bottom or top), Reset, Exit. Double-tap from idle to open it. Difficulty, display options, and Play As are saved.
 
 Full behavior and tips are on the in-app help page ([index.html](index.html)).

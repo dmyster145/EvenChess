@@ -35,7 +35,8 @@ import { getCandidateRows, getPiecesOnRow, getSelectedRow, getBoardViewColor } f
 import { generateRandomSquare, moveCursorAxis, fileRankToSquare, getDefaultCursorPosition } from '../academy/drills';
 import { generateKnightPuzzle, getKnightMoves, isValidKnightMove, getSquareIndices } from '../academy/knight';
 import { getRandomTacticsPuzzle, getRandomMatePuzzle } from '../academy/puzzles';
-import { getRandomFamousGame, STARTING_FEN } from '../academy/pgn';
+import { getRandomFamousGame } from '../academy/pgn';
+import { STARTING_FEN } from '../chess/chessservice';
 
 /** Gameplay phases the bullet clock may resume in after a system overlay closes. */
 const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([

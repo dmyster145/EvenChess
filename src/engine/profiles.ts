@@ -73,3 +73,21 @@ export function getEngineProfile(level: DifficultyLevel, customSkillLevel: numbe
   if (level === 'custom') return buildCustomEngineProfile(customSkillLevel);
   return NAMED_PROFILES[level] ?? CASUAL;
 }
+
+/**
+ * The Custom level closest in strength to a named tier (by Stockfish skill and search depth).
+ * Shown on the Custom picker so its labels can't drift from the real tier settings.
+ */
+export function nearestCustomLevel(profile: EngineProfile): number {
+  let best = CUSTOM_SKILL_LEVEL_MIN;
+  let bestGap = Infinity;
+  for (let level = CUSTOM_SKILL_LEVEL_MIN; level <= CUSTOM_SKILL_LEVEL_MAX; level++) {
+    const custom = buildCustomEngineProfile(level);
+    const gap = Math.abs(custom.skillLevel - profile.skillLevel) + Math.abs(custom.depth - profile.depth);
+    if (gap < bestGap) {
+      best = level;
+      bestGap = gap;
+    }
+  }
+  return best;
+}

@@ -23,6 +23,8 @@ import { getMoveNumber } from './utils';
 import { formatTime } from '../bullet/clock';
 import { fileRankToSquare, getFileLetter, getRankNumber } from '../academy/drills';
 import { rankOfSquare } from '../chess/square-utils';
+import { describeSolution } from '../academy/puzzles';
+import { EASY, CASUAL, SERIOUS, nearestCustomLevel } from '../engine/profiles';
 
 // ── Unicode characters for visual hierarchy ────────────────────────────────
 // "White - Move 24" = 16 chars, but Unicode box chars are wider, so use fewer
@@ -384,10 +386,11 @@ export function getCustomDifficultyDisplayText(state: GameState): string {
   const lines: string[] = ['', 'CUSTOM DIFFICULTY'];
   lines.push(`  Level: ${ARROW_LEFT} ${level} ${ARROW_RIGHT}   (0–9)`);
   lines.push('  Tap to confirm');
-  lines.push('');
+  // Where the named tiers sit on this scale, computed from the engine settings themselves.
+  lines.push(`  Easy≈${nearestCustomLevel(EASY)} Casual≈${nearestCustomLevel(CASUAL)} Serious≈${nearestCustomLevel(SERIOUS)}`);
   lines.push('  0–1: Beginner');
-  lines.push('  2–3: Easy');
-  lines.push('  4–5: Casual');
+  lines.push('  2–3: Novice');
+  lines.push('  4–5: Club player');
   lines.push('  6–7: Strong');
   lines.push('  8–9: Expert');
 
@@ -635,12 +638,7 @@ export function getTacticsDisplayText(state: GameState): string {
     // Show the solution
     lines.push('');
     lines.push('Solution:');
-    const solution = puzzle.solution[0];
-    if (solution) {
-      const from = solution.slice(0, 2).toUpperCase();
-      const to = solution.slice(2, 4).toUpperCase();
-      lines.push(`${from} → ${to}`);
-    }
+    lines.push(...describeSolution(puzzle));
     if (puzzle.description) {
       lines.push('');
       lines.push(puzzle.description);

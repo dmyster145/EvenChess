@@ -1,5 +1,7 @@
 /**
- * PGN Study — famous games and opening lines.
+ * PGN Study: famous games, stepped through move by move. Every game's moves are replayed with
+ * chess.js in tests/academy/pgn.test.ts. The players/year/event/opening fields are reference
+ * data for each game (not currently shown on the glasses).
  */
 
 export interface PgnGame {
@@ -9,8 +11,7 @@ export interface PgnGame {
   year?: number;
   event?: string;
   opening?: string;
-  moves: string[]; // SAN notation
-  startingFen?: string;
+  moves: string[]; // SAN notation, from the standard starting position
 }
 
 export const FAMOUS_GAMES: PgnGame[] = [
@@ -84,70 +85,7 @@ export const FAMOUS_GAMES: PgnGame[] = [
   },
 ];
 
-export const OPENING_LINES: PgnGame[] = [
-  {
-    name: 'Italian Game',
-    white: '',
-    black: '',
-    opening: 'Italian Game',
-    moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5'],
-  },
-  {
-    name: 'Sicilian Defense',
-    white: '',
-    black: '',
-    opening: 'Sicilian Defense',
-    moves: ['e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4', 'Nf6', 'Nc3'],
-  },
-  {
-    name: 'Queen\'s Gambit',
-    white: '',
-    black: '',
-    opening: 'Queen\'s Gambit',
-    moves: ['d4', 'd5', 'c4', 'e6', 'Nc3', 'Nf6', 'Bg5'],
-  },
-  {
-    name: 'Ruy Lopez',
-    white: '',
-    black: '',
-    opening: 'Spanish Opening',
-    moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O'],
-  },
-  {
-    name: 'King\'s Indian',
-    white: '',
-    black: '',
-    opening: 'King\'s Indian Defense',
-    moves: ['d4', 'Nf6', 'c4', 'g6', 'Nc3', 'Bg7', 'e4', 'd6', 'Nf3', 'O-O'],
-  },
-  {
-    name: 'French Defense',
-    white: '',
-    black: '',
-    opening: 'French Defense',
-    moves: ['e4', 'e6', 'd4', 'd5', 'Nc3', 'Nf6'],
-  },
-  {
-    name: 'Caro-Kann',
-    white: '',
-    black: '',
-    opening: 'Caro-Kann Defense',
-    moves: ['e4', 'c6', 'd4', 'd5', 'Nc3', 'dxe4', 'Nxe4'],
-  },
-];
-
 export function getRandomFamousGame(): PgnGame {
   const idx = Math.floor(Math.random() * FAMOUS_GAMES.length);
   return FAMOUS_GAMES[idx] ?? FAMOUS_GAMES[0]!;
 }
-
-export function getRandomOpeningLine(): PgnGame {
-  const idx = Math.floor(Math.random() * OPENING_LINES.length);
-  return OPENING_LINES[idx] ?? OPENING_LINES[0]!;
-}
-
-export function getAllGames(): PgnGame[] {
-  return [...FAMOUS_GAMES, ...OPENING_LINES];
-}
-
-export const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';

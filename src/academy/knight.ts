@@ -82,7 +82,18 @@ export function generateKnightPuzzle(minMoves = 2, maxMoves = 4): {
     }
   }
 
-  return { start: 'a1', target: 'c5', optimalMoves: 3 };
+  // Random picks missed (very unlikely for the default range): take the first pair, in board
+  // order, whose real distance is in range. The full scan always finds one for 1..6.
+  for (let from = 0; from < 64; from++) {
+    for (let to = 0; to < 64; to++) {
+      const start = indicesToSquare(from % 8, Math.floor(from / 8));
+      const target = indicesToSquare(to % 8, Math.floor(to / 8));
+      if (start === target) continue;
+      const distance = findKnightDistance(start, target);
+      if (distance >= minMoves && distance <= maxMoves) return { start, target, optimalMoves: distance };
+    }
+  }
+  return { start: 'a1', target: 'h8', optimalMoves: findKnightDistance('a1', 'h8') };
 }
 
 export function isValidKnightMove(from: string, to: string): boolean {

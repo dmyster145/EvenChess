@@ -3,7 +3,7 @@
  * Verifies puzzle generation and pathfinding work correctly.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   getKnightMoves,
   findKnightDistance,
@@ -139,5 +139,22 @@ describe('isValidKnightMove', () => {
     expect(isValidKnightMove('e4', 'f5')).toBe(false);
     expect(isValidKnightMove('e4', 'a1')).toBe(false);
     expect(isValidKnightMove('e4', 'e4')).toBe(false);
+  });
+});
+
+describe('generateKnightPuzzle fallback (when every random pick is out of range)', () => {
+  it('still returns a puzzle in range with its true optimal move count', () => {
+    // Every random pick lands on a1 → a1 (start === target), so all attempts are rejected.
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      for (const [min, max] of [[2, 4], [5, 6], [3, 3]] as const) {
+        const p = generateKnightPuzzle(min, max);
+        expect(p.optimalMoves).toBe(findKnightDistance(p.start, p.target));
+        expect(p.optimalMoves).toBeGreaterThanOrEqual(min);
+        expect(p.optimalMoves).toBeLessThanOrEqual(max);
+      }
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

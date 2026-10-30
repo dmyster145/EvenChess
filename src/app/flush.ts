@@ -23,7 +23,7 @@ import { CONTAINER_ID_TEXT, CONTAINER_NAME_TEXT } from '../render/composer';
 import { getCombinedDisplayText } from '../state/selectors';
 import { getFileIndex, getRankIndex } from '../chess/square-utils';
 import { Chess } from 'chess.js';
-import { STARTING_FEN } from '../academy/pgn';
+import { STARTING_FEN } from '../chess/chessservice';
 
 /**
  * One frame at 60Hz. Replaces the v1 `0` debounce that fired one flush per microtask. Coalescing

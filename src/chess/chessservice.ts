@@ -2,9 +2,12 @@
  * ChessService — wraps chess.js with a domain-specific API.
  */
 
-import { Chess, type Move, type PieceSymbol, type Square } from 'chess.js';
+import { Chess, DEFAULT_POSITION, type Move, type PieceSymbol, type Square } from 'chess.js';
 import type { PieceId, PieceEntry, CarouselMove } from '../state/contracts';
 import { debugLog } from '../debug/logger';
+
+/** FEN of the standard starting position. */
+export const STARTING_FEN = DEFAULT_POSITION;
 
 const PIECE_LABEL: Record<PieceSymbol, string> = {
   k: 'King',

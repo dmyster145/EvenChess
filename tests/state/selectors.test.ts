@@ -30,6 +30,7 @@ import {
 import { MENU_INDEX } from '../../src/state/constants';
 import type { GameState, PieceEntry } from '../../src/state/contracts';
 import { baseGameState } from '../helpers/game-state';
+import { EASY, CASUAL, SERIOUS, nearestCustomLevel, buildCustomEngineProfile } from '../../src/engine/profiles';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -1015,6 +1016,42 @@ describe('selectors', () => {
     });
   });
 
+  describe('Custom difficulty picker', () => {
+    it('marks where Easy, Casual, and Serious sit, from the real engine settings', () => {
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', customSkillLevel: 5 }));
+      expect(text).toContain(`Easy≈${nearestCustomLevel(EASY)}`);
+      expect(text).toContain(`Casual≈${nearestCustomLevel(CASUAL)}`);
+      expect(text).toContain(`Serious≈${nearestCustomLevel(SERIOUS)}`);
+    });
+
+    it('does not reuse the tier names as band labels', () => {
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', customSkillLevel: 5 }));
+      expect(text).not.toMatch(/\d–\d: (Easy|Casual|Serious)/);
+    });
+  });
+
+  describe('tactics reveal shows the whole solution line', () => {
+    const revealed = (fen: string, solution: string[]) => getTacticsDisplayText(createTestState({
+      phase: 'tacticsDrill',
+      academyState: {
+        drillType: 'tactics', score: { correct: 0, total: 1 }, cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback: 'correct',
+        tacticsPuzzle: { fen, solution, theme: 'fork', description: 'test' },
+      },
+    }));
+
+    it('names the piece, both squares, and check', () => {
+      expect(revealed('r3k3/8/8/1N6/8/8/8/4K3 w - - 0 1', ['b5c7'])).toContain('Knight B5 → C7 check');
+    });
+
+    it('lists every move of a multi-move line', () => {
+      // 1.Nc7+ Kd7 2.Nxa8
+      const text = revealed('r3k3/8/8/1N6/8/8/8/4K3 w - - 0 1', ['b5c7', 'e8d7', 'c7a8']);
+      expect(text).toContain('Knight B5 → C7 check');
+      expect(text).toContain('King E8 → D7');
+      expect(text).toContain('Knight C7 takes A8');
+    });
+  });
+
   describe('getBoardViewColor', () => {
     it('draws the human at the bottom by default', () => {
       expect(getBoardViewColor({ playerColor: 'w', boardPosition: 'bottom' })).toBe('w');
@@ -1025,5 +1062,23 @@ describe('selectors', () => {
       expect(getBoardViewColor({ playerColor: 'w', boardPosition: 'top' })).toBe('b');
       expect(getBoardViewColor({ playerColor: 'b', boardPosition: 'top' })).toBe('w');
     });
+  });
+});
+
+describe('nearestCustomLevel', () => {
+  it('picks the Custom level whose skill and depth best match each named tier', () => {
+    for (const tier of [EASY, CASUAL, SERIOUS]) {
+      const level = nearestCustomLevel(tier);
+      const gap = (l: number) => {
+        const c = buildCustomEngineProfile(l);
+        return Math.abs(c.skillLevel - tier.skillLevel) + Math.abs(c.depth - tier.depth);
+      };
+      for (let l = 0; l <= 9; l++) expect(gap(level)).toBeLessThanOrEqual(gap(l));
+    }
+  });
+
+  it('places the tiers in order of strength', () => {
+    expect(nearestCustomLevel(EASY)).toBeLessThan(nearestCustomLevel(CASUAL));
+    expect(nearestCustomLevel(CASUAL)).toBeLessThan(nearestCustomLevel(SERIOUS));
   });
 });
