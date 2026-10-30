@@ -307,6 +307,9 @@ const DIGIT_5x7: Record<string, number[]> = {
   '6': [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
   '7': [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
   '8': [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+  '9': [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+  '0': [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+  '+': [0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000],
 };
 const CAPTURE_ORDER = ['q', 'r', 'b', 'n', 'p'] as const;
 const DIGIT_W = 5;
@@ -341,41 +344,106 @@ function drawSilhouette(pixels: Uint8Array, x: number, y: number, type: string, 
   }
 }
 
-function entryWidth(n: number): number {
-  return PIECE_SIZE + (n > 1 ? DIGIT_W + 1 : 0) + ENTRY_GAP;
+/** A drawing instruction for the captured-pieces strip. x is the left edge of the 19px box. */
+export type StripOp =
+  | { kind: 'piece'; type: string; x: number; outline: boolean }
+  | { kind: 'text'; text: string; x: number };
+
+// Silhouettes only use columns 1–15 of their 19px box, so the compact layout packs them by that
+// visible width.
+const INK_LEFT = 1;
+const INK_W = 15;
+const STRIP_LEFT = 2;
+const STRIP_RIGHT = BRAND_WIDTH - 2;
+/** Space kept between White's group (left) and Black's (right). */
+const GROUP_GAP = 6;
+
+interface StripMode {
+  /** Width one silhouette occupies, and where it sits in its 19px box. */
+  cell: number;
+  inkOffset: number;
+  gap: number;
+}
+const NORMAL: StripMode = { cell: PIECE_SIZE, inkOffset: 0, gap: ENTRY_GAP };
+const COMPACT: StripMode = { cell: INK_W, inkOffset: INK_LEFT, gap: 2 };
+
+const textWidth = (text: string): number => text.length * (DIGIT_W + 1);
+
+function entries(counts: Record<string, number>): Array<{ type: string; n: number }> {
+  return CAPTURE_ORDER.filter((t) => (counts[t] ?? 0) > 0).map((t) => ({ type: t, n: counts[t]! }));
 }
 
-function groupWidth(counts: Record<string, number>): number {
-  let w = 0;
-  for (const t of CAPTURE_ORDER) {
-    const n = counts[t] ?? 0;
-    if (n > 0) w += entryWidth(n);
-  }
-  return w;
+function entryWidth(n: number, mode: StripMode): number {
+  return mode.cell + (n > 1 ? textWidth(String(n)) : 0);
 }
 
-/** Draw a captured group left→right from startX; returns the x just past it. */
-function drawGroup(
-  pixels: Uint8Array,
+function groupWidth(list: Array<{ n: number }>, mode: StripMode): number {
+  return list.reduce((w, e, i) => w + entryWidth(e.n, mode) + (i > 0 ? mode.gap : 0), 0);
+}
+
+/**
+ * Place one side's captured pieces from startX within maxWidth. Entries that don't fit are
+ * summarized as "+N" (N = pieces not shown) instead of being silently dropped.
+ */
+function placeGroup(
+  list: Array<{ type: string; n: number }>,
   startX: number,
-  y: number,
-  counts: Record<string, number>,
+  maxWidth: number,
+  mode: StripMode,
   outline: boolean,
-): number {
+): StripOp[] {
+  const ops: StripOp[] = [];
+  const limit = startX + maxWidth;
   let x = startX;
-  for (const t of CAPTURE_ORDER) {
-    const n = counts[t] ?? 0;
-    if (n <= 0) continue;
-    if (x + PIECE_SIZE > BRAND_WIDTH - 1) break; // clip overflow
-    drawSilhouette(pixels, x, y, t, outline);
-    x += PIECE_SIZE;
-    if (n > 1) {
-      drawDigit(pixels, x, y + Math.floor((PIECE_SIZE - 7) / 2), String(n));
-      x += DIGIT_W + 1;
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i]!;
+    const restAfter = list.slice(i + 1).reduce((sum, r) => sum + r.n, 0);
+    const reserve = restAfter > 0 ? mode.gap + textWidth(`+${restAfter}`) : 0;
+    if (x + entryWidth(e.n, mode) + reserve > limit) {
+      const hidden = list.slice(i).reduce((sum, r) => sum + r.n, 0);
+      ops.push({ kind: 'text', text: `+${hidden}`, x });
+      return ops;
     }
-    x += ENTRY_GAP;
+    ops.push({ kind: 'piece', type: e.type, x: x - mode.inkOffset, outline });
+    x += mode.cell;
+    if (e.n > 1) {
+      ops.push({ kind: 'text', text: String(e.n), x });
+      x += textWidth(String(e.n));
+    }
+    x += mode.gap;
   }
-  return x;
+  return ops;
+}
+
+/**
+ * Lay out the captured-pieces strip: White's captured pieces solid on the left, Black's outlined on
+ * the right. Uses the roomy layout when both groups fit, a compact one when they don't, and "+N"
+ * for whatever still doesn't fit, so every captured piece is either shown or counted.
+ */
+export function layoutCapturedStrip(white: Record<string, number>, black: Record<string, number>): StripOp[] {
+  const w = entries(white);
+  const b = entries(black);
+  const avail = STRIP_RIGHT - STRIP_LEFT - GROUP_GAP;
+  const roomyW = groupWidth(w, NORMAL);
+  const roomyB = groupWidth(b, NORMAL);
+  if (roomyW + roomyB <= avail) {
+    return [
+      ...placeGroup(w, STRIP_LEFT, roomyW, NORMAL, false),
+      ...placeGroup(b, STRIP_RIGHT - roomyB, roomyB, NORMAL, true),
+    ];
+  }
+  // Compact: a side that fits in half the strip gets just what it needs and the other side gets
+  // the rest; anything still over its space is summarized as "+N".
+  const ww = groupWidth(w, COMPACT);
+  const bw = groupWidth(b, COMPACT);
+  const half = Math.floor(avail / 2);
+  const whiteSpace = ww <= half ? ww : bw <= half ? avail - bw : half;
+  const blackSpace = avail - whiteSpace;
+  const blackStart = STRIP_RIGHT - Math.min(bw, blackSpace);
+  return [
+    ...placeGroup(w, STRIP_LEFT, whiteSpace, COMPACT, false),
+    ...placeGroup(b, blackStart, Math.min(bw, blackSpace), COMPACT, true),
+  ];
 }
 
 function hasAnyCapture(counts: Record<string, number>): boolean {
@@ -388,11 +456,14 @@ function makeCapturedPixels(black: Record<string, number>, white: Record<string,
   const rowBytes = getBmpRowBytes(BRAND_WIDTH);
   const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
   const y = Math.floor((BRAND_HEIGHT - PIECE_SIZE) / 2);
-
-  const whiteEnd = drawGroup(pixels, 2, y, white, false); // White solid, left
-  const bw = groupWidth(black);
-  const blackStart = Math.max(whiteEnd + 4, BRAND_WIDTH - 2 - bw);
-  drawGroup(pixels, blackStart, y, black, true); // Black outline, right
+  const textY = y + Math.floor((PIECE_SIZE - 7) / 2);
+  for (const op of layoutCapturedStrip(white, black)) {
+    if (op.kind === 'piece') {
+      drawSilhouette(pixels, op.x, y, op.type, op.outline);
+    } else {
+      [...op.text].forEach((ch, i) => drawDigit(pixels, op.x + i * (DIGIT_W + 1), textY, ch));
+    }
+  }
   return pixels;
 }
 
@@ -516,20 +587,25 @@ export function renderCheckmateBrandingImage(): ImageRawDataUpdate {
 
 // ── PNG preload ───────────────────────────────────────────────────────────
 
+let preloadPromise: Promise<void> | null = null;
+
 /**
- * Pre-encode all branding images as 1-bit PNG and replace the BMP caches.
- * Call once at startup; runs in parallel with hub init so PNG is ready before first branding send.
- * Silently keeps BMP fallbacks if PNG encoding is unavailable.
+ * Pre-encode the CHECK!/CHECKMATE! banners as PNG and replace their BMP caches. Idempotent;
+ * keeps the BMP fallbacks if PNG encoding is unavailable.
+ *
+ * The blank strip is deliberately NOT PNG-encoded: an all-blank image comes out of the encoder as
+ * a 1-bit PNG, which renders solid green on G2 firmware (see png-encode.ts). It stays a BMP.
  */
-export async function preloadBrandingImages(): Promise<void> {
-  const [brandPng, blankPng, checkPng, checkmatePng] = await Promise.all([
-    encodePackedPixelsToPng(makeBrandPixels(), BRAND_WIDTH, BRAND_HEIGHT),
-    encodePackedPixelsToPng(makeBlankPixels(), BRAND_WIDTH, BRAND_HEIGHT),
-    encodePackedPixelsToPng(makeStatusPixels('CHECK!'), BRAND_WIDTH, BRAND_HEIGHT),
-    encodePackedPixelsToPng(makeStatusPixels('CHECKMATE!'), BRAND_WIDTH, BRAND_HEIGHT),
-  ]);
-  if (brandPng.length > 0)     cachedBrandImage         = makeBrandingUpdate(brandPng);
-  if (blankPng.length > 0)     cachedBlankBrandImage    = makeBrandingUpdate(blankPng);
-  if (checkPng.length > 0)     cachedCheckBrandImage    = makeBrandingUpdate(checkPng);
-  if (checkmatePng.length > 0) cachedCheckmateBrandImage = makeBrandingUpdate(checkmatePng);
+export function preloadBrandingImages(): Promise<void> {
+  if (!preloadPromise) {
+    preloadPromise = (async () => {
+      const [checkPng, checkmatePng] = await Promise.all([
+        encodePackedPixelsToPng(makeStatusPixels('CHECK!'), BRAND_WIDTH, BRAND_HEIGHT),
+        encodePackedPixelsToPng(makeStatusPixels('CHECKMATE!'), BRAND_WIDTH, BRAND_HEIGHT),
+      ]);
+      if (checkPng.length > 0) cachedCheckBrandImage = makeBrandingUpdate(checkPng);
+      if (checkmatePng.length > 0) cachedCheckmateBrandImage = makeBrandingUpdate(checkmatePng);
+    })();
+  }
+  return preloadPromise;
 }

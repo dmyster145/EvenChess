@@ -18,6 +18,7 @@ import {
   loadBoardSize,
   saveBoardPosition,
   loadBoardPosition,
+  loadPlayAs,
 } from '../../src/storage/persistence';
 
 const localStorageMock = (() => {
@@ -32,6 +33,8 @@ const localStorageMock = (() => {
     _getStore: () => store,
   };
 })();
+
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock, writable: true });
 
@@ -54,13 +57,13 @@ describe('persistence', () => {
     });
 
     it('saves with default difficulty', async () => {
-      await saveGame('fen', [], 'w');
+      await saveGame(START_FEN, [], 'w');
       const loaded = await loadGame();
       expect(loaded!.difficulty).toBe('casual');
     });
 
     it('saves serious difficulty', async () => {
-      await saveGame('fen', ['e4', 'e5'], 'w', 'serious');
+      await saveGame(START_FEN, ['e4', 'e5'], 'w', 'serious');
       const loaded = await loadGame();
       expect(loaded!.difficulty).toBe('serious');
     });
@@ -85,9 +88,28 @@ describe('persistence', () => {
     });
 
     it('defaults difficulty to casual for older saves', async () => {
-      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: 'f', history: [], turn: 'w', savedAt: 0 }));
+      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: START_FEN, history: [], turn: 'w', savedAt: 0 }));
       const loaded = await loadGame();
       expect(loaded!.difficulty).toBe('casual');
+    });
+
+    it('rejects a save without a readable side to move or with non-string history', async () => {
+      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: 'nonsense', history: [], turn: 'w' }));
+      expect(await loadGame()).toBeNull();
+      localStorageMock.setItem('evenchess-save', JSON.stringify({ fen: START_FEN, history: ['e4', 5], turn: 'w' }));
+      expect(await loadGame()).toBeNull();
+    });
+
+    it('takes the side to move from the FEN and replaces invalid fields with defaults', async () => {
+      const blackToMove = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+      localStorageMock.setItem('evenchess-save', JSON.stringify({
+        fen: blackToMove, history: ['e4'], turn: 'w', difficulty: 'hard', playerColor: 'black', customSkillLevel: 42,
+      }));
+      const loaded = await loadGame();
+      expect(loaded!.turn).toBe('b');            // the FEN wins over the stored copy
+      expect(loaded!.difficulty).toBe('casual');
+      expect(loaded!.playerColor).toBeUndefined();
+      expect(loaded!.customSkillLevel).toBe(9);  // clamped to the picker range
     });
 
     it('returns null for empty string (cleared save)', async () => {
@@ -98,7 +120,7 @@ describe('persistence', () => {
 
   describe('clearSave', () => {
     it('clears saved game so loadGame returns null', async () => {
-      await saveGame('fen', ['e4'], 'b', 'casual');
+      await saveGame(START_FEN, ['e4'], 'b', 'casual');
       await clearSave();
       expect(await loadGame()).toBeNull();
     });
@@ -159,6 +181,22 @@ describe('persistence', () => {
     });
   });
 
+  describe('unknown stored setting values fall back to defaults', () => {
+    it('board alignment and size accept only their known values', async () => {
+      localStorageMock.setItem('evenchess-board-alignment', 'diagonal');
+      localStorageMock.setItem('evenchess-board-size', 'medium');
+      expect(await loadBoardAlignment()).toBe('right');
+      expect(await loadBoardSize()).toBe('small');
+    });
+
+    it('Play As and Position accept only their known values', async () => {
+      localStorageMock.setItem('evenchess-play-as', 'purple');
+      localStorageMock.setItem('evenchess-board-position', 'sideways');
+      expect(await loadPlayAs()).toBe('white');
+      expect(await loadBoardPosition()).toBe('bottom');
+    });
+  });
+
   describe('saveBoardSize / loadBoardSize', () => {
     it('returns small when not set', async () => {
       expect(await loadBoardSize()).toBe('small');
@@ -216,7 +254,7 @@ describe('persistence', () => {
     });
 
     it('game and settings are independent', async () => {
-      await saveGame('fen', ['e4'], 'b', 'casual');
+      await saveGame(START_FEN, ['e4'], 'b', 'casual');
       await saveDifficulty('serious');
       await saveBoardAlignment('center');
 

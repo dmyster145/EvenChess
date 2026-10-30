@@ -1,40 +1,43 @@
 /**
- * WebView keep-alive utilities.
+ * WebView keep-alive (best effort) against aggressive timer throttling in constrained WebViews:
+ * a near-silent oscillator plus a held Web Lock.
  *
- * Best-effort protection against aggressive timer throttling in constrained WebViews.
- * Activation must happen from a user gesture context due autoplay policy.
+ * Activated once, on the first glasses input event (app.ts). That is a bridge message, not a DOM
+ * user gesture, so autoplay policy may keep the AudioContext suspended; the Web Lock still applies.
+ * A failed attempt is not retried, so input events never pile up AudioContexts or lock requests.
  */
 
 import { perfLogIfEnabled, perfLogLazyIfEnabled } from '../perf/log';
 
-let audioCtx: AudioContext | null = null;
-let oscillator: OscillatorNode | null = null;
-let gainNode: GainNode | null = null;
-let active = false;
+let attempted = false;
+/** Holds the session's AudioContext so the running audio graph is never garbage-collected. */
+const heldAudio: AudioContext[] = [];
 
+/** Start the keep-alive. Idempotent: only the first call does anything. */
 export function activateKeepAlive(): void {
-  if (active) return;
+  if (attempted) return;
+  attempted = true;
 
   try {
     const Ctor: typeof AudioContext =
       window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) throw new Error('AudioContext unsupported');
 
-    audioCtx = new Ctor();
-    oscillator = audioCtx.createOscillator();
-    gainNode = audioCtx.createGain();
+    const ctx = new Ctor();
+    heldAudio.push(ctx);
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
     oscillator.frequency.value = 1;
     gainNode.gain.value = 0.001;
     oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
+    gainNode.connect(ctx.destination);
     oscillator.start();
-    active = true;
-    perfLogLazyIfEnabled?.(() => `[Perf][KeepAlive][Audio] activated state=${audioCtx?.state ?? 'null'}`);
+    perfLogLazyIfEnabled?.(() => `[Perf][KeepAlive][Audio] activated state=${ctx.state}`);
 
-    audioCtx.addEventListener('statechange', () => {
-      perfLogLazyIfEnabled?.(() => `[Perf][KeepAlive][Audio] statechange=${audioCtx?.state ?? 'null'}`);
-      if (audioCtx?.state === 'suspended') {
-        audioCtx.resume().catch(() => {
+    ctx.addEventListener('statechange', () => {
+      perfLogLazyIfEnabled?.(() => `[Perf][KeepAlive][Audio] statechange=${ctx.state}`);
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {
           perfLogIfEnabled?.('[Perf][KeepAlive][Audio] resume-failed');
         });
       }
@@ -59,40 +62,5 @@ export function activateKeepAlive(): void {
     }
   } catch {
     // Noop.
-  }
-}
-
-export function isKeepAliveActive(): boolean {
-  return active;
-}
-
-export function deactivateKeepAlive(): void {
-  if (oscillator) {
-    try {
-      oscillator.stop();
-    } catch {
-      // already stopped
-    }
-    oscillator = null;
-  }
-  if (gainNode) {
-    try {
-      gainNode.disconnect();
-    } catch {
-      // already disconnected
-    }
-    gainNode = null;
-  }
-  if (audioCtx) {
-    try {
-      void audioCtx.close();
-    } catch {
-      // already closed
-    }
-    audioCtx = null;
-  }
-  if (active) {
-    active = false;
-    perfLogIfEnabled?.('[Perf][KeepAlive] deactivated');
   }
 }

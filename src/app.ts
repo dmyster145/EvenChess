@@ -32,7 +32,7 @@ import { EvenHubBridge } from './evenhub/bridge';
 import { setBackgroundState, onBackgroundRestore } from './storage/background-state';
 import { attachDebugCopyApi, debugLog, markRunStart } from './debug/logger';
 import { initBoardSnapshot } from './debug/board-snapshot';
-import { activateKeepAlive, isKeepAliveActive } from './utils/keep-alive';
+import { activateKeepAlive } from './utils/keep-alive';
 import { recordPerfDispatch } from './perf/dispatch-trace';
 import { createFlush } from './app/flush';
 import { createBranding } from './app/branding';
@@ -232,9 +232,7 @@ export async function initApp(): Promise<void> {
           setImageContainersActive: (v) => { imageContainersActive = v; },
         });
       }
-      if (!isKeepAliveActive()) {
-        activateKeepAlive();
-      }
+      activateKeepAlive(); // first input only; see utils/keep-alive.ts
 
       // Mic / pending suggestion must not survive a background. FOREGROUND_EXIT
       // still dispatches normally.

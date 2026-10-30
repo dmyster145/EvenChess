@@ -58,6 +58,31 @@ export function initPersistence(get: StorageGetter, set: StorageSetter): void {
   _set = set;
 }
 
+// --- Validation ---
+// Everything read back is untrusted (older builds, hand edits, a partly written value), so each
+// field is checked against its type and falls back to a default rather than entering state.
+
+const DIFFICULTIES: readonly DifficultyLevel[] = ['easy', 'casual', 'serious', 'custom'];
+
+function asDifficulty(value: unknown): DifficultyLevel {
+  return DIFFICULTIES.includes(value as DifficultyLevel) ? (value as DifficultyLevel) : 'casual';
+}
+
+function clampCustomSkill(value: number): number {
+  if (!Number.isFinite(value)) return CUSTOM_SKILL_LEVEL_DEFAULT;
+  return Math.min(CUSTOM_SKILL_LEVEL_MAX, Math.max(CUSTOM_SKILL_LEVEL_MIN, Math.round(value)));
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+/** Side to move, read from the FEN itself (the authority; a separate stored copy could disagree). */
+function sideToMoveFromFen(fen: string): 'w' | 'b' | null {
+  const side = fen.trim().split(/\s+/)[1];
+  return side === 'w' || side === 'b' ? side : null;
+}
+
 // --- Public API ---
 
 export async function saveDifficulty(difficulty: DifficultyLevel): Promise<void> {
@@ -65,11 +90,7 @@ export async function saveDifficulty(difficulty: DifficultyLevel): Promise<void>
 }
 
 export async function loadDifficulty(): Promise<DifficultyLevel> {
-  const value = await _get(DIFFICULTY_KEY);
-  if (value === 'easy' || value === 'casual' || value === 'serious' || value === 'custom') {
-    return value;
-  }
-  return 'casual';
+  return asDifficulty(await _get(DIFFICULTY_KEY));
 }
 
 export async function saveCustomSkillLevel(level: number): Promise<void> {
@@ -79,11 +100,7 @@ export async function saveCustomSkillLevel(level: number): Promise<void> {
 export async function loadCustomSkillLevel(): Promise<number> {
   const raw = await _get(CUSTOM_SKILL_KEY);
   if (raw == null) return CUSTOM_SKILL_LEVEL_DEFAULT;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return CUSTOM_SKILL_LEVEL_DEFAULT;
-  if (parsed < CUSTOM_SKILL_LEVEL_MIN) return CUSTOM_SKILL_LEVEL_MIN;
-  if (parsed > CUSTOM_SKILL_LEVEL_MAX) return CUSTOM_SKILL_LEVEL_MAX;
-  return parsed;
+  return clampCustomSkill(Number.parseInt(raw, 10));
 }
 
 export async function saveBoardMarkers(showBoardMarkers: boolean): Promise<void> {
@@ -101,7 +118,7 @@ export async function saveBoardAlignment(boardAlignment: BoardAlignment): Promis
 
 export async function loadBoardAlignment(): Promise<BoardAlignment> {
   const value = await _get(ALIGNMENT_KEY);
-  return (value as BoardAlignment | null) ?? 'right';
+  return value === 'center' ? 'center' : 'right';
 }
 
 export async function saveBoardSize(boardSize: BoardSize): Promise<void> {
@@ -110,7 +127,7 @@ export async function saveBoardSize(boardSize: BoardSize): Promise<void> {
 
 export async function loadBoardSize(): Promise<BoardSize> {
   const value = await _get(SIZE_KEY);
-  return (value as BoardSize | null) ?? 'small';
+  return value === 'large' ? 'large' : 'small';
 }
 
 export async function saveBoardPosition(boardPosition: BoardPosition): Promise<void> {
@@ -152,15 +169,22 @@ export async function loadGame(): Promise<SavedGame | null> {
   try {
     const raw = await _get(GAME_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as SavedGame;
-    if (typeof parsed.fen !== 'string' || !Array.isArray(parsed.history)) {
+    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
+    const fen = parsed?.fen;
+    const turn = typeof fen === 'string' ? sideToMoveFromFen(fen) : null;
+    if (!parsed || typeof fen !== 'string' || !turn || !isStringArray(parsed.history)) {
       console.warn('[Persistence] Invalid save data, ignoring');
       return null;
     }
-    if (!parsed.difficulty) {
-      parsed.difficulty = 'casual';
-    }
-    return parsed;
+    return {
+      fen,
+      history: parsed.history,
+      turn,
+      difficulty: asDifficulty(parsed.difficulty),
+      customSkillLevel: typeof parsed.customSkillLevel === 'number' ? clampCustomSkill(parsed.customSkillLevel) : undefined,
+      playerColor: parsed.playerColor === 'w' || parsed.playerColor === 'b' ? parsed.playerColor : undefined,
+      savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+    };
   } catch (err) {
     console.error('[Persistence] Failed to load game:', err);
     return null;

@@ -477,9 +477,12 @@ export class EvenHubBridge {
 
   /**
    * Hard reset for the image transport. Invalidates any in-flight runImageSender so its abandoned
-   * `await updateImageRawData` becomes a no-op when the SDK Promise eventually settles. Drops
-   * pending image payloads and resets the bleChain so subsequent SDK calls don't queue behind a
-   * possibly-hung previous call. Used by recovery code.
+   * `await updateImageRawData` becomes a no-op when the SDK Promise eventually settles, and drops
+   * pending image payloads. Used by recovery code.
+   *
+   * The bleChain is deliberately left alone: replacing it would let new SDK calls start while
+   * calls queued on the old chain are still running, breaking the one-call-at-a-time rule. A hung
+   * call doesn't block the chain forever anyway; serializeBleCall's per-call timeout releases it.
    */
   forceResetImageTransport(reason: string): void {
     debugLog('forceResetImageTransport', { reason }, 'BRG');
@@ -488,7 +491,6 @@ export class EvenHubBridge {
     this.cleared = false;
     this.pendingImageByContainer.clear();
     this.consecutiveImageSendFailures = 0;
-    this.bleChain = Promise.resolve();
   }
 
   /**

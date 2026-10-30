@@ -396,26 +396,27 @@ describe('EvenHubBridge', () => {
     expect(failures).toHaveLength(0);
   });
 
-  it('forceResetImageTransport invalidates a stuck sender so a fresh runner can start', async () => {
+  it('forceResetImageTransport supersedes a stuck sender without letting SDK calls overlap', async () => {
     bridge.updateImage(2, 'top', makeImagePayload(2, 'STUCK'));
     await flushMicrotasks();
     expect(fake.imageCalls).toHaveLength(1);
 
-    // Don't resolve the in-flight send. Force-reset the bridge — the prior sender's
-    // `await updateImageRawData` is still pending but is now invalidated by the bumped
-    // runner sequence. A new updateImage starts a fresh sender.
+    // Force-reset while the send is in flight. The superseded runner's pending await becomes a
+    // no-op, and a new updateImage starts a fresh sender, but its SDK call still waits its turn
+    // on the shared chain: two SDK calls must never be in flight at once.
     bridge.forceResetImageTransport('test');
     bridge.updateImage(2, 'top', makeImagePayload(2, 'FRESH'));
+    await flushMicrotasks();
+    expect(fake.imageCalls).toHaveLength(1);
+
+    fake.resolveNextImage(); // the stuck call settles (or would time out)
     await flushMicrotasks();
     expect(fake.imageCalls).toHaveLength(2);
     expect(fake.imageCalls[1]?.payload.imageData).toBe('FRESH');
 
-    // Resolve the abandoned in-flight call; it shouldn't trigger any further activity (the
-    // superseded runner returns early instead of looping).
-    fake.resolveNextImage();
+    fake.resolveNextImage(); // settle FRESH; the superseded runner must not loop and resend
     await flushMicrotasks();
     expect(fake.imageCalls).toHaveLength(2);
-    fake.resolveNextImage(); // settle the FRESH send
   });
 
   it('updatePage waits for the image sender to drain before issuing rebuildPageContainer', async () => {

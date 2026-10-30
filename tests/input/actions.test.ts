@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mapListEvent, mapTextEvent, mapSysEvent, mapEvenHubEvent, resetScrollDebounce, resetTapCooldown, resetScrollSuppression, resetInputDedup } from '../../src/input/actions';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mapListEvent, mapTextEvent, mapSysEvent, mapEvenHubEvent, resetScrollDebounce, resetTapCooldown, resetScrollSuppression, resetInputDedup, extendTapCooldown, TAP_COOLDOWN_MENU_MS } from '../../src/input/actions';
 import { OsEventTypeList, List_ItemEvent, Text_ItemEvent, Sys_ItemEvent, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 import { buildInitialState } from '../../src/state/contracts';
 import { ChessService } from '../../src/chess/chessservice';
@@ -176,6 +176,64 @@ describe('input/actions', () => {
 
     it('returns null for an event with no list, text, or sys payload', () => {
       expect(mapEvenHubEvent({} as EvenHubEvent, idle)).toBeNull();
+    });
+  });
+
+  describe('timing filters (one physical gesture = one action)', () => {
+    let now = 1_000_000;
+    const at = (ms: number) => { now = 1_000_000 + ms; };
+    const rowSelect = { ...idle, phase: 'rowSelect' as const };
+    const sys = (eventType: OsEventTypeList) => new Sys_ItemEvent({ eventType });
+
+    beforeEach(() => {
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      at(0);
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('during selection, a same-direction scroll within 500ms is the tail of one swipe', () => {
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), rowSelect)).toEqual({ type: 'SCROLL', direction: 'down' });
+      at(100);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), rowSelect)).toBeNull();
+      at(600);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), rowSelect)).toEqual({ type: 'SCROLL', direction: 'down' });
+    });
+
+    it('outside selection, the same-direction window is short', () => {
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), idle)).not.toBeNull();
+      at(100);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), idle)).not.toBeNull();
+    });
+
+    it('a scroll within 150ms of a tap is ring bleed and is dropped', () => {
+      expect(mapSysEvent(sys(OsEventTypeList.CLICK_EVENT), idle)?.type).toBe('TAP');
+      at(100);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), idle)).toBeNull();
+      at(200);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), idle)).not.toBeNull();
+    });
+
+    it('a scroll dropped after a tap does not block the next real swipe', () => {
+      expect(mapSysEvent(sys(OsEventTypeList.CLICK_EVENT), rowSelect)?.type).toBe('TAP');
+      at(100);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), rowSelect)).toBeNull(); // bleed
+      at(300);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), rowSelect)).toEqual({ type: 'SCROLL', direction: 'down' });
+    });
+
+    it('taps are ignored during an extended cooldown (e.g. just after opening the menu)', () => {
+      extendTapCooldown(TAP_COOLDOWN_MENU_MS);
+      expect(mapSysEvent(sys(OsEventTypeList.CLICK_EVENT), idle)).toBeNull();
+      at(TAP_COOLDOWN_MENU_MS + 10);
+      expect(mapSysEvent(sys(OsEventTypeList.CLICK_EVENT), idle)?.type).toBe('TAP');
+    });
+
+    it('the sys channel (R1 ring) maps scroll directions like the list and text channels', () => {
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_TOP_EVENT), idle)).toEqual({ type: 'SCROLL', direction: 'down' });
+      at(1000);
+      expect(mapSysEvent(sys(OsEventTypeList.SCROLL_BOTTOM_EVENT), idle)).toEqual({ type: 'SCROLL', direction: 'up' });
     });
   });
 });
