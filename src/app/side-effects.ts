@@ -108,12 +108,15 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
       if (state.difficulty !== prevState.difficulty) {
         void saveDifficulty(state.difficulty);
       }
-      if (state.customSkillLevel !== prevState.customSkillLevel) {
-        void saveCustomSkillLevel(state.customSkillLevel);
-      }
       if (state.history.length > 0) {
         void saveGame(state.fen, state.history, state.turn, state.difficulty, state.playerColor, state.customSkillLevel);
       }
+    }
+
+    // Saved whenever it changes, not only while on 'custom': the picker adjusts the level before
+    // the commit tap switches the tier, so a tier-only check would miss the picked value.
+    if (state.customSkillLevel !== prevState.customSkillLevel) {
+      void saveCustomSkillLevel(state.customSkillLevel);
     }
 
     if (state.playAs !== prevState.playAs) {

@@ -139,10 +139,15 @@ export function parseVoiceCommand(transcript: string): VoiceIntent {
       const src = squares[squares.length - 2]!;
       intent.fromFile = fileToIndex(src.file);
       intent.fromRank = src.rank;
-    } else if (loneFiles.length > 0) {
-      // "e takes d5" / "rook e to e8" → first lone file is the source file.
-      const lf = toks[loneFiles[0]!] as { k: 'file'; v: string };
-      intent.fromFile = fileToIndex(lf.v);
+    } else {
+      // "e takes d5" / "rook e to e8" → first lone file is the source file. One spoken before the
+      // piece name is not ("a knight to c3" — "a" is the article, also a file word), since the
+      // source file always follows the piece.
+      const srcAt = loneFiles.find((at) => intent.piece === undefined || at > leadingPieceIdx);
+      if (srcAt !== undefined) {
+        const lf = toks[srcAt] as { k: 'file'; v: string };
+        intent.fromFile = fileToIndex(lf.v);
+      }
     }
   }
 

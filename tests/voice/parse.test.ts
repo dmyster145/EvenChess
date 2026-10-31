@@ -28,6 +28,15 @@ describe('parseVoiceCommand', () => {
     });
   });
 
+  it('ignores a leading article "a" (a file word) before the piece name', () => {
+    expect(parseVoiceCommand('a knight to c three')).toEqual({ piece: 'n', to: 'c3' });
+    expect(parseVoiceCommand('a rook e to e eight')).toEqual({ piece: 'r', fromFile: 4, to: 'e8' });
+  });
+
+  it('keeps a source file spoken before a trailing promotion piece ("e takes d8 queen")', () => {
+    expect(parseVoiceCommand('e takes d eight queen')).toEqual({ fromFile: 4, to: 'd8', promotion: 'q', isCapture: true });
+  });
+
   it('parses full disambiguation "knight b1 to c3"', () => {
     expect(parseVoiceCommand('knight b1 to c3')).toEqual({
       piece: 'n',

@@ -4,7 +4,7 @@ import { createStore } from '../../src/state/store';
 import type { GameState } from '../../src/state/contracts';
 import { ChessService } from '../../src/chess/chessservice';
 import { BoardRenderer } from '../../src/render/boardimage';
-import { MENU_INDEX, PLAY_AS_OPTIONS, RESET_CONFIRM_INDEX } from '../../src/state/constants';
+import { DIFFICULTY_OPTIONS, MENU_INDEX, PLAY_AS_OPTIONS, RESET_CONFIRM_INDEX } from '../../src/state/constants';
 import { getEngineProfile } from '../../src/engine/profiles';
 import * as persistence from '../../src/storage/persistence';
 import { baseGameState } from '../helpers/game-state';
@@ -171,6 +171,15 @@ describe('side-effects: settings persistence', () => {
     sideEffects.onStateChange({ ...before, customSkillLevel: 7 }, before);
     expect(savesMade()).toEqual({ saveCustomSkillLevel: [[7]] });
     expect(engineProfiles).toEqual([getEngineProfile('custom', 7)]);
+  });
+
+  it('picking a Custom level from a named tier saves both the tier and the picked level', () => {
+    const { store } = setup({ difficulty: 'casual', customSkillLevel: 5, phase: 'difficultySelect', menuSelectedIndex: DIFFICULTY_OPTIONS.indexOf('custom') });
+    store.dispatch({ type: 'TAP' });                       // open the level picker
+    store.dispatch({ type: 'SCROLL', direction: 'down' }); // level 5 → 4
+    store.dispatch({ type: 'TAP' });                       // commit Custom
+    expect(store.getState()).toMatchObject({ difficulty: 'custom', customSkillLevel: 4 });
+    expect(savesMade()).toEqual({ saveCustomSkillLevel: [[4]], saveDifficulty: [['custom']] });
   });
 
   it('a difficulty change reconfigures the engine with the new tier', () => {

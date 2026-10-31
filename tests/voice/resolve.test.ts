@@ -70,6 +70,11 @@ describe('resolveVoiceMove', () => {
     expect(r).toMatchObject({ kind: 'move', move: { from: 'b1', to: 'c3' } });
   });
 
+  it('a leading article "a" does not restrict the move to the a-file', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('a knight to c three'), mkState([knightB1, pawnE2]));
+    expect(r).toEqual({ kind: 'move', move: knightB1.moves[0] });
+  });
+
   it('resolves ambiguity on one file with the source rank ("rook a one to a four")', () => {
     // Both rooks stand on the a-file, so only the spoken rank tells them apart.
     const rookA1: PieceEntry = {
