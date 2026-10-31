@@ -42,6 +42,8 @@ export type BackgroundSnapshot = {
   mode?: GameMode;
   timers?: GameState['timers'];
   selectedTimeControlIndex?: number;
+  /** Optional (added later): the result of a finished game, so a restore still shows it. */
+  gameOver?: string | null;
 };
 
 export function buildBackgroundSnapshot(s: GameState): BackgroundSnapshot {
@@ -61,6 +63,7 @@ export function buildBackgroundSnapshot(s: GameState): BackgroundSnapshot {
     mode: s.mode,
     timers: s.timers,
     selectedTimeControlIndex: s.selectedTimeControlIndex,
+    gameOver: s.gameOver,
   };
 }
 
@@ -77,10 +80,24 @@ function isTimers(value: unknown): value is NonNullable<GameState['timers']> {
 }
 
 /**
+ * The result of a finished game: the snapshot's own when it has one, else worked out from the
+ * board (mate or draw) or a bullet clock at zero, for snapshots written before gameOver was kept.
+ */
+function restoredGameOver(snap: Partial<BackgroundSnapshot>, chess: ChessService, timers: GameState['timers']): string | null {
+  if (typeof snap.gameOver === 'string' && snap.gameOver) return snap.gameOver;
+  const reason = chess.getGameOverReason();
+  if (reason) return reason;
+  if (timers?.whiteMs === 0) return 'Black wins on time!';
+  if (timers?.blackMs === 0) return 'White wins on time!';
+  return null;
+}
+
+/**
  * Rebuild a GameState from a snapshot, loading its position into `chess`. Returns null when the
  * snapshot is missing, from another version, or has an unloadable position (the caller keeps the
  * current state). The game resumes at idle with the bullet clock stopped; it restarts when the
- * player begins their next move, so time spent migrating is never charged.
+ * player begins their next move, so time spent migrating is never charged. A finished game comes
+ * back finished, with its result, rather than as a dead board or a live game again.
  */
 export function restoreFromBackgroundSnapshot(saved: unknown, chess: ChessService): GameState | null {
   const snap = saved as Partial<BackgroundSnapshot> | undefined;
@@ -112,5 +129,6 @@ export function restoreFromBackgroundSnapshot(saved: unknown, chess: ChessServic
     timerActive: false,
     lastTickTime: null,
     selectedTimeControlIndex: snap.selectedTimeControlIndex ?? fresh.selectedTimeControlIndex,
+    gameOver: restoredGameOver(snap, chess, timers),
   };
 }

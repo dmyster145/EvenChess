@@ -64,6 +64,32 @@ describe('background snapshot', () => {
     expect(after!.timers).toBeUndefined();
   });
 
+  it('a game in progress restores with no result', () => {
+    expect(restoreFromBackgroundSnapshot(buildBackgroundSnapshot(midGameBullet()), new ChessService())!.gameOver).toBeNull();
+  });
+
+  it('a finished game keeps its result through the round trip', () => {
+    const before = { ...midGameBullet(), gameOver: 'Draw by agreement (test)' };
+    expect(restoreFromBackgroundSnapshot(buildBackgroundSnapshot(before), new ChessService())!.gameOver).toBe('Draw by agreement (test)');
+  });
+
+  // Snapshots written before gameOver was kept: the result is worked out instead of coming back
+  // as a dead board (mate) or a live game (flag fall).
+  it('an older snapshot of a mated position comes back as checkmate', () => {
+    const chess = new ChessService();
+    for (const [f, t] of [['f2', 'f3'], ['e7', 'e5'], ['g2', 'g4'], ['d8', 'h4']] as const) chess.makeMove(f, t);
+    const snap = { ...buildBackgroundSnapshot({ ...midGameBullet(), fen: chess.getFen(), turn: 'w' as const }), gameOver: undefined };
+    expect(restoreFromBackgroundSnapshot(snap, new ChessService())!.gameOver).toBe('checkmate');
+  });
+
+  it.each([
+    [{ whiteMs: 0, blackMs: 5000, incrementMs: 0 }, 'Black wins on time!'],
+    [{ whiteMs: 5000, blackMs: 0, incrementMs: 0 }, 'White wins on time!'],
+  ])('an older bullet snapshot with a clock at zero comes back lost on time', (timers, result) => {
+    const snap = { ...buildBackgroundSnapshot({ ...midGameBullet(), timers }), gameOver: undefined };
+    expect(restoreFromBackgroundSnapshot(snap, new ChessService())!.gameOver).toBe(result);
+  });
+
   it.each([
     ['nothing', undefined],
     ['another version', { ...buildBackgroundSnapshot(midGameBullet()), version: BACKGROUND_STATE_VERSION + 1 }],

@@ -99,6 +99,7 @@ function setup(initial: Partial<GameState> = {}, chess = new ChessService()) {
       flushNow: () => {},
     },
     rendererRef: { current: new BoardRenderer() },
+    voice: { cancel: () => { log.push('voice.cancel'); } },
   } as unknown as SideEffectsDeps;
   const sideEffects = createSideEffects(deps);
   store.subscribe((s, prev) => {
@@ -108,6 +109,17 @@ function setup(initial: Partial<GameState> = {}, chess = new ChessService()) {
   const count = (entry: string): number => log.filter((e) => e === entry).length;
   return { store, chess, log, count, engineProfiles, sideEffects, rendererRef: deps.rendererRef };
 }
+
+describe('side-effects: voice at game end', () => {
+  it('a game ending stops any voice session once; a game in progress leaves it alone', () => {
+    const { store, count } = setup();
+    store.dispatch({ type: 'SCROLL', direction: 'down' });
+    expect(count('voice.cancel')).toBe(0);
+    store.dispatch({ type: 'GAME_OVER', reason: 'checkmate' });
+    store.dispatch({ type: 'TIMER_TICK' }); // dropped by the gameOver gate: no second cancel
+    expect(count('voice.cancel')).toBe(1);
+  });
+});
 
 describe('side-effects: system exit request', () => {
   it('tapping Exit opens the system dialog once and schedules no screen updates while it is up', () => {
@@ -180,6 +192,25 @@ describe('side-effects: settings persistence', () => {
     store.dispatch({ type: 'TAP' });                       // commit Custom
     expect(store.getState()).toMatchObject({ difficulty: 'custom', customSkillLevel: 4 });
     expect(savesMade()).toEqual({ saveCustomSkillLevel: [[4]], saveDifficulty: [['custom']] });
+  });
+
+  it('backing out of the Custom picker saves nothing and leaves the engine alone', () => {
+    const { store, engineProfiles } = setup({ difficulty: 'custom', customSkillLevel: 5, phase: 'difficultySelect', menuSelectedIndex: DIFFICULTY_OPTIONS.indexOf('custom') });
+    store.dispatch({ type: 'TAP' });                       // open the level picker
+    store.dispatch({ type: 'SCROLL', direction: 'down' }); // browse to 4
+    store.dispatch({ type: 'DOUBLE_TAP' });                // back out: cancel
+    expect(store.getState()).toMatchObject({ difficulty: 'custom', customSkillLevel: 5 });
+    expect(savesMade()).toEqual({});
+    expect(engineProfiles).toEqual([]);
+  });
+
+  it('a level picked while Custom is already active is saved and reconfigures the engine', () => {
+    const { store, engineProfiles } = setup({ difficulty: 'custom', customSkillLevel: 5, phase: 'difficultySelect', menuSelectedIndex: DIFFICULTY_OPTIONS.indexOf('custom') });
+    store.dispatch({ type: 'TAP' });
+    store.dispatch({ type: 'SCROLL', direction: 'down' });
+    store.dispatch({ type: 'TAP' });
+    expect(savesMade()).toEqual({ saveCustomSkillLevel: [[4]] });
+    expect(engineProfiles).toEqual([getEngineProfile('custom', 4)]);
   });
 
   it('a difficulty change reconfigures the engine with the new tier', () => {

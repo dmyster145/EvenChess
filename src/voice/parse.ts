@@ -46,12 +46,24 @@ function tokenize(transcript: string): string[] {
     .filter((w) => w.length > 0 && !FILLER_WORDS.has(w));
 }
 
+const isCastleWord = (w: string | undefined): boolean => w === 'castle' || w === 'castles';
+
 function detectCastle(words: string[]): 'k' | 'q' | undefined {
-  if (!words.some((w) => w === 'castle' || w === 'castles')) return undefined;
+  if (!words.some(isCastleWord)) return undefined;
   if (words.some((w) => w === 'queenside' || w === 'long')) return 'q';
   if (words.some((w) => w === 'kingside' || w === 'short')) return 'k';
-  // "castle queen side" / "castle king side" (the recognizer's grammar spells them as two words)
-  const ci = words.findIndex((w) => w === 'castle' || w === 'castles');
+  // "queen side castle" / "castle king side" (the recognizer's grammar spells them as two words):
+  // 'queen'/'king' count on either side of 'castle' when they read as a side, i.e. followed by
+  // 'side' or right next to 'castle'.
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w !== 'queen' && w !== 'king') continue;
+    if (words[i + 1] === 'side' || isCastleWord(words[i + 1]) || isCastleWord(words[i - 1])) {
+      return w === 'queen' ? 'q' : 'k';
+    }
+  }
+  // Otherwise only a side word after 'castle' counts ("castle on the queen ...").
+  const ci = words.findIndex(isCastleWord);
   const rest = words.slice(ci + 1);
   if (rest.includes('queen')) return 'q';
   if (rest.includes('king')) return 'k';
@@ -142,8 +154,12 @@ export function parseVoiceCommand(transcript: string): VoiceIntent {
     } else {
       // "e takes d5" / "rook e to e8" → first lone file is the source file. One spoken before the
       // piece name is not ("a knight to c3" — "a" is the article, also a file word), since the
-      // source file always follows the piece.
-      const srcAt = loneFiles.find((at) => intent.piece === undefined || at > leadingPieceIdx);
+      // source file always follows the piece. Nor is one directly before a piece name ("knight
+      // takes a pawn on d5", "takes the bishop"): that is an article, never a source file.
+      const srcAt = loneFiles.find(
+        (at) =>
+          (intent.piece === undefined || at > leadingPieceIdx) && toks[at + 1]?.k !== 'piece',
+      );
       if (srcAt !== undefined) {
         const lf = toks[srcAt] as { k: 'file'; v: string };
         intent.fromFile = fileToIndex(lf.v);

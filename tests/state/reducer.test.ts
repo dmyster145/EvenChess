@@ -618,18 +618,28 @@ describe('reducer', () => {
     });
 
     it('scrolling adjusts the picker without wrap; clamps at bounds', () => {
-      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 8 });
+      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 2, menuSelectedIndex: 8 });
       // Settings phase: scroll direction is inverted; 'up' = next = higher level.
       const next = reduce(state, { type: 'SCROLL', direction: 'up' });
-      expect(next.customSkillLevel).toBe(9);
+      expect(next.menuSelectedIndex).toBe(9);
       const clamped = reduce(next, { type: 'SCROLL', direction: 'up' });
-      expect(clamped.customSkillLevel).toBe(9); // clamps at MAX
+      expect(clamped.menuSelectedIndex).toBe(9); // clamps at MAX
       const back = reduce(clamped, { type: 'SCROLL', direction: 'down' });
-      expect(back.customSkillLevel).toBe(8);
+      expect(back.menuSelectedIndex).toBe(8);
+      expect(back.customSkillLevel).toBe(2); // nothing is applied until the tap
+      const low = createTestState({ phase: 'customDifficultySelect', menuSelectedIndex: 0 });
+      expect(reduce(low, { type: 'SCROLL', direction: 'down' }).menuSelectedIndex).toBe(0); // clamps at MIN
+    });
+
+    it('opening the picker starts it at the committed level', () => {
+      const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 3, customSkillLevel: 6 });
+      const next = reduce(state, { type: 'TAP' });
+      expect(next.phase).toBe('customDifficultySelect');
+      expect(next.menuSelectedIndex).toBe(6);
     });
 
     it('tapping in the picker commits Custom and returns to menu', () => {
-      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 7, difficulty: 'casual' });
+      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 2, menuSelectedIndex: 7, difficulty: 'casual' });
       const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('menu');
       expect(next.difficulty).toBe('custom');
@@ -637,11 +647,12 @@ describe('reducer', () => {
     });
 
     it('double-tap in the picker returns to difficultySelect with Custom highlighted', () => {
-      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 3 });
+      const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 3, menuSelectedIndex: 8, difficulty: 'custom' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('difficultySelect');
       expect(next.menuSelectedIndex).toBe(3); // Custom's index in DIFFICULTY_OPTIONS
-      expect(next.customSkillLevel).toBe(3); // picker value preserved
+      expect(next.customSkillLevel).toBe(3); // backing out cancels the picked 8
+      expect(next.difficulty).toBe('custom');
     });
   });
 
@@ -760,8 +771,9 @@ describe('reducer', () => {
 
   describe('starting a bullet game (tap a time control)', () => {
     it.each([0, 3])('time control %i sets both clocks and the increment, not yet running', (index) => {
-      const next = reduce(createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: index }), { type: 'TAP' });
+      const next = reduce(createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 2, menuSelectedIndex: index }), { type: 'TAP' });
       expect(next.phase).toBe('idle');
+      expect(next.selectedTimeControlIndex).toBe(index);
       expect(next.timers).toEqual({
         whiteMs: TIME_CONTROLS[index]!.initialMs,
         blackMs: TIME_CONTROLS[index]!.initialMs,
@@ -774,9 +786,27 @@ describe('reducer', () => {
   describe('bullet setup scroll and tap', () => {
     it('cycles time control options', () => {
       // Settings phase: scroll direction inverted; `up` advances forward.
-      const state = createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 0 });
+      const state = createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 4, menuSelectedIndex: 0 });
       const next = reduce(state, { type: 'SCROLL', direction: 'up' });
-      expect(next.selectedTimeControlIndex).toBe(1);
+      expect(next.menuSelectedIndex).toBe(1);
+      expect(next.selectedTimeControlIndex).toBe(4); // the cursor moves; the setting does not
+    });
+
+    it('opening the setup starts the cursor on the current time control', () => {
+      const state = createTestState({ phase: 'modeSelect', menuSelectedIndex: 1, selectedTimeControlIndex: 4 });
+      expect(reduce(state, { type: 'TAP' }).menuSelectedIndex).toBe(4);
+    });
+
+    it('backing out after scrolling leaves the next game on the old time control', () => {
+      let s = createTestState({ mode: 'bullet', phase: 'modeSelect', menuSelectedIndex: 1, selectedTimeControlIndex: 0 });
+      s = reduce(s, { type: 'TAP' }); // into bulletSetup
+      s = reduce(s, { type: 'SCROLL', direction: 'up' });
+      s = reduce(s, { type: 'DOUBLE_TAP' }); // back out
+      expect(s.phase).toBe('modeSelect');
+      expect(s.selectedTimeControlIndex).toBe(0);
+      const fresh = reduce({ ...s, gameOver: 'White wins on time!', phase: 'idle' }, { type: 'DOUBLE_TAP' });
+      expect(fresh.timers?.whiteMs).toBe(TIME_CONTROLS[0]!.initialMs);
+      expect(fresh.timers?.incrementMs).toBe(TIME_CONTROLS[0]!.incrementMs);
     });
   });
 
@@ -787,6 +817,45 @@ describe('reducer', () => {
 
     afterEach(() => {
       vi.useRealTimers();
+    });
+
+    // TIMER_TICK bills the time since the last tick to whoever is on move at the tick, so each
+    // turn change must settle the mover's time first.
+    it('an engine move charges the engine for the time since the last tick, not the human', () => {
+      const now = Date.now();
+      const state = createTestState({
+        mode: 'bullet', turn: 'b', playerColor: 'w', timerActive: true, lastTickTime: now - 450,
+        timers: { whiteMs: 10000, blackMs: 10000, incrementMs: 0 },
+      });
+      const moved = reduce(state, {
+        type: 'ENGINE_MOVE', uci: 'e7e5', san: 'e5', fen: state.fen, turn: 'w', pieces: state.pieces, inCheck: false,
+      });
+      expect(moved.timers).toEqual({ whiteMs: 10000, blackMs: 9550, incrementMs: 0 });
+      expect(moved.lastTickTime).toBe(now);
+      vi.advanceTimersByTime(50);
+      expect(reduce(moved, { type: 'TIMER_TICK' }).timers).toEqual({ whiteMs: 9950, blackMs: 9550, incrementMs: 0 });
+    });
+
+    it('the human\'s move (REFRESH to the engine\'s turn) charges the human', () => {
+      const now = Date.now();
+      const state = createTestState({
+        mode: 'bullet', turn: 'w', playerColor: 'w', timerActive: true, lastTickTime: now - 300,
+        timers: { whiteMs: 10000, blackMs: 10000, incrementMs: 0 },
+      });
+      const moved = reduce(state, { type: 'REFRESH', fen: state.fen, turn: 'b', pieces: state.pieces, inCheck: false });
+      expect(moved.timers).toEqual({ whiteMs: 9700, blackMs: 10000, incrementMs: 0 });
+      expect(moved.lastTickTime).toBe(now);
+    });
+
+    it('a REFRESH that keeps the same turn, or a stopped clock, settles nothing', () => {
+      const now = Date.now();
+      const running = createTestState({
+        turn: 'w', timerActive: true, lastTickTime: now - 300, timers: { whiteMs: 10000, blackMs: 10000, incrementMs: 0 },
+      });
+      const same = reduce(running, { type: 'REFRESH', fen: running.fen, turn: 'w', pieces: running.pieces, inCheck: false });
+      expect(same.timers).toEqual(running.timers);
+      const stopped = reduce({ ...running, timerActive: false }, { type: 'REFRESH', fen: running.fen, turn: 'b', pieces: running.pieces, inCheck: false });
+      expect(stopped.timers).toEqual(running.timers);
     });
 
     it('decrements active player time', () => {
@@ -860,7 +929,7 @@ describe('reducer', () => {
       expect(next.phase).toBe('coordinateDrill');
       expect(next.academyState).toBeDefined();
       expect(next.academyState!.drillType).toBe('coordinate');
-      expect(next.academyState!.targetSquare).toBeDefined();
+      expect(next.academyState!.targetSquare).toMatch(/^[a-h][1-8]$/);
       expect(next.academyState!.score).toEqual({ correct: 0, total: 0 });
     });
 
@@ -879,7 +948,7 @@ describe('reducer', () => {
       const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('tactics') }, { type: 'TAP' });
       
       expect(next.phase).toBe('tacticsDrill');
-      expect(next.academyState!.tacticsPuzzle).toBeDefined();
+      expect(TACTICS_PUZZLES).toContainEqual(next.academyState!.tacticsPuzzle); // from the tactics pool
     });
 
     it('starts mate drill', () => {
@@ -887,7 +956,7 @@ describe('reducer', () => {
       const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('mate') }, { type: 'TAP' });
       
       expect(next.phase).toBe('mateDrill');
-      expect(next.academyState!.tacticsPuzzle).toBeDefined();
+      expect(MATE_PUZZLES).toContainEqual(next.academyState!.tacticsPuzzle); // from the mate pool
     });
 
     it('starts pgn study', () => {
@@ -895,8 +964,7 @@ describe('reducer', () => {
       const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('pgn') }, { type: 'TAP' });
       
       expect(next.phase).toBe('pgnStudy');
-      expect(next.academyState!.pgnStudy).toBeDefined();
-      expect(next.academyState!.pgnStudy!.gameName).toBeDefined();
+      expect(FAMOUS_GAMES.map((g) => g.name)).toContain(next.academyState!.pgnStudy!.gameName);
     });
   });
 
@@ -912,6 +980,20 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'academySelect', menuSelectedIndex: 0 });
       const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('coordinateDrill');
+    });
+    it('backing out of a drill and closing the menu lands on the drill list, not the play board', () => {
+      // Menu opened from Play idle, so previousPhase is 'idle' until a drill starts.
+      let s = reduce(createTestState({ phase: 'idle' }), { type: 'DOUBLE_TAP' });
+      expect(s.phase).toBe('menu');
+      s = pickMenu(s, 'mode');
+      s = reduce({ ...s, menuSelectedIndex: MODE_OPTIONS.indexOf('academy') }, { type: 'TAP' });
+      s = reduce({ ...s, menuSelectedIndex: DRILL_OPTIONS.indexOf('coordinate') }, { type: 'TAP' });
+      expect(s.mode).toBe('academy');
+      for (const expected of ['academySelect', 'modeSelect', 'menu', 'academySelect'] as const) {
+        s = reduce(s, { type: 'DOUBLE_TAP' });
+        expect(s.phase).toBe(expected);
+      }
+      expect(s.mode).toBe('academy');
     });
   });
 

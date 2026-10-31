@@ -91,15 +91,25 @@ export function resolveVoiceMove(intent: VoiceIntent, state: GameState): Resolve
   const promo = candidates.filter((c) => c.move.promotion);
   const normal = candidates.filter((c) => !c.move.promotion);
 
+  // Spoken promotion piece for a follow-up hint ("" when the candidates are not promotions).
+  let promoWord = '';
   if (promo.length > 0 && (normal.length === 0 || intent.promotion)) {
-    if (!intent.promotion) {
-      // Each utterance is parsed on its own, so ask for the whole move again, not one word.
+    promoWord = ` ${PIECE_NAME[intent.promotion ?? 'q'].toLowerCase()}`;
+    // Two pawns promoting on one square: fall through to the ambiguity prompt below, which names
+    // both and suggests a command carrying the promotion piece.
+    if (!intent.promotion && new Set(promo.map((c) => c.piece.square)).size === 1) {
+      // Each utterance is parsed on its own, so ask for the whole move again, not one word. Name
+      // the source square if another pawn could also promote there, or "D8 queen" stays ambiguous.
+      const promoSources = new Set(
+        playerPieces.filter((p) => p.moves.some((m) => m.to === to && m.promotion)).map((p) => p.square),
+      );
+      const from = promoSources.size > 1 ? `${promo[0]!.piece.square.toUpperCase()} to ` : '';
       return {
         kind: 'needsPromotion',
-        message: `Promote to? Say e.g. "${to.toUpperCase()} queen"`,
+        message: `Promote to? Say e.g. "${from}${to.toUpperCase()} queen"`,
       };
     }
-    candidates = promo.filter((c) => c.move.promotion === intent.promotion);
+    candidates = intent.promotion ? promo.filter((c) => c.move.promotion === intent.promotion) : promo;
     if (candidates.length === 0) {
       return { kind: 'illegal', message: `Can't promote there` };
     }
@@ -114,7 +124,7 @@ export function resolveVoiceMove(intent: VoiceIntent, state: GameState): Resolve
     const list = sources.map((s) => s.toUpperCase()).join(' or ');
     // Ask for the whole move including its square, since a lone "B1" would be parsed as a
     // destination (and could match a different move).
-    const example = `${what === 'piece' ? '' : `${what.toLowerCase()} `}${sources[0]!.toUpperCase()} to ${to.toUpperCase()}`;
+    const example = `${what === 'piece' ? '' : `${what.toLowerCase()} `}${sources[0]!.toUpperCase()} to ${to.toUpperCase()}${promoWord}`;
     return { kind: 'ambiguous', message: `Which ${what}, ${list}? Say e.g. "${example}"` };
   }
 

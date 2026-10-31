@@ -24,6 +24,8 @@ export class TurnLoop {
   private requestSeq = 0;
   /** An engine move was requested while busy; run it once the current turn finishes. */
   private engineRequestQueued = false;
+  /** Engine start-up, shared by every caller; set by the first init() or engine turn. */
+  private ready: Promise<void> | null = null;
 
   constructor(chess: ChessService, store: Store, profile: EngineProfile, engine: ChessEngine = new StockfishBridge()) {
     this.chess = chess;
@@ -32,8 +34,14 @@ export class TurnLoop {
     this.engine = engine;
   }
 
-  async init(): Promise<void> {
-    await this.engine.init();
+  /**
+   * Start the engine once; later calls share the same start-up. Engine turns wait on it too: a
+   * background restore can ask for a move before app.ts calls init(), and an engine asked before
+   * it is ready answers with a random fallback move.
+   */
+  init(): Promise<void> {
+    this.ready ??= this.engine.init();
+    return this.ready;
   }
 
   setProfile(profile: EngineProfile): void {
@@ -147,6 +155,11 @@ export class TurnLoop {
 
     let bestMoveUci: string | null = null;
     try {
+      await this.init();
+      if (requestSeq !== this.requestSeq) {
+        this.clearEngineThinkingIfActive();
+        return;
+      }
       const fen = this.chess.getFen();
       bestMoveUci = await this.engine.getBestMove(fen, this.searchProfile());
       if (requestSeq !== this.requestSeq) {

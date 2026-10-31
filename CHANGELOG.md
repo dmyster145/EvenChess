@@ -19,10 +19,12 @@
   in this release was reverted.
 - **Help-page font is self-hosted**, so the app no longer requests the `network`
   permission. `g2-microphone` (voice moves) is the only permission.
-- The Custom difficulty picker shows where Easy, Casual, and Serious sit on its scale.
+- The Custom difficulty picker marks which level bands Easy, Casual, and Serious fall in.
 - The bullet clock starts on your first move action (scroll, tap, or voice), not only on
   a scroll.
 - Choosing Bullet or Academy and then backing out keeps the current game and clock.
+- **Custom difficulty and Bullet time-control pickers only apply on a tap.** Scrolling
+  browses; double-tapping out cancels and keeps the previous setting.
 
 ### Fixed
 
@@ -34,6 +36,17 @@
 - A finished or unreadable saved game starts a new game instead of a dead board.
 - You can no longer start selecting a move while the engine is thinking.
 - View Log scrolls through the whole game; PGN Study marks the move just played.
+- In Bullet, a flag fall while a voice move waited for its tap no longer locks the
+  game-over screen; double-tap starts a new game.
+- In Bullet, time is charged to the side that was thinking at each turn change, not to
+  whoever is on move at the next clock tick.
+- Closing the menu after leaving an Academy drill returns to the Academy list, not to a
+  play board stuck in Academy mode.
+- Returning from the background keeps a finished game's result, and no longer lets the
+  engine play a random move if it was asked to move before Stockfish had loaded.
+- The Custom difficulty picker fits on screen again ("8–9: Expert" was cut off).
+- Voice: "queen side castle" castles queenside; "knight takes a pawn on D5" works; when
+  two pawns can promote on one square, the prompts suggest a command that completes it.
 - Voice: a leading "a" ("a knight to C3") is ignored; "takes" prefers the capture;
   spoken promotions ("E8 queen") work when another piece can reach the square; a short
   pause no longer cuts a command off; a cancelled session can't leak into the next.

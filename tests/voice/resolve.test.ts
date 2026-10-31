@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveVoiceMove } from '../../src/voice/resolve';
+import { resolveVoiceMove, type ResolveResult } from '../../src/voice/resolve';
 import type { GameState, PieceEntry } from '../../src/state/contracts';
 import { parseVoiceCommand } from '../../src/voice/parse';
 import { ChessService } from '../../src/chess/chessservice';
@@ -174,6 +174,49 @@ describe('resolveVoiceMove', () => {
   });
 });
 
+describe('resolveVoiceMove: two pawns promoting on one square', () => {
+  // White pawns c7 and e7 can both capture the rook on d8 and promote; d7 is empty.
+  const twoPromoters = (): GameState =>
+    mkState(new ChessService('3r3k/2P1P3/8/8/8/8/8/4K3 w - - 0 1').getPiecesWithMoves());
+
+  /** Pull the suggested command out of a prompt and feed it back, as the user would. */
+  const followHint = (r: ResolveResult) => {
+    const hint = 'message' in r ? /Say e\.g\. "([^"]+)"/.exec(r.message)?.[1] : undefined;
+    expect(hint).toBeDefined();
+    return resolveVoiceMove(parseVoiceCommand(hint!), twoPromoters());
+  };
+
+  it('needsPromotion after a source file keeps the source in its hint', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('c takes d eight'), twoPromoters());
+    expect(r).toEqual({ kind: 'needsPromotion', message: 'Promote to? Say e.g. "C7 to D8 queen"' });
+    expect(followHint(r)).toMatchObject({ kind: 'move', move: { from: 'c7', to: 'd8', promotion: 'q' } });
+  });
+
+  it('a promotion piece without a source asks which pawn and keeps the piece in its hint', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('d eight queen'), twoPromoters());
+    expect(r).toEqual({ kind: 'ambiguous', message: 'Which piece, C7 or E7? Say e.g. "C7 to D8 queen"' });
+    expect(followHint(r)).toMatchObject({ kind: 'move', move: { from: 'c7', to: 'd8', promotion: 'q' } });
+  });
+
+  it('a bare destination asks which pawn with a hint that completes the move', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('d eight'), twoPromoters());
+    expect(r.kind).toBe('ambiguous');
+    expect(followHint(r)).toMatchObject({ kind: 'move', move: { to: 'd8', promotion: 'q' } });
+  });
+
+  it('a full source square without a promotion piece gets a hint that completes the move', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('c seven to d eight'), twoPromoters());
+    expect(r).toEqual({ kind: 'needsPromotion', message: 'Promote to? Say e.g. "C7 to D8 queen"' });
+    expect(followHint(r)).toMatchObject({ kind: 'move', move: { from: 'c7', to: 'd8', promotion: 'q' } });
+  });
+
+  it('"pawn d8 queen" names the pawn in its hint, which still resolves', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('pawn takes d eight queen'), twoPromoters());
+    expect(r).toEqual({ kind: 'ambiguous', message: 'Which Pawn, C7 or E7? Say e.g. "pawn C7 to D8 queen"' });
+    expect(followHint(r)).toMatchObject({ kind: 'move', move: { from: 'c7', to: 'd8', promotion: 'q' } });
+  });
+});
+
 describe('resolveVoiceMove: "takes"', () => {
   // White pawn e5 can take d5 en passant on d6, and the knight on c4 can move quietly to d6.
   const enPassant = (): GameState => {
@@ -188,6 +231,13 @@ describe('resolveVoiceMove: "takes"', () => {
   it('"takes" picks the en passant capture over the quiet knight move', () => {
     const r = resolveVoiceMove(parseVoiceCommand('takes d6'), enPassant());
     expect(r).toMatchObject({ kind: 'move', move: { from: 'e5', to: 'd6', san: 'exd6' } });
+  });
+
+  it('an article before the captured piece does not restrict the source file', () => {
+    // Knight on c3 takes the pawn on d5; "a" must not be read as "from the a-file".
+    const pieces = new ChessService('4k3/8/8/3p4/8/2N5/8/4K3 w - - 0 1').getPiecesWithMoves();
+    const r = resolveVoiceMove(parseVoiceCommand('knight takes a pawn on d five'), mkState(pieces));
+    expect(r).toMatchObject({ kind: 'move', move: { from: 'c3', to: 'd5', san: 'Nxd5' } });
   });
 
   it('a misheard "takes" with no capture available still finds the move', () => {

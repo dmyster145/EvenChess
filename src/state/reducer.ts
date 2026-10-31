@@ -78,6 +78,16 @@ function bulletClockReset(state: GameState): Partial<GameState> {
 }
 
 /**
+ * Voice UI with any listening flag or parked move dropped. Used when a game ends or restarts: the
+ * gameOver gate drops VOICE_ABORT, so a move left parked here could never be cleared.
+ */
+function clearedVoice(state: GameState): Pick<GameState, 'voice'> {
+  return state.voice
+    ? { voice: { listening: false, status: null, statusExpiresAt: null, pendingConfirm: null } }
+    : {};
+}
+
+/**
  * The one definition of "start a new game" in state: used by NEW_GAME, by double-tap after game
  * over, and by starting a Bullet game. The chess board itself is reset by side-effects.ts.
  */
@@ -103,6 +113,7 @@ function startFreshGame(state: GameState): GameState {
     pendingPlayAs: null,
     bulletPausedForMenu: false,
     ...bulletClockReset(state),
+    ...clearedVoice(state),
   };
 }
 
@@ -117,6 +128,7 @@ function endGame(state: GameState, reason: string): GameState {
     selectedMoveIndex: 0,
     pendingPromotionMove: null,
     selectedPromotionIndex: 0,
+    ...clearedVoice(state),
   };
 }
 
@@ -201,6 +213,7 @@ export function reduce(state: GameState, action: Action): GameState {
     case 'REFRESH':
       return {
         ...state,
+        ...settleClockOnTurnChange(state, action.turn),
         fen: action.fen,
         turn: action.turn,
         pieces: action.pieces,
@@ -394,12 +407,14 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     }
 
     case 'customDifficultySelect': {
-      // Picker bounds are clamped — no wraparound, so 9 + down stays at 9.
+      // The level being picked is menuSelectedIndex; customSkillLevel changes only on the commit
+      // tap, so backing out cancels. Clamped, no wraparound: 9 + down stays at 9.
       // Inversion is already applied above via INVERTED_SCROLL_PHASES; here 'down' = next = higher number.
+      const level = state.menuSelectedIndex;
       const next = d === 'down'
-        ? Math.min(CUSTOM_SKILL_LEVEL_MAX, state.customSkillLevel + 1)
-        : Math.max(CUSTOM_SKILL_LEVEL_MIN, state.customSkillLevel - 1);
-      return next === state.customSkillLevel ? state : { ...state, customSkillLevel: next };
+        ? Math.min(CUSTOM_SKILL_LEVEL_MAX, level + 1)
+        : Math.max(CUSTOM_SKILL_LEVEL_MIN, level - 1);
+      return next === level ? state : { ...state, menuSelectedIndex: next };
     }
 
     case 'displayOptionsSelect': {
@@ -446,12 +461,14 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     }
 
     case 'bulletSetup': {
-      const idx = state.selectedTimeControlIndex;
+      // The cursor is menuSelectedIndex; selectedTimeControlIndex changes only when a tap starts
+      // the game, so backing out leaves the next game's clock as it was.
+      const idx = state.menuSelectedIndex;
       const next =
         d === 'down'
           ? (idx + 1) % TIME_CONTROL_COUNT
           : (idx - 1 + TIME_CONTROL_COUNT) % TIME_CONTROL_COUNT;
-      return { ...state, selectedTimeControlIndex: next };
+      return { ...state, menuSelectedIndex: next };
     }
 
     case 'academySelect': {
@@ -664,6 +681,7 @@ function handleTap(state: GameState): GameState {
         return {
           ...state,
           phase: 'customDifficultySelect',
+          menuSelectedIndex: state.customSkillLevel,
         };
       }
       return {
@@ -675,10 +693,11 @@ function handleTap(state: GameState): GameState {
     }
 
     case 'customDifficultySelect': {
-      // Tap commits the current picker value as the active difficulty.
+      // Tap commits the picked level and makes Custom the active difficulty.
       return {
         ...state,
         difficulty: 'custom',
+        customSkillLevel: state.menuSelectedIndex,
         phase: 'menu',
         menuSelectedIndex: MENU_INDEX.difficulty,
       };
@@ -724,7 +743,7 @@ function handleTap(state: GameState): GameState {
     }
 
     case 'bulletSetup':
-      return handleStartBulletGame(state, state.selectedTimeControlIndex);
+      return handleStartBulletGame(state, state.menuSelectedIndex);
 
     case 'academySelect': {
       const selectedDrill = DRILL_OPTIONS[state.menuSelectedIndex] ?? 'coordinate';
@@ -806,7 +825,7 @@ function handleDoubleTap(state: GameState): GameState {
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.difficulty };
 
     case 'customDifficultySelect':
-      // Back out to the tier selector with Custom highlighted so the user can re-pick.
+      // Back out (cancel) to the tier selector with Custom highlighted; the picked level is dropped.
       return {
         ...state,
         phase: 'difficultySelect',
@@ -862,6 +881,7 @@ function handleEngineMove(
   const newHistory = [...state.history, action.san];
   return {
     ...state,
+    ...settleClockOnTurnChange(state, action.turn),
     phase: 'idle',
     fen: action.fen,
     turn: action.turn,
@@ -970,7 +990,8 @@ function handleCloseMenu(state: GameState): GameState {
     state.previousPhase !== null && GAME_PHASES.has(state.previousPhase);
   return {
     ...state,
-    phase: state.previousPhase ?? 'idle',
+    // With nothing to return to, Academy's home is its drill list, not the play board.
+    phase: state.previousPhase ?? (state.mode === 'academy' ? 'academySelect' : 'idle'),
     menuSelectedIndex: 0,
     previousPhase: null,
     bulletPausedForMenu: false,
@@ -1062,7 +1083,7 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
       };
 
     case 'bullet':
-      return { ...state, phase: 'bulletSetup' };
+      return { ...state, phase: 'bulletSetup', menuSelectedIndex: state.selectedTimeControlIndex };
 
     case 'academy':
       return { ...state, phase: 'academySelect', menuSelectedIndex: 0 };
@@ -1074,6 +1095,23 @@ function handleSetMode(state: GameState, mode: GameMode): GameState {
 
 function handleStartBulletGame(state: GameState, timeControlIndex: number): GameState {
   return startFreshGame({ ...state, mode: 'bullet', selectedTimeControlIndex: timeControlIndex });
+}
+
+/**
+ * When the turn passes, charge the time since the last tick to the side that just moved and
+ * restart the tick from now. Without this, the next TIMER_TICK (every 500 ms) would bill that
+ * whole span to the side now on move. A mover who ran out within the span is left at 0 rather
+ * than flagged: the move is already on the board, and the next tick on their turn flags them.
+ */
+function settleClockOnTurnChange(state: GameState, nextTurn: 'w' | 'b'): Partial<GameState> {
+  if (!state.timerActive || !state.timers || nextTurn === state.turn) return {};
+  const now = Date.now();
+  const elapsed = state.lastTickTime ? now - state.lastTickTime : 0;
+  const key = state.turn === 'w' ? 'whiteMs' : 'blackMs';
+  return {
+    timers: { ...state.timers, [key]: Math.max(0, state.timers[key] - elapsed) },
+    lastTickTime: now,
+  };
 }
 
 function handleTimerTick(state: GameState): GameState {
@@ -1126,12 +1164,15 @@ function handleStartDrill(prev: GameState, drillType: DrillType): GameState {
   };
 
   // Starting a drill is what commits Academy mode (see handleSetMode); any bullet clock stops.
+  // The game phase the menu was opened from no longer applies, so closing the menu later must
+  // not return to it.
   const state: GameState = {
     ...prev,
     mode: 'academy',
     timers: undefined,
     timerActive: false,
     bulletPausedForMenu: false,
+    previousPhase: null,
     logScrollOffset: 0,
   };
 

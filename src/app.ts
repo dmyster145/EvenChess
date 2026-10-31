@@ -123,6 +123,8 @@ export async function initApp(): Promise<void> {
     autosave,
     deviceFlags,
   });
+  // Push-to-talk voice move input. Model is bundled (offline); see public/vosk/.
+  const voice = createVoiceController({ store, bridge, modelUrl: '/vosk/model.tar.gz' });
   const sideEffects = createSideEffects({
     store,
     chess,
@@ -133,9 +135,8 @@ export async function initApp(): Promise<void> {
     bulletTimer,
     autosave,
     rendererRef,
+    voice,
   });
-  // Push-to-talk voice move input. Model is bundled (offline); see public/vosk/.
-  const voice = createVoiceController({ store, bridge, modelUrl: '/vosk/model.tar.gz' });
 
   // Background-state shim: the host carries this snapshot across its headless-WebView migration
   // (see app/background-snapshot.ts for what is kept and why).

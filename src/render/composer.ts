@@ -39,8 +39,8 @@ const CONTAINER_NAME_BRAND = 'brand';
 const CONTAINER_NAME_INPUT = 'input';
 
 // The brand container is repurposed as the captured-pieces strip directly above the
-// board: full board width, occupying the ~44px gap above the board. It still also
-// renders the brand mark and the CHECK!/CHECKMATE! banner.
+// board: full board width, occupying the ~44px gap above the board. It also shows the
+// CHECK!/CHECKMATE! banner in place of the strip.
 const BRAND_WIDTH = 200;
 const BRAND_HEIGHT = 40;
 
@@ -240,8 +240,8 @@ function buildContainers(state: GameState): ContainerSet {
 
   // Brand container, repurposed as the captured-pieces strip directly above the board:
   // same x/width as the board, filling the gap between the top of the display and the
-  // board. Renders the brand mark + captured silhouettes (and the CHECK!/CHECKMATE!
-  // banner). Only placed when the gap can fit it.
+  // board. Renders the captured silhouettes (or the CHECK!/CHECKMATE! banner). Only
+  // placed when the gap can fit it.
   if (boardTopY >= BRAND_HEIGHT + 2) {
     imageObjects.push(
       new ImageContainerProperty({

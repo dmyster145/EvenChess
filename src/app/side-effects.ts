@@ -21,6 +21,7 @@ import type { FlushController } from './flush';
 import type { BrandingController } from './branding';
 import type { BulletTimerController } from './bullet-timer';
 import type { AutosaveController } from './autosave';
+import type { VoiceController } from '../voice/controller';
 import { saveGame, saveDifficulty, saveCustomSkillLevel, saveBoardMarkers, saveBoardSize, saveBoardAlignment, saveBoardPosition, savePlayAs, clearSave } from '../storage/persistence';
 import { resolvePlayerColor, GAME_PHASES, MENU_PHASES, SUBMENU_PHASES } from '../state/utils';
 import { getEngineProfile } from '../engine/profiles';
@@ -39,6 +40,7 @@ export interface SideEffectsDeps {
   autosave: AutosaveController;
   /** Mutable container so a boardSize change can swap the renderer instance the flush uses. */
   rendererRef: { current: BoardRenderer };
+  voice: Pick<VoiceController, 'cancel'>;
 }
 
 export type SideEffectsController = {
@@ -62,6 +64,10 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
   }
 
   function onStateChange(state: GameState, prevState: GameState): void {
+    // The game ended (mate, draw, flag fall) mid-listen: stop the mic so a late result can't
+    // land on the next game.
+    if (state.gameOver && !prevState.gameOver) deps.voice.cancel();
+
     const expiresAt = state.voice?.statusExpiresAt ?? null;
     if (expiresAt !== (prevState.voice?.statusExpiresAt ?? null)) {
       scheduleVoiceStatusExpiry(expiresAt);
@@ -113,8 +119,8 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
       }
     }
 
-    // Saved whenever it changes, not only while on 'custom': the picker adjusts the level before
-    // the commit tap switches the tier, so a tier-only check would miss the picked value.
+    // Saved whenever it changes. The picker's commit tap sets it, possibly along with the tier, so
+    // a tier-only check would miss a new level picked while Custom was already active.
     if (state.customSkillLevel !== prevState.customSkillLevel) {
       void saveCustomSkillLevel(state.customSkillLevel);
     }

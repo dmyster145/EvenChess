@@ -23,7 +23,7 @@ import {
   getSelectedRow,
   getCapturedDisplay,
 } from '../../src/state/selectors';
-import { MENU_INDEX } from '../../src/state/constants';
+import { MENU_INDEX, TIME_CONTROLS } from '../../src/state/constants';
 import type { GameState, PieceEntry } from '../../src/state/contracts';
 import { baseGameState } from '../helpers/game-state';
 import { EASY, CASUAL, SERIOUS, nearestCustomLevel, buildCustomEngineProfile } from '../../src/engine/profiles';
@@ -642,6 +642,12 @@ describe('selectors', () => {
       expect(text).toContain('5+0');
       expect(text).toContain('5+5');
     });
+
+    it('marks the cursor, not the committed time control', () => {
+      const text = getBulletSetupDisplayText(createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 0, menuSelectedIndex: 3 }));
+      const marked = text.split('\n').filter((l) => l.startsWith('> '));
+      expect(marked).toEqual([`> ${TIME_CONTROLS[3]!.label}`]);
+    });
   });
 
   // ── Academy Select Display Text Tests ───────────────────────────────────────
@@ -915,14 +921,29 @@ describe('selectors', () => {
 
   describe('Custom difficulty picker', () => {
     it('marks where Easy, Casual, and Serious sit, from the real engine settings', () => {
-      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', customSkillLevel: 5 }));
-      expect(text).toContain(`Easy≈${nearestCustomLevel(EASY)}`);
-      expect(text).toContain(`Casual≈${nearestCustomLevel(CASUAL)}`);
-      expect(text).toContain(`Serious≈${nearestCustomLevel(SERIOUS)}`);
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', menuSelectedIndex: 5 }));
+      const bandOf = (level: number) => {
+        const lo = level - (level % 2);
+        return text.split('\n').find((l) => l.startsWith(`  ${lo}–${lo + 1}:`)) ?? '';
+      };
+      expect(bandOf(nearestCustomLevel(EASY))).toMatch(/\(.*Easy.*\)/);
+      expect(bandOf(nearestCustomLevel(CASUAL))).toMatch(/\(.*Casual.*\)/);
+      expect(bandOf(nearestCustomLevel(SERIOUS))).toMatch(/\(.*Serious.*\)/);
+    });
+
+    it('fits in nine lines, so the last band stays on screen', () => {
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', menuSelectedIndex: 5 }));
+      expect(text.split('\n')).toHaveLength(9);
+      expect(text.split('\n').at(-1)).toMatch(/^ {2}8–9: Expert/);
+    });
+
+    it('shows the level being picked, not the committed one', () => {
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', customSkillLevel: 2, menuSelectedIndex: 6 }));
+      expect(text).toContain('Level: ◀ 6 ▶');
     });
 
     it('does not reuse the tier names as band labels', () => {
-      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', customSkillLevel: 5 }));
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', menuSelectedIndex: 5 }));
       expect(text).not.toMatch(/\d–\d: (Easy|Casual|Serious)/);
     });
   });
@@ -1094,17 +1115,18 @@ describe('selectors', () => {
     });
 
     it('customDifficultySelect shows the level between arrows and the tier guide', () => {
-      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', customSkillLevel: 7 }));
+      // Tier placement here assumes the shipped profiles (Easy≈1, Casual≈2, Serious≈7); the test
+      // above checks it against whatever the profiles compute.
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', menuSelectedIndex: 7 }));
       expect(text).toBe([
         '',
         'CUSTOM DIFFICULTY',
         '  Level: ◀ 7 ▶   (0–9)',
         '  Tap to confirm',
-        `  Easy≈${nearestCustomLevel(EASY)} Casual≈${nearestCustomLevel(CASUAL)} Serious≈${nearestCustomLevel(SERIOUS)}`,
-        '  0–1: Beginner',
-        '  2–3: Novice',
+        '  0–1: Beginner (Easy)',
+        '  2–3: Novice (Casual)',
         '  4–5: Club player',
-        '  6–7: Strong',
+        '  6–7: Strong (Serious)',
         '  8–9: Expert',
       ].join('\n'));
     });

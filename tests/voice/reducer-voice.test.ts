@@ -115,4 +115,33 @@ describe('reducer — voice actions', () => {
     expect(reduce(over, { type: 'VOICE_LISTEN_START' }).voice).toBeUndefined();
     expect(reduce(over, { type: 'VOICE_MOVE_CANDIDATE', move }).voice).toBeUndefined();
   });
+
+  // The gameOver gate drops VOICE_ABORT, and app.ts routes a double-tap to abort while a move is
+  // parked, so a parked move that outlived the game would swallow every "new game" double-tap.
+  it('a Bullet flag fall drops a parked voice move, so double-tap starts a new game', () => {
+    const now = Date.now();
+    const parked = reduce(createState({
+      mode: 'bullet', timerActive: true, lastTickTime: now - 2000,
+      timers: { whiteMs: 1000, blackMs: 60000, incrementMs: 0 },
+    }), { type: 'VOICE_MOVE_CANDIDATE', move });
+    expect(parked.voice?.pendingConfirm).toEqual(move);
+
+    const flagged = reduce(parked, { type: 'TIMER_TICK' });
+    expect(flagged.gameOver).toBeTruthy();
+    expect(flagged.voice).toEqual({ listening: false, status: null, statusExpiresAt: null, pendingConfirm: null });
+
+    const fresh = reduce(flagged, { type: 'DOUBLE_TAP' });
+    expect(fresh.gameOver).toBeNull();
+  });
+
+  it('a game ending mid-listen clears the listening flag', () => {
+    const listening = reduce(createState(), { type: 'VOICE_LISTEN_START' });
+    const over = reduce(listening, { type: 'GAME_OVER', reason: 'Draw' });
+    expect(over.voice?.listening).toBe(false);
+  });
+
+  it('a new game drops a parked voice move from the old one', () => {
+    const parked = reduce(createState(), { type: 'VOICE_MOVE_CANDIDATE', move });
+    expect(reduce(parked, { type: 'NEW_GAME' }).voice?.pendingConfirm).toBeNull();
+  });
 });

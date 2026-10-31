@@ -103,6 +103,24 @@ describe('parseVoiceCommand', () => {
     expect(parseVoiceCommand('castle queen side')).toEqual({ castle: 'q' });
   });
 
+  it('parses castling with the side spoken before "castle" ("queen side castle")', () => {
+    expect(parseVoiceCommand('queen side castle')).toEqual({ castle: 'q' });
+    expect(parseVoiceCommand('king side castle')).toEqual({ castle: 'k' });
+    expect(parseVoiceCommand('queen castle')).toEqual({ castle: 'q' });
+    expect(parseVoiceCommand('queenside castle')).toEqual({ castle: 'q' });
+    expect(parseVoiceCommand('long castle')).toEqual({ castle: 'q' });
+    expect(parseVoiceCommand('castle')).toEqual({ castle: 'k' });
+  });
+
+  it('ignores an article directly before a captured piece\'s name ("takes a pawn on d5")', () => {
+    expect(parseVoiceCommand('knight takes a pawn on d5')).toEqual({ piece: 'n', to: 'd5', isCapture: true });
+    expect(parseVoiceCommand('bishop takes the knight on f six')).toEqual({ piece: 'b', to: 'f6', isCapture: true });
+    // A real source file is still kept alongside the article.
+    expect(parseVoiceCommand('rook e takes a knight on e eight')).toEqual({
+      piece: 'r', fromFile: 4, to: 'e8', isCapture: true,
+    });
+  });
+
   it('parses transcripts made only of grammar words, as the live recognizer emits them', () => {
     expect(parseVoiceCommand('knight to charlie three')).toEqual({ piece: 'n', to: 'c3' });
     expect(parseVoiceCommand('pawn e eight queen')).toEqual({ piece: 'p', to: 'e8', promotion: 'q' });

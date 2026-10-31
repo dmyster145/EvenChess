@@ -3,7 +3,7 @@
  * Uses mocked localStorage for testing (default browser adapter).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import {
   saveGame,
   loadGame,
@@ -49,6 +49,8 @@ describe('persistence', () => {
 
   describe('saveGame / loadGame', () => {
     it('saves and loads game state', async () => {
+      vi.useFakeTimers({ now: 1_700_000_000_000, toFake: ['Date'] });
+      onTestFinished(() => { vi.useRealTimers(); });
       await saveGame('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1', ['e4'], 'b', 'casual');
       const loaded = await loadGame();
       expect(loaded).not.toBeNull();
@@ -56,7 +58,7 @@ describe('persistence', () => {
       expect(loaded!.history).toEqual(['e4']);
       expect(loaded!.turn).toBe('b');
       expect(loaded!.difficulty).toBe('casual');
-      expect(loaded!.savedAt).toBeDefined();
+      expect(loaded!.savedAt).toBe(1_700_000_000_000);
     });
 
     it('saves with default difficulty', async () => {

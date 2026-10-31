@@ -286,18 +286,31 @@ export function getDifficultyDisplayText(state: GameState): string {
   return lines.join('\n');
 }
 
+/** Two-level bands of the Custom scale, by their lower level. */
+const CUSTOM_LEVEL_BANDS: ReadonlyArray<[number, string]> = [
+  [0, 'Beginner'],
+  [2, 'Novice'],
+  [4, 'Club player'],
+  [6, 'Strong'],
+  [8, 'Expert'],
+];
+
 function getCustomDifficultyDisplayText(state: GameState): string {
-  const level = state.customSkillLevel;
+  const level = state.menuSelectedIndex; // the level being picked, committed on tap
   const lines: string[] = ['', 'CUSTOM DIFFICULTY'];
   lines.push(`  Level: ${ARROW_LEFT} ${level} ${ARROW_RIGHT}   (0–9)`);
   lines.push('  Tap to confirm');
-  // Where the named tiers sit on this scale, computed from the engine settings themselves.
-  lines.push(`  Easy≈${nearestCustomLevel(EASY)} Casual≈${nearestCustomLevel(CASUAL)} Serious≈${nearestCustomLevel(SERIOUS)}`);
-  lines.push('  0–1: Beginner');
-  lines.push('  2–3: Novice');
-  lines.push('  4–5: Club player');
-  lines.push('  6–7: Strong');
-  lines.push('  8–9: Expert');
+  // Each band names the tiers that sit in it, computed from the engine settings themselves. A
+  // separate tier line wrapped on the glasses and pushed the last band off the screen.
+  const tiers: Array<[string, number]> = [
+    ['Easy', nearestCustomLevel(EASY)],
+    ['Casual', nearestCustomLevel(CASUAL)],
+    ['Serious', nearestCustomLevel(SERIOUS)],
+  ];
+  for (const [lo, name] of CUSTOM_LEVEL_BANDS) {
+    const inBand = tiers.filter(([, l]) => l === lo || l === lo + 1).map(([t]) => t);
+    lines.push(`  ${lo}–${lo + 1}: ${name}${inBand.length ? ` (${inBand.join(', ')})` : ''}`);
+  }
 
   return lines.join('\n');
 }
@@ -420,7 +433,7 @@ export function getBulletSetupDisplayText(state: GameState): string {
   lines.push('Select time control:');
 
   TIME_CONTROLS.forEach((tc, i) => {
-    const prefix = i === state.selectedTimeControlIndex ? '> ' : '  ';
+    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
     lines.push(`${prefix}${tc.label}`);
   });
 

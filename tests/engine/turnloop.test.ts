@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import { TurnLoop, type ChessEngine } from '../../src/engine/turnloop';
 import { ChessService } from '../../src/chess/chessservice';
 import { createStore } from '../../src/state/store';
@@ -33,6 +33,24 @@ afterEach(() => {
 });
 
 describe('TurnLoop', () => {
+  it('an engine turn asked for before start-up waits for the engine instead of searching early', async () => {
+    const { engine, loop } = setup({ playerColor: 'b' });
+    let finishInit!: () => void;
+    let inits = 0;
+    engine.init = () => { inits += 1; return new Promise<void>((r) => { finishInit = r; }); };
+
+    void loop.requestEngineMove();            // e.g. a background restore on the engine's turn
+    await settle();
+    expect(engine.calls).toHaveLength(0);     // no search against an engine that isn't up
+    const appInit = loop.init();              // app.ts's own init() joins the same start-up
+    expect(inits).toBe(1);
+
+    finishInit();
+    await appInit;
+    await settle();
+    expect(engine.calls).toHaveLength(1);
+  });
+
   it('credits the bullet increment to the engine\'s own color when the engine plays White', async () => {
     const timers = { whiteMs: 60000, blackMs: 60000, incrementMs: 2000 };
     const { store, engine, loop } = setup({ mode: 'bullet', playerColor: 'b', timers, timerActive: true, lastTickTime: Date.now() });
@@ -46,18 +64,22 @@ describe('TurnLoop', () => {
   });
 
   it('a request made while a search is in flight stops it and runs afterwards (not dropped)', async () => {
-    const { engine, loop } = setup({ playerColor: 'b' });
+    const { store, engine, loop } = setup({ playerColor: 'b' });
     const first = loop.requestEngineMove();
     await settle();
     expect(engine.calls).toHaveLength(1);
 
-    void loop.requestEngineMove();            // e.g. a new game started mid-search
+    const second = loop.requestEngineMove();  // e.g. a new game started mid-search
     expect(engine.stops).toBe(1);             // the stale search is told to stop
 
     engine.calls[0]!.answer('e2e4');          // stale answer arrives…
     await first;
     await settle();
+    expect(store.getState().history).toEqual([]); // …is not played, even though it is still legal…
     expect(engine.calls).toHaveLength(2);     // …and the queued request searches again
+    engine.calls[1]!.answer('d2d4');
+    await second;
+    expect(store.getState().history).toEqual(['d4']);
   });
 
   it('in Bullet, caps the search time from the engine\'s remaining clock', async () => {
@@ -112,6 +134,9 @@ describe('TurnLoop', () => {
 
   it('in Bullet with the human as White, each increment goes to the side that just moved', async () => {
     const timers = { whiteMs: 60000, blackMs: 60000, incrementMs: 2000 };
+    // Date is frozen so no time passes between turn changes; only the increments move the clocks.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => { vi.useRealTimers(); });
     const { store, engine, loop } = setup({ mode: 'bullet', playerColor: 'w', timers, timerActive: true, lastTickTime: Date.now() });
     const done = loop.onPlayerMoved({ uci: 'e2e4', san: 'e4', from: 'e2', to: 'e4' });
     await settle();
