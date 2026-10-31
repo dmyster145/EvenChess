@@ -9,7 +9,13 @@ import { baseGameState } from '../helpers/game-state';
 class FakeEngine implements VoiceEngine {
   sessions: Array<{ cb: RecognizerCallbacks; accepted: number; finalized: number; disposed: boolean }> = [];
   releases = 0;
-  async load(): Promise<void> {}
+  loads = 0;
+  /** Make load() reject, as when the model archive can't be fetched. */
+  failLoad = false;
+  async load(): Promise<void> {
+    this.loads += 1;
+    if (this.failLoad) throw new Error('model download failed');
+  }
   open(cb: RecognizerCallbacks): Recognizer {
     const s = { cb, accepted: 0, finalized: 0, disposed: false };
     this.sessions.push(s);
@@ -140,6 +146,120 @@ describe('voice controller', () => {
     expect(engine.last.disposed).toBe(true);
     expect(engine.releases).toBe(1);
     expect(store.getState().voice?.listening).toBe(false);
+  });
+
+  it('cancel while listening turns the mic off, disposes the recognizer and clears the status', async () => {
+    await startListening();
+    voice.cancel();
+    expect(bridge.calls).toEqual([true, false]);
+    expect(engine.last.disposed).toBe(true);
+    expect(voice.isListening()).toBe(false);
+    expect(store.getState().voice).toMatchObject({ listening: false, status: null });
+  });
+
+  it('finalizes once 900ms of silence follow speech, not earlier', async () => {
+    await startListening();
+    voice.feed(LOUD);
+    await vi.advanceTimersByTimeAsync(900);  // the 900ms poll sees exactly 900ms of silence
+    expect(engine.last.finalized).toBe(0);
+    await vi.advanceTimersByTimeAsync(150);  // next poll: 1050ms of silence
+    expect(engine.last.finalized).toBe(1);
+  });
+
+  it('with no speech at all, finalizes at the 7s cap and reports nothing heard 1.8s later', async () => {
+    await startListening();
+    await vi.advanceTimersByTimeAsync(6999);
+    expect(engine.last.finalized).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(engine.last.finalized).toBe(1);
+    await vi.advanceTimersByTimeAsync(1799);  // no result arrives…
+    expect(voice.isListening()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);     // …so the result timeout ends the session
+    expect(voice.isListening()).toBe(false);
+    expect(store.getState().voice?.status).toBe('Didn’t catch that');
+    expect(bridge.calls).toEqual([true, false]);
+  });
+
+  it('if the final result never arrives, the segments already heard are still resolved', async () => {
+    await startListening();
+    voice.feed(LOUD);
+    engine.last.cb.onResult('knight f three'); // a mid-utterance segment
+    await vi.advanceTimersByTimeAsync(1050);  // silence → finalize
+    expect(engine.last.finalized).toBe(1);
+    await vi.advanceTimersByTimeAsync(1800);  // RESULT_TIMEOUT_MS with no final segment
+    expect(store.getState().voice?.pendingConfirm?.san).toBe('Nf3');
+  });
+
+  it('cancels itself when the game stops accepting a move while listening', async () => {
+    await startListening();
+    store.dispatch({ type: 'ENGINE_THINKING' });
+    await vi.advanceTimersByTimeAsync(150);   // next endpoint poll
+    expect(voice.isListening()).toBe(false);
+    expect(engine.last.disposed).toBe(true);
+    expect(bridge.calls).toEqual([true, false]);
+  });
+
+  it('a mic that fails to start reports "Mic unavailable" and opens no recognizer', async () => {
+    bridge.holdNextStart();
+    expect(voice.start()).toBe(true);
+    bridge.finishStart(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(voice.isListening()).toBe(false);
+    expect(engine.sessions).toHaveLength(0);
+    expect(bridge.calls).toEqual([true, false]);
+    expect(store.getState().voice?.status).toBe('Mic unavailable');
+  });
+
+  it('confirm plays the parked move', () => {
+    voice.injectTranscript('knight f three');
+    expect(voice.hasPendingConfirm()).toBe(true);
+    voice.confirm();
+    expect(voice.hasPendingConfirm()).toBe(false);
+    expect(store.getState().pendingMove?.uci).toBe('g1f3');
+    expect(store.getState().history).toEqual(['Nf3']);
+  });
+
+  it('abort discards the parked move without playing it', () => {
+    voice.injectTranscript('knight f three');
+    expect(voice.hasPendingConfirm()).toBe(true);
+    voice.abort();
+    expect(voice.hasPendingConfirm()).toBe(false);
+    expect(store.getState().pendingMove).toBeNull();
+    expect(store.getState().history).toEqual([]);
+  });
+});
+
+describe('voice controller before the model is ready', () => {
+  it('a press before the model has loaded falls through to the carousel and starts the load', async () => {
+    vi.useFakeTimers();
+    const fresh = new FakeEngine();
+    const mic = makeBridge();
+    const v = createVoiceController({ store: createStore(baseGameState()), bridge: mic, modelUrl: 'unused', engine: fresh });
+    expect(v.start()).toBe(false);
+    expect(fresh.loads).toBe(1);
+    expect(mic.calls).toEqual([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(v.start()).toBe(true);             // loaded now
+  });
+
+  it('a failed model load disables voice for the session without retrying the download', async () => {
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const broken = new FakeEngine();
+      broken.failLoad = true;
+      const mic = makeBridge();
+      const v = createVoiceController({ store: createStore(baseGameState()), bridge: mic, modelUrl: 'unused', engine: broken });
+      v.warm();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(v.start()).toBe(false);
+      v.warm();
+      expect(v.start()).toBe(false);
+      expect(broken.loads).toBe(1);
+      expect(mic.calls).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });
 

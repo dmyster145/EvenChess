@@ -5,8 +5,30 @@ import {
   MODE_OPTIONS, MENU_OPTIONS, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX, DRILL_OPTIONS } from '../../src/state/constants';
 import { baseGameState } from '../helpers/game-state';
 import { ChessService } from '../../src/chess/chessservice';
+import { STARTING_FEN } from '../../src/chess/chessservice';
 import { indicesToSquare, squareToIndices } from '../../src/chess/square-utils';
-import { getKnightMoves } from '../../src/academy/knight';
+import { getKnightMoves, generateKnightPuzzle } from '../../src/academy/knight';
+import { getRandomTacticsPuzzle, getRandomMatePuzzle, TACTICS_PUZZLES, MATE_PUZZLES } from '../../src/academy/puzzles';
+import { getRandomFamousGame, FAMOUS_GAMES } from '../../src/academy/pgn';
+
+// The Academy's random picks pass through to the real functions unless a test queues a fixed
+// result with mockReturnValueOnce, so the "next puzzle" branches can assert exact values.
+vi.mock('../../src/academy/knight', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/academy/knight')>();
+  return { ...actual, generateKnightPuzzle: vi.fn(actual.generateKnightPuzzle) };
+});
+vi.mock('../../src/academy/puzzles', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/academy/puzzles')>();
+  return {
+    ...actual,
+    getRandomTacticsPuzzle: vi.fn(actual.getRandomTacticsPuzzle),
+    getRandomMatePuzzle: vi.fn(actual.getRandomMatePuzzle),
+  };
+});
+vi.mock('../../src/academy/pgn', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/academy/pgn')>();
+  return { ...actual, getRandomFamousGame: vi.fn(actual.getRandomFamousGame) };
+});
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -340,16 +362,102 @@ describe('reducer', () => {
       expect(next.history).toEqual(['e4', 'e5']);
       expect(next.pendingMove).toBeNull();
     });
+
+    it('stops the bullet clock at once when the engine move ends the game', () => {
+      const state = createTestState({
+        mode: 'bullet', engineThinking: true, turn: 'b', timerActive: true, lastTickTime: 1,
+        timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
+      });
+      const engineMove = (endsGame?: boolean): Action => ({
+        type: 'ENGINE_MOVE', uci: 'e7e5', san: 'e5', fen: 'fen', turn: 'w', pieces: [], inCheck: false, endsGame,
+      });
+      expect(reduce(state, engineMove(true)).timerActive).toBe(false);
+      expect(reduce(state, engineMove(false)).timerActive).toBe(true);
+    });
   });
 
   describe('GAME_OVER', () => {
-    it('blocks all actions except NEW_GAME', () => {
-      const state = createTestState({ gameOver: 'checkmate' });
-      const scrolled = reduce(state, { type: 'SCROLL', direction: 'down' });
-      expect(scrolled).toBe(state); // unchanged
+    it('the action ends the game: back to idle, engine idle, half-made selection cleared', () => {
+      const state = createTestState({
+        phase: 'promotionSelect', engineThinking: true, selectedPieceId: 'w-n-g1', selectedMoveIndex: 1,
+        pendingPromotionMove: { from: 'e7', to: 'e8' }, selectedPromotionIndex: 2,
+      });
+      const next = reduce(state, { type: 'GAME_OVER', reason: 'Checkmate' });
+      expect(next.gameOver).toBe('Checkmate');
+      expect(next.phase).toBe('idle');
+      expect(next.engineThinking).toBe(false);
+      expect(next.selectedPieceId).toBeNull();
+      expect(next.selectedMoveIndex).toBe(0);
+      expect(next.pendingPromotionMove).toBeNull();
+      expect(next.selectedPromotionIndex).toBe(0);
+    });
 
-      const newGame = reduce(state, { type: 'NEW_GAME' });
+    // Each of these would change this state if the game were still running.
+    const ignoredAfterGameOver: Action[] = [
+      { type: 'SCROLL', direction: 'down' },
+      { type: 'TAP' },
+      { type: 'TIMER_TICK' },
+      { type: 'APPLY_INCREMENT', color: 'w' },
+      { type: 'ENGINE_THINKING' },
+      { type: 'VOICE_LISTEN_START' },
+      { type: 'VOICE_STATUS', message: 'Hearing: knight' },
+    ];
+    it.each(ignoredAfterGameOver)('once the game is over, $type is ignored', (action) => {
+      const state = createTestState({
+        gameOver: 'Checkmate', mode: 'bullet', timerActive: true, lastTickTime: 1,
+        timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 2000 },
+      });
+      expect(reduce(state, action)).toBe(state);
+    });
+
+    it('NEW_GAME still starts a new game once the game is over', () => {
+      const newGame = reduce(createTestState({ gameOver: 'Checkmate' }), { type: 'NEW_GAME' });
       expect(newGame.gameOver).toBeNull();
+    });
+  });
+
+  describe('NEW_GAME', () => {
+    it('in Bullet mode, resets both clocks to the selected time control, stopped, and clears menu flags', () => {
+      const next = reduce(createTestState({
+        mode: 'bullet', selectedTimeControlIndex: 1, history: ['e4', 'e5'], timerActive: true, lastTickTime: 5,
+        timers: { whiteMs: 10, blackMs: 20, incrementMs: 0 },
+        pendingReset: true, pendingPlayAs: 'black', bulletPausedForMenu: true,
+      }), { type: 'NEW_GAME' });
+      expect(next.timers).toEqual({
+        whiteMs: TIME_CONTROLS[1]!.initialMs,
+        blackMs: TIME_CONTROLS[1]!.initialMs,
+        incrementMs: TIME_CONTROLS[1]!.incrementMs,
+      });
+      expect(next.timerActive).toBe(false);
+      expect(next.lastTickTime).toBeNull();
+      expect(next.history).toEqual([]);
+      expect(next.pendingReset).toBe(false);
+      expect(next.pendingPlayAs).toBeNull();
+      expect(next.bulletPausedForMenu).toBe(false);
+    });
+  });
+
+  describe('PLAYER_MOVE_SAN (the chess service\'s SAN for the move just played)', () => {
+    const played = { uci: 'g1f3', san: 'Nf3', from: 'g1', to: 'f3' };
+
+    it('corrects the last history entry, lastMove and the pending move', () => {
+      const state = createTestState({ history: ['e4', 'e5', 'Nf3'], lastMove: 'Nf3', pendingMove: played });
+      const next = reduce(state, { type: 'PLAYER_MOVE_SAN', san: 'Nf3+' });
+      expect(next.history).toEqual(['e4', 'e5', 'Nf3+']);
+      expect(next.lastMove).toBe('Nf3+');
+      expect(next.pendingMove).toEqual({ ...played, san: 'Nf3+' });
+    });
+
+    it('is a no-op when the SAN is already applied everywhere', () => {
+      const state = createTestState({ history: ['Nf3'], lastMove: 'Nf3', pendingMove: played });
+      expect(reduce(state, { type: 'PLAYER_MOVE_SAN', san: 'Nf3' })).toBe(state);
+    });
+
+    it('is a no-op with no pending move or an empty SAN', () => {
+      const idle = createTestState({ history: ['Nf3'], lastMove: 'Nf3', pendingMove: null });
+      expect(reduce(idle, { type: 'PLAYER_MOVE_SAN', san: 'Nf3+' })).toBe(idle);
+      const pending = createTestState({ history: ['Nf3'], lastMove: 'Nf3', pendingMove: played });
+      expect(reduce(pending, { type: 'PLAYER_MOVE_SAN', san: '' })).toBe(pending);
     });
   });
 
@@ -427,31 +535,6 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'menu' });
       const next = pickMenu(state, 'mode');
       expect(next.phase).toBe('modeSelect');
-    });
-
-    it('toggles board markers in place from the Display Options markers row', () => {
-      // Board Markers is a binary toggle under Display Options: tapping the row flips it and stays.
-      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 2, showBoardMarkers: true });
-      const next = reduce(state, { type: 'TAP' });
-      expect(next.showBoardMarkers).toBe(false);
-      expect(next.phase).toBe('displayOptionsSelect');
-      expect(next.menuSelectedIndex).toBe(2); // stays on the markers row
-    });
-
-    it('toggles alignment in place from the Display Options alignment row', () => {
-      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 0, boardAlignment: 'right' });
-      const next = reduce(state, { type: 'TAP' });
-      expect(next.boardAlignment).toBe('center');
-      expect(next.phase).toBe('displayOptionsSelect');
-      expect(next.menuSelectedIndex).toBe(0);
-    });
-
-    it('toggles size in place from the Display Options size row', () => {
-      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'small' });
-      const next = reduce(state, { type: 'TAP' });
-      expect(next.boardSize).toBe('large');
-      expect(next.phase).toBe('displayOptionsSelect');
-      expect(next.menuSelectedIndex).toBe(1);
     });
 
     it('navigates to viewLog on viewLog option', () => {
@@ -568,21 +651,28 @@ describe('reducer', () => {
       const off = reduce(on, { type: 'TAP' });
       expect(off.showBoardMarkers).toBe(false);
       expect(off.phase).toBe('displayOptionsSelect');
+      expect(off.menuSelectedIndex).toBe(2);
       // Toggling back on.
       const backOn = reduce(off, { type: 'TAP' });
       expect(backOn.showBoardMarkers).toBe(true);
     });
 
-    it('tapping the alignment row flips boardAlignment', () => {
-      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 0, boardAlignment: 'center' });
-      const next = reduce(state, { type: 'TAP' });
-      expect(next.boardAlignment).toBe('right');
+    it('tapping the alignment row flips boardAlignment both ways and stays put', () => {
+      const center = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 0, boardAlignment: 'center' });
+      const right = reduce(center, { type: 'TAP' });
+      expect(right.boardAlignment).toBe('right');
+      expect(right.phase).toBe('displayOptionsSelect');
+      expect(right.menuSelectedIndex).toBe(0);
+      expect(reduce(right, { type: 'TAP' }).boardAlignment).toBe('center');
     });
 
-    it('tapping the size row flips boardSize', () => {
-      const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'large' });
-      const next = reduce(state, { type: 'TAP' });
-      expect(next.boardSize).toBe('small');
+    it('tapping the size row flips boardSize both ways and stays put', () => {
+      const large = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'large' });
+      const small = reduce(large, { type: 'TAP' });
+      expect(small.boardSize).toBe('small');
+      expect(small.phase).toBe('displayOptionsSelect');
+      expect(small.menuSelectedIndex).toBe(1);
+      expect(reduce(small, { type: 'TAP' }).boardSize).toBe('large');
     });
 
     it('tapping the position row flips boardPosition and stays put', () => {
@@ -1104,6 +1194,31 @@ describe('reducer', () => {
       expect(next.history).toEqual(['e4']);
     });
 
+    it('RESTORE_STATE clears mid-menu flags so a snapshot cannot trigger a reset or a clock resume', () => {
+      const saved = createTestState({
+        phase: 'resetConfirm', pendingReset: true, pendingPlayAs: 'black', bulletPausedForMenu: true,
+      });
+      const next = reduce(createTestState(), { type: 'RESTORE_STATE', state: saved });
+      expect(next.phase).toBe('resetConfirm');
+      expect(next.pendingReset).toBe(false);
+      expect(next.pendingPlayAs).toBeNull();
+      expect(next.bulletPausedForMenu).toBe(false);
+    });
+
+    it('RESTORE_STATE times a running clock from now and leaves a stopped one without a tick time', () => {
+      const now = 1_000_000;
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        const timers = { whiteMs: 60000, blackMs: 60000, incrementMs: 0 };
+        const running = createTestState({ mode: 'bullet', timers, timerActive: true, lastTickTime: 5 });
+        expect(reduce(createTestState(), { type: 'RESTORE_STATE', state: running }).lastTickTime).toBe(now);
+        const stopped = createTestState({ mode: 'bullet', timers, timerActive: false, lastTickTime: 5 });
+        expect(reduce(createTestState(), { type: 'RESTORE_STATE', state: stopped }).lastTickTime).toBeNull();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
     it('returns from difficultySelect to menu', () => {
       const state = createTestState({ phase: 'difficultySelect' });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
@@ -1137,13 +1252,19 @@ describe('reducer', () => {
       expect(next.menuSelectedIndex).toBe(1); // ['white','black','random'] → black = 1
     });
 
-    it('scroll cycles the three options', () => {
-      const s0 = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 0 });
-      const s1 = reduce(s0, { type: 'SCROLL', direction: 'down' });
-      const s2 = reduce(s1, { type: 'SCROLL', direction: 'down' });
-      const s3 = reduce(s2, { type: 'SCROLL', direction: 'down' });
-      expect([s1.menuSelectedIndex, s2.menuSelectedIndex, s3.menuSelectedIndex].every((i) => i >= 0 && i < 3)).toBe(true);
-      expect(s3.menuSelectedIndex).toBe(s0.menuSelectedIndex); // 3 steps wraps a 3-option list
+    it('scroll steps through White, Black, Random in order and wraps both ways', () => {
+      // Settings phase: scroll direction inverted; `up` advances forward.
+      const indexesAfter = (direction: 'up' | 'down') => {
+        const seen: number[] = [];
+        let s = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 0 });
+        for (let i = 0; i < 3; i++) {
+          s = reduce(s, { type: 'SCROLL', direction });
+          seen.push(s.menuSelectedIndex);
+        }
+        return seen;
+      };
+      expect(indexesAfter('up')).toEqual([1, 2, 0]);
+      expect(indexesAfter('down')).toEqual([2, 1, 0]);
     });
 
     it('tap on a fresh board applies immediately (→ idle) and sets the preference', () => {
@@ -1308,28 +1429,40 @@ describe('reducer', () => {
   // ── Review batch B2 regressions ─────────────────────────────────────────────
 
   describe('bullet clock start (any way the player begins a move)', () => {
+    const NOW = 1_000_000;
+    beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(NOW); });
+    afterEach(() => { vi.restoreAllMocks(); });
+
     const bulletIdle = (over?: Partial<GameState>) => createTestState({
       mode: 'bullet', phase: 'idle', timerActive: false, lastTickTime: null,
       timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 }, ...over,
     });
 
-    it('starts on a scroll from idle', () => {
+    it('starts on a scroll from idle, timing from now', () => {
       const next = reduce(bulletIdle(), { type: 'SCROLL', direction: 'down' });
       expect(next.phase).toBe('rowSelect');
       expect(next.timerActive).toBe(true);
-      expect(next.lastTickTime).not.toBeNull();
+      expect(next.lastTickTime).toBe(NOW);
     });
 
-    it('starts on a tap from idle', () => {
+    it('starts on a tap from idle, timing from now', () => {
       const next = reduce(bulletIdle(), { type: 'TAP' });
       expect(next.phase).toBe('rowSelect');
       expect(next.timerActive).toBe(true);
+      expect(next.lastTickTime).toBe(NOW);
     });
 
-    it('starts when voice input starts', () => {
+    it('starts when voice input starts, timing from now', () => {
       const next = reduce(bulletIdle(), { type: 'VOICE_LISTEN_START' });
       expect(next.voice?.listening).toBe(true);
       expect(next.timerActive).toBe(true);
+      expect(next.lastTickTime).toBe(NOW);
+    });
+
+    it('a clock that is already running keeps its last tick time', () => {
+      const next = reduce(bulletIdle({ timerActive: true, lastTickTime: NOW - 400 }), { type: 'TAP' });
+      expect(next.timerActive).toBe(true);
+      expect(next.lastTickTime).toBe(NOW - 400);
     });
 
     it('does not start outside Bullet mode', () => {
@@ -1373,6 +1506,46 @@ describe('reducer', () => {
       s = reduce(s, { type: 'DOUBLE_TAP' });                          // close menu
       expect(s.phase).toBe('idle');
       expect(s.history).toEqual([]);
+      expect(s.timerActive).toBe(false);
+    });
+
+    it('opening the menu pauses a running clock; closing it resumes from now', () => {
+      const now = 1_000_000;
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        const running = { ...runningBullet(), lastTickTime: now - 5000 };
+        const menu = reduce(running, { type: 'DOUBLE_TAP' });
+        expect(menu.phase).toBe('menu');
+        expect(menu.timerActive).toBe(false);
+        expect(menu.bulletPausedForMenu).toBe(true);
+        expect(menu.timers).toEqual(running.timers);
+        const back = reduce(menu, { type: 'DOUBLE_TAP' });
+        expect(back.phase).toBe('idle');
+        expect(back.timerActive).toBe(true);
+        expect(back.lastTickTime).toBe(now); // the time spent in the menu is not charged
+        expect(back.bulletPausedForMenu).toBe(false);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('switching to Play vs AI from the paused menu clears the pause flag', () => {
+      let s = reduce(runningBullet(), { type: 'DOUBLE_TAP' });
+      expect(s.bulletPausedForMenu).toBe(true);
+      s = pickMenu(s, 'mode');
+      s = reduce({ ...s, menuSelectedIndex: MODE_OPTIONS.indexOf('play') }, { type: 'TAP' });
+      expect(s.mode).toBe('play');
+      expect(s.bulletPausedForMenu).toBe(false);
+      expect(s.timerActive).toBe(false);
+    });
+
+    it('starting an Academy drill from the paused menu clears the pause flag', () => {
+      let s = reduce(runningBullet(), { type: 'DOUBLE_TAP' });
+      s = pickMenu(s, 'mode');
+      s = reduce({ ...s, menuSelectedIndex: MODE_OPTIONS.indexOf('academy') }, { type: 'TAP' });
+      s = reduce({ ...s, menuSelectedIndex: DRILL_OPTIONS.indexOf('coordinate') }, { type: 'TAP' });
+      expect(s.phase).toBe('coordinateDrill');
+      expect(s.bulletPausedForMenu).toBe(false);
       expect(s.timerActive).toBe(false);
     });
 
@@ -1507,6 +1680,154 @@ describe('reducer', () => {
       s = reduce(s, { type: 'SCROLL', direction: 'down' });
       const cursor = indicesToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
       expect(cursor).toBe(getKnightMoves(s.academyState!.knightPath!.startSquare)[0]);
+    });
+  });
+
+  describe('Knight Path taps and scrolls', () => {
+    /** A Knight Path drill from b1 to e4 (two moves: b1-c3-e4), with the cursor on `cursor`. */
+    const knightDrill = (cursor: string, path: Partial<NonNullable<NonNullable<GameState['academyState']>['knightPath']>> = {}) => {
+      const [cursorFile, cursorRank] = squareToIndices(cursor);
+      return createTestState({
+        phase: 'knightPathDrill',
+        academyState: {
+          drillType: 'knightPath', score: { correct: 3, total: 5 }, cursorFile, cursorRank,
+          navAxis: 'file', feedback: 'none',
+          knightPath: {
+            startSquare: 'b1', targetSquare: 'e4', currentSquare: 'b1', optimalMoves: 2,
+            movesTaken: 0, path: ['b1'], ...path,
+          },
+        },
+      });
+    };
+    const cursorOf = (s: GameState) => indicesToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank);
+
+    it('a tap on a legal square moves the knight and puts the cursor on its first move from there', () => {
+      const next = reduce(knightDrill('c3'), { type: 'TAP' });
+      expect(next.academyState!.knightPath).toEqual({
+        startSquare: 'b1', targetSquare: 'e4', currentSquare: 'c3', optimalMoves: 2, movesTaken: 1, path: ['b1', 'c3'],
+      });
+      expect(cursorOf(next)).toBe(getKnightMoves('c3')[0]);
+      expect(next.academyState!.feedback).toBe('none');
+    });
+
+    it('a tap on a square the knight cannot reach does nothing', () => {
+      const state = knightDrill('b2');
+      expect(reduce(state, { type: 'TAP' })).toBe(state);
+    });
+
+    it('reaching the target in the optimal number of moves scores a correct answer', () => {
+      const next = reduce(knightDrill('e4', { currentSquare: 'c3', movesTaken: 1, path: ['b1', 'c3'] }), { type: 'TAP' });
+      expect(next.academyState!.feedback).toBe('correct');
+      expect(next.academyState!.score).toEqual({ correct: 4, total: 6 });
+      expect(next.academyState!.knightPath!.path).toEqual(['b1', 'c3', 'e4']);
+    });
+
+    it('reaching the target in more than the optimal moves scores it as incorrect', () => {
+      const next = reduce(knightDrill('e4', { currentSquare: 'c3', movesTaken: 3, path: ['b1', 'a3', 'b5', 'c3'] }), { type: 'TAP' });
+      expect(next.academyState!.feedback).toBe('incorrect');
+      expect(next.academyState!.score).toEqual({ correct: 3, total: 6 });
+    });
+
+    it('using optimal + 2 moves without reaching the target ends the puzzle as incorrect', () => {
+      // Optimal is 2; this is move 4 and a4 is not the target.
+      const next = reduce(knightDrill('a4', { currentSquare: 'c3', movesTaken: 3, path: ['b1', 'a3', 'b1', 'c3'] }), { type: 'TAP' });
+      expect(next.academyState!.feedback).toBe('incorrect');
+      expect(next.academyState!.score).toEqual({ correct: 3, total: 6 });
+      expect(next.academyState!.knightPath!.movesTaken).toBe(4);
+    });
+
+    it('a tap after feedback loads the next puzzle with the cursor on a legal first move', () => {
+      vi.mocked(generateKnightPuzzle).mockReturnValueOnce({ start: 'g1', target: 'g5', optimalMoves: 2 });
+      const done = knightDrill('e4');
+      const next = reduce({ ...done, academyState: { ...done.academyState!, feedback: 'correct' } }, { type: 'TAP' });
+      expect(next.academyState!.knightPath).toEqual({
+        startSquare: 'g1', targetSquare: 'g5', currentSquare: 'g1', optimalMoves: 2, movesTaken: 0, path: ['g1'],
+      });
+      expect(next.academyState!.feedback).toBe('none');
+      expect(cursorOf(next)).toBe(getKnightMoves('g1')[0]);
+      expect(next.academyState!.score).toEqual({ correct: 3, total: 5 }); // the score carries over
+    });
+
+    it('scrolling steps the cursor through the knight\'s legal moves and wraps', () => {
+      // From b1 the knight can reach a3, c3, d2 (in getKnightMoves order).
+      expect(getKnightMoves('b1')).toEqual(['a3', 'c3', 'd2']);
+      expect(cursorOf(reduce(knightDrill('a3'), { type: 'SCROLL', direction: 'down' }))).toBe('c3');
+      expect(cursorOf(reduce(knightDrill('d2'), { type: 'SCROLL', direction: 'down' }))).toBe('a3');
+      expect(cursorOf(reduce(knightDrill('a3'), { type: 'SCROLL', direction: 'up' }))).toBe('d2');
+    });
+  });
+
+  describe('Tactics and Mate taps', () => {
+    const puzzleDrill = (drillType: 'tactics' | 'mate', feedback: 'none' | 'correct') => createTestState({
+      phase: drillType === 'mate' ? 'mateDrill' : 'tacticsDrill',
+      academyState: {
+        drillType, score: { correct: 1, total: 4 }, cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback,
+        tacticsPuzzle: drillType === 'mate' ? MATE_PUZZLES[0]! : TACTICS_PUZZLES[0]!, tacticsSolutionIndex: 0,
+      },
+    });
+
+    it('the first tap reveals the answer and counts it toward the total only', () => {
+      const next = reduce(puzzleDrill('tactics', 'none'), { type: 'TAP' });
+      expect(next.academyState!.feedback).toBe('correct');
+      expect(next.academyState!.score).toEqual({ correct: 1, total: 5 });
+      expect(next.academyState!.tacticsPuzzle).toBe(TACTICS_PUZZLES[0]);
+    });
+
+    it('a tap after the reveal loads the next tactics puzzle', () => {
+      vi.mocked(getRandomTacticsPuzzle).mockReturnValueOnce(TACTICS_PUZZLES[3]!);
+      const next = reduce(puzzleDrill('tactics', 'correct'), { type: 'TAP' });
+      expect(next.academyState!.tacticsPuzzle).toBe(TACTICS_PUZZLES[3]);
+      expect(next.academyState!.feedback).toBe('none');
+      expect(next.academyState!.tacticsSolutionIndex).toBe(0);
+      expect(next.academyState!.score).toEqual({ correct: 1, total: 4 });
+    });
+
+    it('a tap after the reveal in the Mate drill loads the next mate puzzle', () => {
+      vi.mocked(getRandomMatePuzzle).mockReturnValueOnce(MATE_PUZZLES[2]!);
+      const next = reduce(puzzleDrill('mate', 'correct'), { type: 'TAP' });
+      expect(next.phase).toBe('mateDrill');
+      expect(next.academyState!.tacticsPuzzle).toBe(MATE_PUZZLES[2]);
+      expect(next.academyState!.feedback).toBe('none');
+    });
+  });
+
+  describe('PGN Study taps and scrolls', () => {
+    const game = FAMOUS_GAMES[0]!;
+    const pgnDrill = (currentMoveIndex: number) => createTestState({
+      phase: 'pgnStudy',
+      academyState: {
+        drillType: 'pgn', score: { correct: 2, total: 2 }, cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback: 'none',
+        pgnStudy: { gameName: game.name, moves: game.moves, currentMoveIndex, fen: STARTING_FEN, guessMode: false },
+      },
+    });
+
+    it('scrolling down steps forward one move and scrolling up steps back', () => {
+      expect(reduce(pgnDrill(3), { type: 'SCROLL', direction: 'down' }).academyState!.pgnStudy!.currentMoveIndex).toBe(4);
+      expect(reduce(pgnDrill(3), { type: 'SCROLL', direction: 'up' }).academyState!.pgnStudy!.currentMoveIndex).toBe(2);
+    });
+
+    it('scrolling stops at the start and at the end of the game', () => {
+      const start = pgnDrill(0);
+      expect(reduce(start, { type: 'SCROLL', direction: 'up' })).toBe(start);
+      const end = pgnDrill(game.moves.length);
+      expect(reduce(end, { type: 'SCROLL', direction: 'down' })).toBe(end);
+    });
+
+    it('a tap mid-game jumps to the final position without scoring', () => {
+      const next = reduce(pgnDrill(3), { type: 'TAP' });
+      expect(next.academyState!.pgnStudy!.currentMoveIndex).toBe(game.moves.length);
+      expect(next.academyState!.pgnStudy!.gameName).toBe(game.name);
+      expect(next.academyState!.score).toEqual({ correct: 2, total: 2 });
+    });
+
+    it('a tap at the end of the game loads the next game from the start and counts the finished one', () => {
+      const nextGame = FAMOUS_GAMES[1]!;
+      vi.mocked(getRandomFamousGame).mockReturnValueOnce(nextGame);
+      const next = reduce(pgnDrill(game.moves.length), { type: 'TAP' });
+      expect(next.academyState!.pgnStudy).toEqual({
+        gameName: nextGame.name, moves: nextGame.moves, currentMoveIndex: 0, fen: STARTING_FEN, guessMode: false,
+      });
+      expect(next.academyState!.score).toEqual({ correct: 3, total: 3 });
     });
   });
 

@@ -60,11 +60,17 @@ describe('findKnightDistance', () => {
     expect(findKnightDistance('a1', 'b1')).toBe(3);
   });
 
-  it('should handle maximum distance across board', () => {
-    // a1 to h8 should be reachable
-    const distance = findKnightDistance('a1', 'h8');
-    expect(distance).toBeGreaterThan(0);
-    expect(distance).toBeLessThanOrEqual(6);
+  it('should return 6 for corner to opposite corner (the board maximum)', () => {
+    expect(findKnightDistance('a1', 'h8')).toBe(6);
+    expect(findKnightDistance('h8', 'a1')).toBe(6);
+  });
+
+  it('should return 4 for a1 to b2 (diagonal neighbour of a corner)', () => {
+    expect(findKnightDistance('a1', 'b2')).toBe(4);
+  });
+
+  it('should return 5 for a1 to h7', () => {
+    expect(findKnightDistance('a1', 'h7')).toBe(5);
   });
 });
 
@@ -104,6 +110,35 @@ describe('generateKnightPuzzle', () => {
       expect(puzzle.optimalMoves).toBeGreaterThanOrEqual(3);
       expect(puzzle.optimalMoves).toBeLessThanOrEqual(4);
     }
+  });
+});
+
+describe('generateKnightPuzzle with scripted random picks', () => {
+  /** Math.random returns these in order; each value v picks index floor(v * 8). */
+  function withRandom<T>(values: number[], fn: () => T): T {
+    let i = 0;
+    const spy = vi.spyOn(Math, 'random').mockImplementation(() => values[i++]!);
+    try {
+      return fn();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+  const pick = (index: number) => (index + 0.5) / 8;
+
+  it('returns the first in-range pick with its BFS distance as optimalMoves', () => {
+    // Picks: e4 → c4 (distance 2).
+    const p = withRandom([pick(4), pick(3), pick(2), pick(3)], () => generateKnightPuzzle());
+    expect(p).toEqual({ start: 'e4', target: 'c4', optimalMoves: 2 });
+  });
+
+  it('skips a pick whose distance is out of range and uses the next one', () => {
+    // First pick a1 → h8 (6 moves, above the default max of 4), then a1 → b2 (4 moves).
+    const p = withRandom(
+      [pick(0), pick(0), pick(7), pick(7), pick(0), pick(0), pick(1), pick(1)],
+      () => generateKnightPuzzle(),
+    );
+    expect(p).toEqual({ start: 'a1', target: 'b2', optimalMoves: 4 });
   });
 });
 

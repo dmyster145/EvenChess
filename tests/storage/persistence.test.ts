@@ -18,7 +18,11 @@ import {
   loadBoardSize,
   saveBoardPosition,
   loadBoardPosition,
+  savePlayAs,
   loadPlayAs,
+  saveCustomSkillLevel,
+  loadCustomSkillLevel,
+  initPersistence,
 } from '../../src/storage/persistence';
 
 const localStorageMock = (() => {
@@ -30,7 +34,6 @@ const localStorageMock = (() => {
     clear: vi.fn(() => { store = {}; }),
     get length() { return Object.keys(store).length; },
     key: vi.fn((i: number) => Object.keys(store)[i] ?? null),
-    _getStore: () => store,
   };
 })();
 
@@ -112,6 +115,14 @@ describe('persistence', () => {
       expect(loaded!.customSkillLevel).toBe(9);  // clamped to the picker range
     });
 
+    it('round-trips playerColor and customSkillLevel', async () => {
+      await saveGame(START_FEN, [], 'w', 'custom', 'b', 7);
+      const loaded = await loadGame();
+      expect(loaded!.difficulty).toBe('custom');
+      expect(loaded!.playerColor).toBe('b');
+      expect(loaded!.customSkillLevel).toBe(7);
+    });
+
     it('returns null for empty string (cleared save)', async () => {
       localStorageMock.setItem('evenchess-save', '');
       expect(await loadGame()).toBeNull();
@@ -141,11 +152,55 @@ describe('persistence', () => {
       expect(await loadDifficulty()).toBe('easy');
     });
 
+    it('saves and loads custom', async () => {
+      await saveDifficulty('custom');
+      expect(await loadDifficulty()).toBe('custom');
+    });
+
+    it('falls back to casual for an unknown stored value', async () => {
+      localStorageMock.setItem('evenchess-difficulty', 'grandmaster');
+      expect(await loadDifficulty()).toBe('casual');
+    });
+
     it('uses its own key independently of other settings', async () => {
       await saveDifficulty('serious');
       await saveBoardMarkers(false);
       expect(await loadDifficulty()).toBe('serious');
       expect(await loadBoardMarkers()).toBe(false);
+    });
+  });
+
+  describe('saveCustomSkillLevel / loadCustomSkillLevel', () => {
+    it('returns the default level 5 when not set', async () => {
+      expect(await loadCustomSkillLevel()).toBe(5);
+    });
+
+    it('saves and loads a level', async () => {
+      await saveCustomSkillLevel(2);
+      expect(await loadCustomSkillLevel()).toBe(2);
+    });
+
+    it('clamps stored levels into the 0..9 picker range', async () => {
+      localStorageMock.setItem('evenchess-custom-skill-level', '-3');
+      expect(await loadCustomSkillLevel()).toBe(0);
+      localStorageMock.setItem('evenchess-custom-skill-level', '42');
+      expect(await loadCustomSkillLevel()).toBe(9);
+    });
+
+    it('returns the default level for a non-numeric stored value', async () => {
+      localStorageMock.setItem('evenchess-custom-skill-level', 'hard');
+      expect(await loadCustomSkillLevel()).toBe(5);
+    });
+  });
+
+  describe('savePlayAs / loadPlayAs', () => {
+    it('returns white when not set', async () => {
+      expect(await loadPlayAs()).toBe('white');
+    });
+
+    it('saves and loads black', async () => {
+      await savePlayAs('black');
+      expect(await loadPlayAs()).toBe('black');
     });
   });
 
@@ -271,6 +326,31 @@ describe('persistence', () => {
       await clearSave();
       expect(await loadGame()).toBeNull();
       expect(await loadDifficulty()).toBe('serious');   // settings unaffected by clearSave
+    });
+  });
+
+  describe('initPersistence', () => {
+    it('routes every read and write through the given adapter instead of localStorage', async () => {
+      const store = new Map<string, string>();
+      initPersistence(
+        async (key) => store.get(key) ?? null,
+        async (key, value) => { store.set(key, value); },
+      );
+      try {
+        await saveBoardSize('large');
+        await saveGame(START_FEN, ['e4'], 'w');
+        expect(await loadBoardSize()).toBe('large');
+        expect((await loadGame())!.history).toEqual(['e4']);
+        expect([...store.keys()]).toEqual(['evenchess-board-size', 'evenchess-save']);
+        expect(localStorageMock.setItem).not.toHaveBeenCalled();
+        expect(localStorageMock.getItem).not.toHaveBeenCalled();
+      } finally {
+        // Module-level adapter: put a localStorage-backed one back for any later tests.
+        initPersistence(
+          async (key) => localStorage.getItem(key),
+          async (key, value) => { localStorage.setItem(key, value); },
+        );
+      }
     });
   });
 });

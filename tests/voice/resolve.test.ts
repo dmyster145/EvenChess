@@ -3,9 +3,11 @@ import { resolveVoiceMove } from '../../src/voice/resolve';
 import type { GameState, PieceEntry } from '../../src/state/contracts';
 import { parseVoiceCommand } from '../../src/voice/parse';
 import { ChessService } from '../../src/chess/chessservice';
+import { baseGameState } from '../helpers/game-state';
 
+/** A full GameState whose movable pieces are exactly `pieces`, with the player to move. */
 function mkState(pieces: PieceEntry[], playerColor: 'w' | 'b' = 'w'): GameState {
-  return { pieces, playerColor, turn: playerColor } as unknown as GameState;
+  return { ...baseGameState(), pieces, playerColor, turn: playerColor };
 }
 
 const knightB1: PieceEntry = {
@@ -50,46 +52,54 @@ const pawnE7: PieceEntry = {
 describe('resolveVoiceMove', () => {
   it('resolves a simple unambiguous move', () => {
     const r = resolveVoiceMove(parseVoiceCommand('knight to c3'), mkState([knightB1, pawnE2]));
-    expect(r.kind).toBe('move');
-    if (r.kind === 'move') expect(r.move.uci).toBe('b1c3');
+    expect(r).toEqual({ kind: 'move', move: knightB1.moves[0] });
   });
 
   it('resolves a bare pawn move', () => {
     const r = resolveVoiceMove(parseVoiceCommand('e4'), mkState([knightB1, pawnE2]));
-    expect(r.kind).toBe('move');
-    if (r.kind === 'move') expect(r.move.san).toBe('e4');
+    expect(r).toEqual({ kind: 'move', move: pawnE2.moves[0] });
   });
 
-  it('reports ambiguity when two knights reach the square', () => {
+  it('reports ambiguity when two knights reach the square, naming both', () => {
     const r = resolveVoiceMove(parseVoiceCommand('knight to c3'), mkState([knightB1, knightE2]));
-    expect(r.kind).toBe('ambiguous');
-    if (r.kind === 'ambiguous') {
-      expect(r.message).toContain('B1');
-      expect(r.message).toContain('E2');
-    }
+    expect(r).toEqual({ kind: 'ambiguous', message: 'Which Knight, B1 or E2? Say e.g. "knight B1 to C3"' });
   });
 
   it('resolves ambiguity with a source-file disambiguator', () => {
-    const r = resolveVoiceMove(
-      parseVoiceCommand('knight b to c3'),
-      mkState([knightB1, knightE2]),
-    );
-    expect(r.kind).toBe('move');
-    if (r.kind === 'move') expect(r.move.from).toBe('b1');
+    const r = resolveVoiceMove(parseVoiceCommand('knight b to c3'), mkState([knightB1, knightE2]));
+    expect(r).toMatchObject({ kind: 'move', move: { from: 'b1', to: 'c3' } });
+  });
+
+  it('resolves ambiguity on one file with the source rank ("rook a one to a four")', () => {
+    // Both rooks stand on the a-file, so only the spoken rank tells them apart.
+    const rookA1: PieceEntry = {
+      id: 'w-r-a1', label: 'Rook A1', color: 'w', type: 'r', square: 'a1',
+      moves: [{ uci: 'a1a4', san: 'R1a4', from: 'a1', to: 'a4' }],
+    };
+    const rookA8: PieceEntry = {
+      id: 'w-r-a8', label: 'Rook A8', color: 'w', type: 'r', square: 'a8',
+      moves: [{ uci: 'a8a4', san: 'R8a4', from: 'a8', to: 'a4' }],
+    };
+    const r = resolveVoiceMove(parseVoiceCommand('rook a one to a four'), mkState([rookA8, rookA1]));
+    expect(r).toEqual({ kind: 'move', move: rookA1.moves[0] });
   });
 
   it('reports an illegal destination', () => {
     const r = resolveVoiceMove(parseVoiceCommand('knight to h6'), mkState([knightB1]));
-    expect(r.kind).toBe('illegal');
+    expect(r).toEqual({ kind: 'illegal', message: 'No Knight to H6' });
   });
 
-  it('resolves castling both sides', () => {
-    const k = resolveVoiceMove(parseVoiceCommand('castle kingside'), mkState([kingE1]));
-    expect(k.kind).toBe('move');
-    if (k.kind === 'move') expect(k.move.san).toBe('O-O');
-    const q = resolveVoiceMove(parseVoiceCommand('castle queenside'), mkState([kingE1]));
-    expect(q.kind).toBe('move');
-    if (q.kind === 'move') expect(q.move.san).toBe('O-O-O');
+  it('resolves castling both sides as the grammar spells them ("king side" / "queen side")', () => {
+    const k = resolveVoiceMove(parseVoiceCommand('castle king side'), mkState([kingE1]));
+    expect(k).toMatchObject({ kind: 'move', move: { san: 'O-O' } });
+    const q = resolveVoiceMove(parseVoiceCommand('castle queen side'), mkState([kingE1]));
+    expect(q).toMatchObject({ kind: 'move', move: { san: 'O-O-O' } });
+  });
+
+  it('reports which side cannot castle when the king has no castling move', () => {
+    const kingNoCastling: PieceEntry = { ...kingE1, moves: [kingE1.moves[2]!] };
+    const r = resolveVoiceMove(parseVoiceCommand('castle king side'), mkState([kingNoCastling]));
+    expect(r).toEqual({ kind: 'illegal', message: 'Can\'t castle kingside' });
   });
 
   it('asks for a promotion piece when unspecified', () => {
@@ -99,11 +109,12 @@ describe('resolveVoiceMove', () => {
 
   it('resolves an explicit promotion', () => {
     const r = resolveVoiceMove(parseVoiceCommand('e8 knight'), mkState([pawnE7]));
-    expect(r.kind).toBe('move');
-    if (r.kind === 'move') {
-      expect(r.move.promotion).toBe('n');
-      expect(r.move.san).toBe('e8=N');
-    }
+    expect(r).toMatchObject({ kind: 'move', move: { promotion: 'n', san: 'e8=N' } });
+  });
+
+  it('rejects promoting to a piece that is not a legal promotion (king)', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('e8 king'), mkState([pawnE7]));
+    expect(r).toEqual({ kind: 'illegal', message: 'Can\'t promote there' });
   });
 
   it('ignores opponent pieces', () => {
@@ -126,34 +137,34 @@ describe('resolveVoiceMove', () => {
 
     it('a spoken promotion piece picks the pawn promotion, not the other piece\'s move', () => {
       const r = resolveVoiceMove(parseVoiceCommand('e8 queen'), mkState([pawnE7, knightD6]));
-      expect(r.kind).toBe('move');
-      if (r.kind === 'move') expect(r.move.uci).toBe('e7e8q');
+      expect(r).toEqual({ kind: 'move', move: pawnE7.moves[0] });
+    });
+
+    it('"pawn e8 queen" also picks the promotion', () => {
+      const r = resolveVoiceMove(parseVoiceCommand('pawn e eight queen'), mkState([pawnE7, knightD6]));
+      expect(r).toEqual({ kind: 'move', move: pawnE7.moves[0] });
     });
 
     it('with no promotion piece spoken, the normal move wins', () => {
       const r = resolveVoiceMove(parseVoiceCommand('e8'), mkState([pawnE7, knightD6]));
-      expect(r.kind).toBe('move');
-      if (r.kind === 'move') expect(r.move.uci).toBe('d6e8');
+      expect(r).toEqual({ kind: 'move', move: knightD6.moves[0] });
     });
   });
 
   describe('follow-up prompts ask for the whole move (each utterance is parsed alone)', () => {
     it('needsPromotion suggests a full command with the square', () => {
       const r = resolveVoiceMove(parseVoiceCommand('e8'), mkState([pawnE7]));
-      expect(r.kind).toBe('needsPromotion');
-      if (r.kind === 'needsPromotion') expect(r.message).toContain('"E8 queen"');
+      expect(r).toEqual({ kind: 'needsPromotion', message: 'Promote to? Say e.g. "E8 queen"' });
     });
 
     it('ambiguous suggests a full command naming the source square', () => {
       const r = resolveVoiceMove(parseVoiceCommand('knight c3'), mkState([knightB1, knightE2]));
-      expect(r.kind).toBe('ambiguous');
-      if (r.kind === 'ambiguous') expect(r.message).toMatch(/"knight (B1|E2) to C3"/);
+      expect(r).toEqual({ kind: 'ambiguous', message: 'Which Knight, B1 or E2? Say e.g. "knight B1 to C3"' });
     });
 
     it('the suggested command resolves to a single move', () => {
       const r = resolveVoiceMove(parseVoiceCommand('knight b1 to c3'), mkState([knightB1, knightE2]));
-      expect(r.kind).toBe('move');
-      if (r.kind === 'move') expect(r.move.uci).toBe('b1c3');
+      expect(r).toEqual({ kind: 'move', move: knightB1.moves[0] });
     });
   });
 });

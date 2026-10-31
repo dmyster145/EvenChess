@@ -10,6 +10,7 @@ import type { AutosaveController } from '../../src/app/autosave';
 import type { EvenHubBridge } from '../../src/evenhub/bridge';
 import { OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 
+const ABNORMAL_EXIT = (OsEventTypeList as unknown as { ABNORMAL_EXIT_EVENT?: number }).ABNORMAL_EXIT_EVENT ?? 6;
 const SYSTEM_EXIT = (OsEventTypeList as unknown as { SYSTEM_EXIT_EVENT?: number }).SYSTEM_EXIT_EVENT ?? 7;
 
 /** A host sys event as the SDK delivers it (the SDK's own class adds a toJson we never call). */
@@ -277,6 +278,21 @@ describe('createLifecycle', () => {
     expect(store.getState().timerActive).toBe(false); // still not started
   });
 
+  it('an overlay over a bullet game whose clock has not started dispatches no clock actions', async () => {
+    store = createStore({
+      ...buildInitialState(chess),
+      mode: 'bullet', phase: 'idle',
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
+      timerActive: false,
+    });
+    const dispatchSpy = vi.spyOn(store, 'dispatch');
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT));
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
   // --- Exit-dialog path (inverted polarity) ---
 
   // The exit dialog (the menu's Exit item → shutDownPageContainer(1)) is ENABLED for ER submission.
@@ -325,6 +341,49 @@ describe('createLifecycle', () => {
     expect(bridge.shutdownCalls).toBe(1);
     bridge.resolveShutdown();
     await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('SYSTEM_EXIT with no exit dialog pending (host closed the app) cleans up and shuts down the same way', () => {
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent(sys(SYSTEM_EXIT));
+    expect(bridge.clearExitDialogCalls).toBe(1);
+    expect(flush.cancels).toBe(1);
+    expect(branding.cancels).toBe(1);
+    expect(bulletTimer.suspended).toBe(1);
+    expect(autosave.flushes).toBe(1);
+    expect(bridge.shutdownCalls).toBe(1);
+  });
+
+  it('after shutdown completes, an overlay that was open is forgotten: a later EXIT is a background, not a dismissal', async () => {
+    store = createStore({
+      ...buildInitialState(chess),
+      mode: 'bullet', phase: 'idle',
+      timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
+      timerActive: true, lastTickTime: Date.now(),
+    });
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT)); // overlay opens, clock paused
+    lifecycle.onHubEvent(sys(SYSTEM_EXIT));
+    bridge.resolveShutdown();
+    await vi.advanceTimersByTimeAsync(700);
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
+    expect(store.getState().timerActive).toBe(false); // not resumed by a stale overlay dismissal
+    expect(autosave.flushes).toBe(2);                 // shutdown flush + the background's flush
+  });
+
+  it.each([
+    ['with the exit dialog pending', true],
+    ['with no exit dialog pending', false],
+  ])('ABNORMAL_EXIT %s drops queued sends, stops the clock and saves, but does not shut down', (_when, pending) => {
+    bridge.dialogPending = pending;
+    const lifecycle = makeLifecycle();
+    lifecycle.onHubEvent(sys(ABNORMAL_EXIT));
+    expect(bridge.clearExitDialogCalls).toBe(1);
+    expect(bridge.clearPendingCalls).toBe(1);
+    expect(bulletTimer.suspended).toBe(1);
+    expect(autosave.flushes).toBe(1);
+    expect(bridge.shutdownCalls).toBe(0);
+    expect(flush.cancels).toBe(0);
   });
 
   it('exit dialog cancel then a genuine later background works normally', async () => {

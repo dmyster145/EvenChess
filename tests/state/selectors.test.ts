@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   getSelectedPiece,
   getSelectedMove,
@@ -702,42 +702,40 @@ describe('selectors', () => {
       expect(text).toContain('3/5');
     });
 
-    it('shows current column letter when selecting file', () => {
-      const state = createTestState({
-        phase: 'coordinateDrill',
-        academyState: {
-          drillType: 'coordinate',
-          targetSquare: 'e4',
-          score: { correct: 0, total: 0 },
-          cursorFile: 1, // B
-          cursorRank: 3,
-          navAxis: 'file',
-          feedback: 'none',
-        },
-      });
-      const text = getCoordinateDrillDisplayText(state);
-      expect(text).toContain('Column:');
-      expect(text).toContain('B'); // current file letter
-      expect(text).toContain('Row: 4'); // rank index 3 is the 4th rank
+    // Target G6 and cursor letters B/E keep the cursor letter out of the header and the "Find:" line,
+    // so only the exact Column/Row lines can satisfy these assertions.
+    const coordinateDrill = (academy: Partial<NonNullable<GameState['academyState']>>) => createTestState({
+      phase: 'coordinateDrill',
+      academyState: {
+        drillType: 'coordinate', targetSquare: 'g6', score: { correct: 2, total: 3 },
+        cursorFile: 1, cursorRank: 3, navAxis: 'file', feedback: 'none', ...academy,
+      },
+    });
+    const drillHeader = ['', 'COORDINATE DRILL', 'Score: 2/3', 'Find: G6', ''];
+
+    it('on the file axis, arrows wrap the cursor column and the row shows its number', () => {
+      const text = getCoordinateDrillDisplayText(coordinateDrill({ cursorFile: 1, cursorRank: 3, navAxis: 'file' }));
+      expect(text).toBe([...drillHeader, 'Column: ◀ B ▶', '   Row: 4'].join('\n'));
     });
 
-    it('shows current column letter when selecting rank', () => {
-      const state = createTestState({
-        phase: 'coordinateDrill',
-        academyState: {
-          drillType: 'coordinate',
-          targetSquare: 'e4',
-          score: { correct: 0, total: 0 },
-          cursorFile: 4, // E
-          cursorRank: 2,
-          navAxis: 'rank',
-          feedback: 'none',
-        },
-      });
-      const text = getCoordinateDrillDisplayText(state);
-      expect(text).toContain('Column:');
-      expect(text).toContain('E'); // fixed column shown when selecting row
-      expect(text).toContain('Row:'); // row has scroll arrows
+    it('on the rank axis, the chosen column is fixed and the arrows move to the row', () => {
+      const text = getCoordinateDrillDisplayText(coordinateDrill({ cursorFile: 4, cursorRank: 2, navAxis: 'rank' }));
+      expect(text).toBe([...drillHeader, 'Column: E', '   Row: ▲  ▼'].join('\n'));
+    });
+
+    it('a correct answer shows CORRECT and the next-square prompt', () => {
+      const text = getCoordinateDrillDisplayText(coordinateDrill({ feedback: 'correct' }));
+      expect(text).toBe([...drillHeader, '+ CORRECT!', '', 'Tap: next square'].join('\n'));
+    });
+
+    it('a wrong answer names the square that was guessed', () => {
+      // File and rank indices differ (e = 4, rank 3 = 2) so a swapped guess would read C5.
+      const text = getCoordinateDrillDisplayText(coordinateDrill({ feedback: 'incorrect', cursorFile: 4, cursorRank: 2 }));
+      expect(text).toBe([...drillHeader, 'X WRONG (E3)', '', 'Tap: next square'].join('\n'));
+    });
+
+    it('shows a loading line until a target square is set', () => {
+      expect(getCoordinateDrillDisplayText(coordinateDrill({ targetSquare: undefined }))).toBe('Loading drill...');
     });
   });
 
@@ -948,6 +946,267 @@ describe('selectors', () => {
       expect(text).toContain('Knight B5 → C7 check');
       expect(text).toContain('King E8 → D7');
       expect(text).toContain('Knight C7 takes A8');
+    });
+  });
+
+  // ── Gameplay screen (the text that ships during play) ───────────────────────
+
+  describe('getCombinedDisplayText on the gameplay screen', () => {
+    const SEP = '────────';
+    // Header for createTestState's defaults: White to move, no history, no clock.
+    const header = ['', 'White - Move 1', SEP];
+    const lines = (...rest: string[]) => [...header, ...rest].join('\n');
+    const idlePrompt = ['', 'Tap to speak', 'Scroll to begin ▲▼'];
+    const voice = (v: Partial<NonNullable<GameState['voice']>>): GameState['voice'] =>
+      ({ listening: false, status: null, statusExpiresAt: null, pendingConfirm: null, ...v });
+
+    it('idle with no voice activity invites a voice tap or a scroll', () => {
+      expect(getCombinedDisplayText(createTestState())).toBe(lines(...idlePrompt));
+    });
+
+    it('shows the turn, full move number and expanded last move above the separator', () => {
+      const text = getCombinedDisplayText(createTestState({ turn: 'b', history: ['e4', 'e5', 'Nf3'], lastMove: 'Nf3' }));
+      expect(text).toBe(['', 'Black - Move 2', 'Last: Knight F3', SEP, ...idlePrompt].join('\n'));
+    });
+
+    // A pawn capture: the confirm prompt uses the log wording ("Pawn takes"), not the carousel's ("takes").
+    const confirmMove = { uci: 'e4d5', san: 'exd5', from: 'e4', to: 'd5' };
+    const idleCases: { name: string; voice: GameState['voice']; boardReady?: boolean; expected: string[] }[] = [
+      {
+        name: 'board not ready yet: no board-dependent instructions',
+        voice: undefined, boardReady: false,
+        expected: ['', 'Preparing board…'],
+      },
+      {
+        name: 'a heard move awaiting confirmation (wins over listening)',
+        voice: voice({ listening: true, status: 'Listening…', pendingConfirm: confirmMove }),
+        expected: ['', 'Heard: Pawn takes D5', 'Tap to confirm · Double-tap aborts'],
+      },
+      {
+        name: 'listening with no status uses the default listening prompt',
+        voice: voice({ listening: true }),
+        expected: ['', 'Listening… speak your move', 'Tap to cancel  (e.g. Knight to C3)'],
+      },
+      {
+        name: 'listening with a status shows that status',
+        voice: voice({ listening: true, status: 'Hearing: knight' }),
+        expected: ['', 'Hearing: knight', 'Tap to cancel  (e.g. Knight to C3)'],
+      },
+      {
+        name: 'a status while idle sits above the normal prompt',
+        voice: voice({ status: "Didn't catch that", statusExpiresAt: 5_000 }),
+        expected: ['', "Didn't catch that", 'Tap to speak', 'Scroll to begin ▲▼'],
+      },
+      {
+        name: 'a status before the board is ready sits above "Preparing board…"',
+        voice: voice({ status: "Didn't catch that" }), boardReady: false,
+        expected: ['', "Didn't catch that", 'Preparing board…'],
+      },
+      {
+        name: 'a cleared status falls back to the normal prompt',
+        voice: voice({ status: null }),
+        expected: idlePrompt,
+      },
+    ];
+
+    it.each(idleCases)('idle: $name', ({ voice: v, boardReady, expected }) => {
+      const text = getCombinedDisplayText(createTestState({ voice: v }), { boardReady });
+      expect(text).toBe(lines(...expected));
+    });
+
+    it('keeps showing a timed status after its expiry time (clearing is the reducer\'s job)', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(10_000);
+        const state = createTestState({ voice: voice({ status: "Didn't catch that", statusExpiresAt: 5_000 }) });
+        expect(getCombinedDisplayText(state)).toBe(lines('', "Didn't catch that", 'Tap to speak', 'Scroll to begin ▲▼'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // createTestState pieces: Qd1 (rank 1, moves Qd3/Qh5) and Nf3 (rank 3, move Nxe5).
+    const selectionCases: { name: string; overrides: Partial<GameState>; expected: string[] }[] = [
+      { name: 'rowSelect, first row by default', overrides: { phase: 'rowSelect' }, expected: ['Select row:', 'Row 1 (1) (1/2) ▲▼'] },
+      { name: 'rowSelect, row of the selected piece', overrides: { phase: 'rowSelect', selectedPieceId: 'w-n-f3' }, expected: ['Select row:', 'Row 3 (1) (2/2) ▲▼'] },
+      { name: 'pieceSelect with a chosen row', overrides: { phase: 'pieceSelect', selectedPieceId: 'w-n-f3' }, expected: ['Select piece (Row 3):', 'Nf3 (1/1) ▲▼'] },
+      { name: 'pieceSelect with no piece selected', overrides: { phase: 'pieceSelect' }, expected: ['Select piece:', 'Qd1 (1/2) ▲▼'] },
+      { name: 'destSelect', overrides: { phase: 'destSelect', selectedPieceId: 'w-q-d1', selectedMoveIndex: 1 }, expected: ['Moving: Qd1', 'Queen H5 (2/2) ▲▼'] },
+      { name: 'promotionSelect', overrides: { phase: 'promotionSelect', selectedPromotionIndex: 2 }, expected: ['Select promotion:', 'Bishop (3/4) ▲▼'] },
+      { name: 'rowSelect with no movable pieces shows no selection line', overrides: { phase: 'rowSelect', pieces: [] }, expected: [] },
+    ];
+
+    it.each(selectionCases)('$name', ({ overrides, expected }) => {
+      expect(getCombinedDisplayText(createTestState(overrides))).toBe(lines('', ...expected));
+    });
+
+    it('game over replaces the turn line and prompts for a new game', () => {
+      const text = getCombinedDisplayText(createTestState({ gameOver: 'checkmate', lastMove: 'Qxf7#', history: ['e4'] }));
+      expect(text).toBe(['', 'Game Over: Checkmate', SEP, '', 'Double-tap: new game'].join('\n'));
+    });
+
+    it('engine thinking shows the turn and last move, then the thinking line', () => {
+      const text = getCombinedDisplayText(createTestState({ turn: 'b', engineThinking: true, history: ['e4'], lastMove: 'e4' }));
+      expect(text).toBe(['', 'Black - Move 1', 'Last: E4', SEP, '', 'Engine thinking...'].join('\n'));
+    });
+
+    it('bullet mode puts both clocks on the first line, marking a clock under 10s with !…!', () => {
+      const timers = { whiteMs: 10_000, blackMs: 9_999, incrementMs: 0 };
+      const text = getCombinedDisplayText(createTestState({ mode: 'bullet', timers }));
+      expect(text.split('\n')[0]).toBe('W 0:10  |  B !0:10!');
+    });
+
+    it('bullet clocks show minutes and seconds', () => {
+      const timers = { whiteMs: 65_000, blackMs: 180_000, incrementMs: 0 };
+      const text = getCombinedDisplayText(createTestState({ mode: 'bullet', timers }));
+      expect(text.split('\n')[0]).toBe('W 1:05  |  B 3:00');
+    });
+
+    it('leaves the clock line blank outside bullet mode even if timers exist', () => {
+      const timers = { whiteMs: 65_000, blackMs: 180_000, incrementMs: 0 };
+      expect(getCombinedDisplayText(createTestState({ mode: 'play', timers }))).toBe(lines(...idlePrompt));
+    });
+  });
+
+  describe('getCombinedDisplayText routes each overlay phase to its screen', () => {
+    const academyState: GameState['academyState'] = {
+      drillType: 'coordinate', targetSquare: 'g6', score: { correct: 0, total: 0 },
+      cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback: 'none',
+    };
+    const routes: { phase: GameState['phase']; render: (s: GameState) => string }[] = [
+      { phase: 'viewLog', render: getLogDisplayText },
+      { phase: 'resetConfirm', render: getResetConfirmDisplayText },
+      { phase: 'coordinateDrill', render: getCoordinateDrillDisplayText },
+      { phase: 'knightPathDrill', render: getKnightPathDisplayText },
+      { phase: 'tacticsDrill', render: getTacticsDisplayText },
+      { phase: 'mateDrill', render: getTacticsDisplayText },
+      { phase: 'pgnStudy', render: getPgnStudyDisplayText },
+    ];
+
+    it.each(routes)('$phase', ({ phase, render }) => {
+      const state = createTestState({ phase, academyState, history: ['e4'] });
+      expect(getCombinedDisplayText(state)).toBe(render(state));
+    });
+
+    it('playAsSelect lists the colors, marking the current one and the cursor', () => {
+      const text = getCombinedDisplayText(createTestState({ phase: 'playAsSelect', playAs: 'black', menuSelectedIndex: 2 }));
+      expect(text).toBe(['', 'PLAY AS', '', '  White', '  Black *', '> Random'].join('\n'));
+    });
+
+    it('customDifficultySelect shows the level between arrows and the tier guide', () => {
+      const text = getCombinedDisplayText(createTestState({ phase: 'customDifficultySelect', customSkillLevel: 7 }));
+      expect(text).toBe([
+        '',
+        'CUSTOM DIFFICULTY',
+        '  Level: ◀ 7 ▶   (0–9)',
+        '  Tap to confirm',
+        `  Easy≈${nearestCustomLevel(EASY)} Casual≈${nearestCustomLevel(CASUAL)} Serious≈${nearestCustomLevel(SERIOUS)}`,
+        '  0–1: Beginner',
+        '  2–3: Novice',
+        '  4–5: Club player',
+        '  6–7: Strong',
+        '  8–9: Expert',
+      ].join('\n'));
+    });
+  });
+
+  describe('drill screens by feedback state', () => {
+    const knightPath = (feedback: 'none' | 'correct' | 'incorrect', movesTaken: number) => createTestState({
+      phase: 'knightPathDrill',
+      academyState: {
+        drillType: 'knightPath', score: { correct: 1, total: 2 }, cursorFile: 1, cursorRank: 2, navAxis: 'file', feedback,
+        knightPath: { startSquare: 'a1', targetSquare: 'c5', currentSquare: 'a1', optimalMoves: 2, movesTaken, path: ['a1'] },
+      },
+    });
+
+    it('knight path, in progress: route, move count and the cursor square', () => {
+      expect(getKnightPathDisplayText(knightPath('none', 0))).toBe(
+        ['', 'KNIGHT PATH', 'Score: 1/2', 'A1 → C5', 'Moves: 0/2', '', 'Move to: B3 ▲▼'].join('\n'),
+      );
+    });
+
+    it('knight path, optimal: OPTIMAL and the move count', () => {
+      expect(getKnightPathDisplayText(knightPath('correct', 2))).toBe(
+        ['', 'KNIGHT PATH', 'Score: 1/2', '', '+ OPTIMAL!', 'Moves: 2/2', '', 'Tap: next puzzle'].join('\n'),
+      );
+    });
+
+    it('knight path, too many moves: the miss and the move count', () => {
+      expect(getKnightPathDisplayText(knightPath('incorrect', 4))).toBe(
+        ['', 'KNIGHT PATH', 'Score: 1/2', '', 'X TOO MANY MOVES', 'Moves: 4/2', '', 'Tap: next puzzle'].join('\n'),
+      );
+    });
+
+    const tactics = (drillType: 'tactics' | 'mate', feedback: 'none' | 'correct' | 'incorrect') => createTestState({
+      phase: drillType === 'mate' ? 'mateDrill' : 'tacticsDrill',
+      academyState: {
+        drillType, score: { correct: 0, total: 0 }, cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback,
+        tacticsPuzzle: { fen: 'r3k3/8/8/1N6/8/8/8/4K3 w - - 0 1', solution: ['b5c7'], theme: 'fork', description: 'Fork king and rook' },
+      },
+    });
+
+    it('tactics, unanswered: asks for the best move and shows the theme', () => {
+      expect(getTacticsDisplayText(tactics('tactics', 'none'))).toBe(
+        ['', 'TACTICS', '', 'Find the best move!', 'Theme: fork', 'Tap: show answer'].join('\n'),
+      );
+    });
+
+    it('mate drill, unanswered: titled CHECKMATE and asks for mate in 1', () => {
+      expect(getTacticsDisplayText(tactics('mate', 'none'))).toBe(
+        ['', 'CHECKMATE', '', 'Find mate in 1!', 'Theme: fork', 'Tap: show answer'].join('\n'),
+      );
+    });
+
+    it('tactics, revealed: the solution, the description, then the next-puzzle prompt', () => {
+      expect(getTacticsDisplayText(tactics('tactics', 'correct'))).toBe(
+        ['', 'TACTICS', '', 'Solution:', 'Knight B5 → C7 check', '', 'Fork king and rook', '', 'Tap: next puzzle'].join('\n'),
+      );
+    });
+
+    it('tactics with no puzzle loaded shows a loading line', () => {
+      const state = createTestState({
+        phase: 'tacticsDrill',
+        academyState: { drillType: 'tactics', score: { correct: 0, total: 0 }, cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback: 'none' },
+      });
+      expect(getTacticsDisplayText(state)).toBe(['', 'TACTICS', '', 'Loading...'].join('\n'));
+    });
+  });
+
+  describe('PGN study screens across the game', () => {
+    const moves = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5'];
+    const pgnAt = (currentMoveIndex: number) => getPgnStudyDisplayText(createTestState({
+      phase: 'pgnStudy',
+      academyState: {
+        drillType: 'pgn', score: { correct: 0, total: 0 }, cursorFile: 0, cursorRank: 0, navAxis: 'file', feedback: 'none',
+        pgnStudy: { gameName: 'Italian', moves, currentMoveIndex, fen: 'startpos', guessMode: false },
+      },
+    }));
+
+    it('at index 0 shows the start position', () => {
+      expect(pgnAt(0)).toBe(['PGN STUDY', 'Italian', 'Start position', '', '▲▼ Scroll: step'].join('\n'));
+    });
+
+    it('mid-game shows the last four moves played, marking the newest', () => {
+      // 5 moves played: e4 e5 Nf3 Nc6 Bc4. The window drops e4 and ends at Bc4.
+      expect(pgnAt(5)).toBe(['PGN STUDY', 'Italian', ' e5', ' 2.Nf3', ' Nc6', '>3.Bc4', '', '▲▼ Step  Tap: skip'].join('\n'));
+    });
+
+    it('after the last move shows the game is complete', () => {
+      expect(pgnAt(moves.length)).toBe(['PGN STUDY', 'Italian', 'Game complete!', '', 'Tap: next game'].join('\n'));
+    });
+  });
+
+  describe('log and difficulty details', () => {
+    it('shows "-" for Black when White made the last move', () => {
+      const text = getLogDisplayText(createTestState({ phase: 'viewLog', history: ['e4', 'e5', 'Nf3'] }));
+      expect(text).toBe(['', 'MOVE LOG', '', 'White | Black', '1. Pawn E4 | Pawn E5', '2. Knight F3 | -'].join('\n'));
+    });
+
+    it('shows the chosen Custom level on the Custom row only when Custom is active', () => {
+      const active = getDifficultyDisplayText(createTestState({ phase: 'difficultySelect', difficulty: 'custom', customSkillLevel: 7, menuSelectedIndex: 3 }));
+      expect(active).toBe(['', 'DIFFICULTY', '', '  Easy', '  Casual', '  Serious', '> Custom (7) *'].join('\n'));
+      const inactive = getDifficultyDisplayText(createTestState({ phase: 'difficultySelect', difficulty: 'easy', customSkillLevel: 7, menuSelectedIndex: 0 }));
+      expect(inactive).toBe(['', 'DIFFICULTY', '', '> Easy *', '  Casual', '  Serious', '  Custom'].join('\n'));
     });
   });
 

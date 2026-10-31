@@ -45,7 +45,10 @@ describe('parseVoiceCommand', () => {
     });
   });
 
-  it('parses castling both sides', () => {
+  // The live recognizer is constrained to VOICE_GRAMMAR words. Inputs outside it ("kingside",
+  // homophones like "night", fillers like "please") only arrive as free text, e.g. through the
+  // injectTranscript debug hook; the parser accepts them so it stays tolerant of any recognizer.
+  it('parses castling both sides (free text, including words outside the grammar)', () => {
     expect(parseVoiceCommand('castle kingside')).toEqual({ castle: 'k' });
     expect(parseVoiceCommand('castle queenside')).toEqual({ castle: 'q' });
     expect(parseVoiceCommand('castle long')).toEqual({ castle: 'q' });
@@ -63,7 +66,7 @@ describe('parseVoiceCommand', () => {
     });
   });
 
-  it('tolerates homophones and filler words', () => {
+  it('tolerates homophones and filler words in free text (not emitted by the grammar-bound recognizer)', () => {
     expect(parseVoiceCommand('night to see three')).toEqual({ piece: 'n', to: 'c3' });
     expect(parseVoiceCommand('move knight to c three please')).toEqual({
       piece: 'n',
@@ -87,7 +90,16 @@ describe('parseVoiceCommand', () => {
   });
 
   it('parses castling spelled as the grammar emits it ("king side" / "queen side")', () => {
-    expect(parseVoiceCommand('castle king side').castle).toBe('k');
-    expect(parseVoiceCommand('castle queen side').castle).toBe('q');
+    expect(parseVoiceCommand('castle king side')).toEqual({ castle: 'k' });
+    expect(parseVoiceCommand('castle queen side')).toEqual({ castle: 'q' });
+  });
+
+  it('parses transcripts made only of grammar words, as the live recognizer emits them', () => {
+    expect(parseVoiceCommand('knight to charlie three')).toEqual({ piece: 'n', to: 'c3' });
+    expect(parseVoiceCommand('pawn e eight queen')).toEqual({ piece: 'p', to: 'e8', promotion: 'q' });
+    expect(parseVoiceCommand('e seven e eight promote knight')).toEqual({ fromFile: 4, fromRank: 7, to: 'e8', promotion: 'n' });
+    expect(parseVoiceCommand('rook a one to a four')).toEqual({ piece: 'r', fromFile: 0, fromRank: 1, to: 'a4' });
+    expect(parseVoiceCommand('bishop takes foxtrot seven check')).toEqual({ piece: 'b', to: 'f7', isCapture: true });
+    expect(parseVoiceCommand('[unk] knight [unk] to c three')).toEqual({ piece: 'n', to: 'c3' });
   });
 });

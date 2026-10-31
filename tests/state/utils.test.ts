@@ -38,7 +38,7 @@ describe('getMoveNumber', () => {
     expect(getMoveNumber(1)).toBe(1);
   });
 
-  it('returns 2 for second move (black)', () => {
+  it('returns 2 once White and Black have each moved (White\'s second move is next)', () => {
     expect(getMoveNumber(2)).toBe(2);
   });
 

@@ -61,7 +61,18 @@ describe('reducer — voice actions', () => {
   });
 
   it('VOICE_CONFIRM is a no-op when nothing is parked', () => {
-    expect(reduce(createState(), { type: 'VOICE_CONFIRM' }).pendingMove).toBeNull();
+    const state = createState();
+    expect(reduce(state, { type: 'VOICE_CONFIRM' })).toBe(state);
+  });
+
+  it.each([
+    ['the engine has started thinking', { engineThinking: true }],
+    ['the turn has passed to the engine', { turn: 'b' as const }],
+    ['the player has opened the menu', { phase: 'menu' as const }],
+  ])('VOICE_CONFIRM does not play the parked move once %s', (_why, change) => {
+    const parked = reduce(createState(), { type: 'VOICE_MOVE_CANDIDATE', move });
+    const changed = { ...parked, ...change };
+    expect(reduce(changed, { type: 'VOICE_CONFIRM' })).toBe(changed);
   });
 
   it('VOICE_ABORT discards the parked move without playing it', () => {
@@ -95,7 +106,8 @@ describe('reducer — voice actions', () => {
   it('VOICE_LISTEN_END stops listening but keeps any status', () => {
     const listening = reduce(createState(), { type: 'VOICE_LISTEN_START' });
     const ended = reduce(listening, { type: 'VOICE_LISTEN_END' });
-    expect(ended.voice?.listening).toBe(false);
+    expect(ended.voice).toEqual({ ...listening.voice, listening: false });
+    expect(ended.voice?.status).toBe('Listening… speak your move');
   });
 
   it('does not act on voice once the game is over', () => {

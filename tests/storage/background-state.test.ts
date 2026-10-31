@@ -83,20 +83,34 @@ describe('background-state shim', () => {
     expect(receivedB).toBe(2);
   });
 
-  it('ignores malformed JSON in __restoreState without throwing', () => {
+  it('ignores malformed or non-object snapshots without throwing or calling restorers', () => {
+    const received: unknown[] = [];
+    onBackgroundRestore('k', (v) => received.push(v));
+    // A bare JSON string has index keys ("0", "1", ...); they must not be read as snapshot keys.
+    onBackgroundRestore('0', (v) => received.push(v));
     expect(() => g().__restoreState!('not json')).not.toThrow();
     expect(() => g().__restoreState!('null')).not.toThrow();
     expect(() => g().__restoreState!('[]')).not.toThrow();
+    expect(() => g().__restoreState!('"k"')).not.toThrow();
+    expect(received).toEqual([]);
   });
 
-  it('skips keys with undefined values in the snapshot', () => {
+  it('does not call restorers for keys absent from the snapshot', () => {
     let called = false;
     onBackgroundRestore('present', () => {
       called = true;
     });
-    // Object explicitly missing the key — restorer must not fire.
     g().__restoreState!(JSON.stringify({ other: 1 }));
     expect(called).toBe(false);
+  });
+
+  it('passes a null snapshot value through to the restorer', () => {
+    // JSON has no `undefined`, so null is the only "empty" value a snapshot can carry; it is a
+    // real value and reaches the restorer, which decides what null means for its key.
+    const received: unknown[] = [];
+    onBackgroundRestore('present', (v) => received.push(v));
+    g().__restoreState!(JSON.stringify({ present: null }));
+    expect(received).toEqual([null]);
   });
 
   it('isolates exporter errors so other exporters still run', () => {

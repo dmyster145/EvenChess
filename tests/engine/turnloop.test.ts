@@ -71,6 +71,17 @@ describe('TurnLoop', () => {
     expect(engine.calls[0]!.profile.movetime).toBe(300); // 9000 / 30
   });
 
+  it('in Bullet, the search budget also gets half the increment', async () => {
+    const { engine, loop } = setup({
+      mode: 'bullet', playerColor: 'b', timerActive: true, lastTickTime: Date.now(),
+      timers: { whiteMs: 9000, blackMs: 60000, incrementMs: 2000 },
+    });
+    loop.setProfile(SERIOUS);
+    void loop.requestEngineMove();
+    await settle();
+    expect(engine.calls[0]!.profile.movetime).toBe(1300); // 9000 / 30 + 2000 / 2
+  });
+
   it('outside Bullet, searches with the difficulty\'s own movetime', async () => {
     const { engine, loop } = setup({ mode: 'play', playerColor: 'b' });
     loop.setProfile(SERIOUS);
@@ -97,5 +108,57 @@ describe('TurnLoop', () => {
     // Before GAME_OVER (delayed 500ms) the human's clock must already be stopped.
     expect(store.getState().gameOver).toBeNull();
     expect(store.getState().timerActive).toBe(false);
+  });
+
+  it('in Bullet with the human as White, each increment goes to the side that just moved', async () => {
+    const timers = { whiteMs: 60000, blackMs: 60000, incrementMs: 2000 };
+    const { store, engine, loop } = setup({ mode: 'bullet', playerColor: 'w', timers, timerActive: true, lastTickTime: Date.now() });
+    const done = loop.onPlayerMoved({ uci: 'e2e4', san: 'e4', from: 'e2', to: 'e4' });
+    await settle();
+    expect(store.getState().timers).toEqual({ whiteMs: 62000, blackMs: 60000, incrementMs: 2000 }); // human (White)
+    engine.calls[0]!.answer('e7e5');
+    await done;
+    expect(store.getState().timers).toEqual({ whiteMs: 62000, blackMs: 62000, incrementMs: 2000 }); // engine (Black)
+  });
+
+  it('drops the engine\'s answer when the position changed while it was searching', async () => {
+    const { chess, store, engine, loop } = setup({ playerColor: 'b' });
+    const done = loop.requestEngineMove();
+    await settle();
+    chess.makeMove('e2', 'e4');               // the board moved on during the search…
+    chess.makeMove('e7', 'e5');               // …and it is White's turn again
+    engine.calls[0]!.answer('d2d4');          // legal now, but searched for the old position
+    await done;
+    expect(chess.getHistory()).toEqual(['e4', 'e5']);
+    expect(store.getState().history).toEqual([]);
+    expect(store.getState().engineThinking).toBe(false);
+  });
+
+  it('an engine that returns no move clears the thinking flag and leaves the board as it was', async () => {
+    const { chess, store, engine, loop } = setup({ playerColor: 'b' });
+    const done = loop.requestEngineMove();
+    await settle();
+    expect(store.getState().engineThinking).toBe(true);
+    engine.calls[0]!.answer(null);
+    await done;
+    expect(store.getState().engineThinking).toBe(false);
+    expect(chess.getHistory()).toEqual([]);
+  });
+
+  it('declares GAME_OVER exactly 500ms after a mating engine move, so the move is shown first', async () => {
+    vi.useFakeTimers();
+    const chess = new ChessService();
+    for (const [from, to] of [['e2', 'e4'], ['e7', 'e5'], ['d1', 'h5'], ['b8', 'c6'], ['f1', 'c4'], ['g8', 'f6']] as const) {
+      chess.makeMove(from, to);
+    }
+    const { store, engine, loop } = setup({ playerColor: 'b' }, chess);
+    const done = loop.requestEngineMove();
+    await vi.advanceTimersByTimeAsync(0);
+    engine.calls[0]!.answer('h5f7');
+    await done;
+    await vi.advanceTimersByTimeAsync(499);
+    expect(store.getState().gameOver).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store.getState().gameOver).toBe('checkmate');
   });
 });

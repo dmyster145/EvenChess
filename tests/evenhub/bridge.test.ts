@@ -6,12 +6,15 @@
  * of SDK calls without mocking the entire SDK module.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EvenHubBridge } from '../../src/evenhub/bridge';
 import {
   AudioInputSource,
+  CreateStartUpPageContainer,
   ImageRawDataUpdate,
+  RebuildPageContainer,
   StartUpPageCreateResult,
+  TextContainerProperty,
   type EvenAppBridge,
 } from '@evenrealities/even_hub_sdk';
 
@@ -314,19 +317,20 @@ describe('EvenHubBridge', () => {
     expect(await bridge.storageGet('missing')).toBeNull();
   });
 
-  it('shutdown clears pending sends and calls shutDownPageContainer(0)', async () => {
+  it('shutdown drops queued image sends and calls shutDownPageContainer(0)', async () => {
     bridge.updateImage(2, 'top', makeImagePayload(2, 'A'));
+    bridge.updateImage(3, 'bot', makeImagePayload(3, 'B'));
     await flushMicrotasks();
-    expect(fake.imageCalls).toHaveLength(1);
+    expect(fake.imageCalls).toHaveLength(1); // A in flight, B queued
 
     const shutdownPromise = bridge.shutdown();
     fake.resolveNextImage();
     await shutdownPromise;
+    await flushMicrotasks();
 
+    // A was already on the wire and finishes; B was still queued and is never sent.
+    expect(fake.imageCalls.map((c) => c.containerID)).toEqual([2]);
     expect(fake.shutdownCalls).toEqual([0]);
-    // After shutdown, further updates do not enqueue (pending was cleared) but the next update
-    // still attempts to send because the bridge ref is still attached. The lifecycle is expected
-    // to detach/replace the bridge after shutdown — we just verify shutDownPageContainer fired.
   });
 
   it('setupPage is one-shot: second call returns false and does not call the SDK again', async () => {
@@ -380,8 +384,33 @@ describe('EvenHubBridge', () => {
     bridge.updateImage(2, 'top', makeImagePayload(2, 'C'));
     await flushMicrotasks();
 
-    expect(failures.length).toBeGreaterThanOrEqual(1);
-    expect(failures[0]).toBeGreaterThanOrEqual(3);
+    expect(failures).toEqual([3]);
+  });
+
+  it('after firing, onPersistentImageFailure stays quiet for 5s even as failures continue', async () => {
+    vi.useFakeTimers();
+    try {
+      (fake.updateImageRawData as ReturnType<typeof vi.fn>).mockImplementation(async () => 'sendFailed' as never);
+      const failures: number[] = [];
+      bridge.onPersistentImageFailure((count) => failures.push(count));
+      const failOnce = async () => {
+        bridge.updateImage(2, 'top', makeImagePayload(2, 'X'));
+        await vi.advanceTimersByTimeAsync(0);
+      };
+
+      for (let i = 0; i < 5; i++) await failOnce();
+      expect(failures).toEqual([3]); // the 4th and 5th failures fall inside the cooldown
+
+      await vi.advanceTimersByTimeAsync(4990);
+      await failOnce();
+      expect(failures).toEqual([3]); // 6th failure, still under 5s since the callback fired
+
+      await vi.advanceTimersByTimeAsync(10);
+      await failOnce();
+      expect(failures).toEqual([3, 7]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a successful send resets the consecutive-failure counter', async () => {
@@ -431,19 +460,134 @@ describe('EvenHubBridge', () => {
     expect(fake.imageCalls).toHaveLength(2);
   });
 
-  it('updatePage waits for the image sender to drain before issuing rebuildPageContainer', async () => {
+  it('updatePage queues rebuildPageContainer behind an in-flight image send', async () => {
     bridge.updateImage(2, 'top', makeImagePayload(2, 'A'));
     await flushMicrotasks();
     expect(fake.imageCalls).toHaveLength(1);
     expect((fake.rebuildPageContainer as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
 
     const updatePromise = bridge.updatePage({ containerTotalNum: 1 } as never);
-    // Rebuild is gated; resolve the in-flight image so the gate releases.
+    // The rebuild waits on the shared SDK call chain; resolving the image releases it.
     await flushMicrotasks();
     expect((fake.rebuildPageContainer as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
 
     fake.resolveNextImage();
     await updatePromise;
     expect((fake.rebuildPageContainer as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it('updateText collapses rapid updates to the same container into one send of the latest', async () => {
+    bridge.updateText(1, 'hud', 'A');
+    bridge.updateText(1, 'hud', 'B');
+    bridge.updateText(1, 'hud', 'C');
+    await flushMicrotasks();
+    expect(fake.textCalls).toEqual([{ containerID: 1, content: 'C' }]);
+  });
+
+  it('rawSdkGet reads the SDK store and maps its empty-string "missing" value to null', async () => {
+    fake.storage.set('k', 'sdk-value');
+    expect(await bridge.rawSdkGet('k')).toBe('sdk-value');
+    expect(await bridge.rawSdkGet('missing')).toBeNull();
+    expect(fake.storageReads).toEqual(['k', 'missing']);
+  });
+
+  it('a hung SDK storage read resolves null after 4s instead of blocking later calls', async () => {
+    vi.useFakeTimers();
+    try {
+      fake.getLocalStorage = vi.fn(() => new Promise<string>(() => {})) as never;
+      let result: string | null | undefined;
+      void bridge.storageGet('k').then((v) => { result = v; });
+      const write = bridge.storageSet('later', 'v');
+
+      await vi.advanceTimersByTimeAsync(3999);
+      expect(result).toBeUndefined();
+      expect(fake.storageWrites).toEqual([]); // queued behind the hung read
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result).toBeNull();
+      await write;
+      expect(fake.storageWrites).toEqual([{ key: 'later', value: 'v' }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe('page container validation', () => {
+    // Two text containers sharing a zOrderIndex: the SDK validator rejects this page.
+    const text = (containerID: number) =>
+      new TextContainerProperty({ containerID, containerName: `t${containerID}`, zOrderIndex: 1 });
+    const invalidStartup = () => new CreateStartUpPageContainer({ containerTotalNum: 2, textObject: [text(1), text(2)] });
+    const invalidRebuild = () => new RebuildPageContainer({ containerTotalNum: 2, textObject: [text(1), text(2)] });
+
+    it('setupPage returns false for an invalid container without calling the SDK, and can still run later', async () => {
+      expect(await bridge.setupPage(invalidStartup())).toBe(false);
+      expect(fake.setupCalls).toBe(0);
+      // The rejected attempt does not count as the one-shot startup call.
+      expect(await bridge.setupPage({ containerTotalNum: 1 } as never)).toBe(true);
+      expect(fake.setupCalls).toBe(1);
+    });
+
+    it('updatePage returns false for an invalid container without calling the SDK', async () => {
+      expect(await bridge.updatePage(invalidRebuild())).toBe(false);
+      expect((fake.rebuildPageContainer as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    });
+  });
+
+  // shutDownPageContainer(1) shows the "End this feature?" dialog, whose foreground events have
+  // inverted polarity. lifecycle.ts reads isExitDialogPending() to tell them apart.
+  describe('exit dialog flag', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('requestSystemExit arms the flag synchronously and calls shutDownPageContainer(1)', () => {
+      expect(bridge.isExitDialogPending()).toBe(false);
+      bridge.requestSystemExit();
+      expect(bridge.isExitDialogPending()).toBe(true);
+      expect(fake.shutdownCalls).toEqual([1]);
+    });
+
+    it('requestSystemExit calls the SDK at once, not queued behind an in-flight image send', async () => {
+      bridge.updateImage(2, 'top', makeImagePayload(2, 'A'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fake.imageCalls).toHaveLength(1); // still in flight
+      bridge.requestSystemExit();
+      expect(fake.shutdownCalls).toEqual([1]);
+    });
+
+    it('the flag clears itself 20s after requestSystemExit if no dialog answer arrives', () => {
+      bridge.requestSystemExit();
+      vi.advanceTimersByTime(19_999);
+      expect(bridge.isExitDialogPending()).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(bridge.isExitDialogPending()).toBe(false);
+    });
+
+    it('clearExitDialog clears the flag and cancels the safety timer', () => {
+      bridge.requestSystemExit();
+      bridge.clearExitDialog();
+      expect(bridge.isExitDialogPending()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('a second requestSystemExit restarts the 20s window', () => {
+      bridge.requestSystemExit();
+      vi.advanceTimersByTime(15_000);
+      bridge.requestSystemExit();
+      vi.advanceTimersByTime(15_000); // 30s after the first request, 15s after the second
+      expect(bridge.isExitDialogPending()).toBe(true);
+      vi.advanceTimersByTime(5_000);
+      expect(bridge.isExitDialogPending()).toBe(false);
+      expect(fake.shutdownCalls).toEqual([1, 1]);
+    });
+
+    it('without an SDK bridge, requestSystemExit neither arms the flag nor throws', () => {
+      const detached = new EvenHubBridge();
+      detached.requestSystemExit();
+      expect(detached.isExitDialogPending()).toBe(false);
+    });
   });
 });

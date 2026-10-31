@@ -19,20 +19,36 @@ describe('pcm', () => {
     expect(Array.from(payloadToInt16(b64))).toEqual([0, 1, -1, 32767, -32768]);
   });
 
+  it('reads Int16 from an ArrayBuffer', () => {
+    expect(Array.from(payloadToInt16(bytes.buffer.slice(0)))).toEqual([0, 1, -1, 32767, -32768]);
+  });
+
+  it('reads only the viewed bytes of a Uint8Array that starts partway into its buffer', () => {
+    // 3 junk bytes, then the samples: an odd byteOffset, so the view must honour it.
+    const backing = new Uint8Array(3 + bytes.length + 2).fill(0x7f);
+    backing.set(bytes, 3);
+    const view = backing.subarray(3, 3 + bytes.length);
+    expect(Array.from(payloadToInt16(view))).toEqual([0, 1, -1, 32767, -32768]);
+  });
+
   it('drops a trailing odd byte instead of throwing', () => {
     expect(Array.from(payloadToInt16(new Uint8Array([1, 0, 2])))).toEqual([1]);
   });
 
+  // Positive samples scale by 1/32767 and negative by 1/32768, so both extremes map to exactly ±1.
+  const EXPECTED_FLOATS = [0, 1 / 32767, -1 / 32768, 1, -1];
+
   it('normalizes Int16 to Float32 within [-1, 1]', () => {
-    const f = int16ToFloat32(i16);
-    expect(f[0]).toBe(0);
-    expect(f[3]).toBeCloseTo(1, 5);
-    expect(f[4]).toBeCloseTo(-1, 5);
-    for (const s of f) expect(Math.abs(s)).toBeLessThanOrEqual(1);
+    const f = Array.from(int16ToFloat32(i16));
+    f.forEach((s, i) => expect(s).toBeCloseTo(EXPECTED_FLOATS[i]!, 9));
+    expect(f[3]).toBe(1);
+    expect(f[4]).toBe(-1);
   });
 
-  it('payloadToFloat32 composes both steps', () => {
-    expect(payloadToFloat32(bytes).length).toBe(5);
+  it('payloadToFloat32 decodes bytes and normalizes them in one step', () => {
+    const f = Array.from(payloadToFloat32(bytes));
+    expect(f).toHaveLength(5);
+    f.forEach((s, i) => expect(s).toBeCloseTo(EXPECTED_FLOATS[i]!, 9));
   });
 
   it('meanAbsAmplitude is 0 for silence and >0 for signal', () => {

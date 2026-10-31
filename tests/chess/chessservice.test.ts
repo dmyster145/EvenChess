@@ -28,19 +28,13 @@ describe('ChessService', () => {
     expect(id).toBe('w-n-g1');
   });
 
-  it('sorts pieces by value (high first)', () => {
-    const chess = new ChessService();
-    const pieces = chess.getPiecesWithMoves();
-
-    // In starting position, only pawns and knights can move
-    // Knights (value 3) should come before pawns (value 1)
-    const types = pieces.map((p) => p.type);
-    const firstKnight = types.indexOf('n');
-    const firstPawn = types.indexOf('p');
-
-    if (firstKnight >= 0 && firstPawn >= 0) {
-      expect(firstKnight).toBeLessThan(firstPawn);
-    }
+  it('orders pieces for the carousel by rank 1→8, then file a→h (not by piece value)', () => {
+    // After 1.e4 e5 2.Nf3 Nc6. The queen (d1) comes after the knight (b1), and the knight on f3
+    // comes after every rank-2 pawn; the blocked e4 pawn, c1 bishop and a1 rook are absent.
+    const chess = new ChessService('r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3');
+    expect(chess.getPiecesWithMoves().map((p) => p.square)).toEqual([
+      'b1', 'd1', 'e1', 'f1', 'h1', 'a2', 'b2', 'c2', 'd2', 'g2', 'h2', 'f3',
+    ]);
   });
 
   it('makes a valid move and updates state', () => {

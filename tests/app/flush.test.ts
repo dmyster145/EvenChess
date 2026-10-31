@@ -142,21 +142,67 @@ describe('createFlush', () => {
   });
 
   it('text dedup is keyed on boardReady — flipping the layout always re-sends text (race #10)', async () => {
-    // Scope to the HUD text container — full layout also sends the captured-piece strips
-    // (ids 5/6) which would otherwise inflate the raw count.
-    const hudCalls = () => bridge.textCalls.filter((c) => c.id === CONTAINER_ID_TEXT).length;
     const flush = makeFlush();
     imagesActive = false;
     await flush.flushNow();
-    const textOnlyCount = hudCalls();
-    expect(textOnlyCount).toBe(1);
+    expect(bridge.textCalls).toHaveLength(1);
 
     // Flip to full layout — text content is identical but the cache key changes, so we expect a re-send.
     imagesActive = true;
     const flushPromise = flush.flushNow();
     await vi.advanceTimersByTimeAsync(1);
     await flushPromise;
-    expect(hudCalls()).toBe(textOnlyCount + 1);
+    expect(bridge.textCalls).toHaveLength(2);
+  });
+
+  it('a second flush with unchanged text does not re-send it', async () => {
+    const flush = makeFlush();
+    await flush.flushNow();
+    await flush.flushNow();
+    flush.schedule();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(bridge.textCalls).toHaveLength(1);
+  });
+
+  it('a flush after the text changes sends the new text', async () => {
+    const flush = makeFlush();
+    await flush.flushNow();
+    store.dispatch({ type: 'DOUBLE_TAP' }); // idle → menu changes the HUD text
+    await flush.flushNow();
+    expect(bridge.textCalls).toHaveLength(2);
+    expect(bridge.textCalls[1]?.content).not.toBe(bridge.textCalls[0]?.content);
+  });
+
+  it('a forced flush re-sends unchanged text', async () => {
+    const flush = makeFlush();
+    await flush.flushNow();
+    await flush.flushNow({ force: true });
+    expect(bridge.textCalls).toHaveLength(2);
+    expect(bridge.textCalls[1]?.content).toBe(bridge.textCalls[0]?.content);
+  });
+
+  it('a normal live-play flush renders the board through the diffing PNG path, not a full render', async () => {
+    imagesActive = true;
+    const pngSpy = vi.spyOn(renderer, 'renderPngAsync');
+    const fullSpy = vi.spyOn(renderer, 'renderFull');
+    const flush = makeFlush();
+    const flushPromise = flush.flushNow();
+    await vi.advanceTimersByTimeAsync(1);
+    await flushPromise;
+    expect(pngSpy).toHaveBeenCalledTimes(1);
+    expect(fullSpy).not.toHaveBeenCalled();
+  });
+
+  it('a forced flush re-renders the whole board', async () => {
+    imagesActive = true;
+    const pngSpy = vi.spyOn(renderer, 'renderPngAsync');
+    const fullSpy = vi.spyOn(renderer, 'renderFull');
+    const flush = makeFlush();
+    const flushPromise = flush.flushNow({ force: true });
+    await vi.advanceTimersByTimeAsync(1);
+    await flushPromise;
+    expect(fullSpy).toHaveBeenCalledTimes(1);
+    expect(pngSpy).not.toHaveBeenCalled();
   });
 
   it('cancel() prevents a pending debounced flush from firing', async () => {
@@ -171,7 +217,18 @@ describe('createFlush', () => {
     wearing = false;
     const flush = makeFlush();
     flush.setForceFullRefresh();
+    flush.schedule();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(bridge.textCalls).toHaveLength(1);
+  });
+
+  it('setForceFullRefresh() applies to one flush only', async () => {
+    wearing = false;
+    const flush = makeFlush();
+    flush.setForceFullRefresh();
     await flush.flushNow();
-    expect(bridge.textCalls.length).toBe(1);
+    store.dispatch({ type: 'DOUBLE_TAP' }); // change the text so dedup cannot hide a second send
+    await flush.flushNow();
+    expect(bridge.textCalls).toHaveLength(1);
   });
 });
