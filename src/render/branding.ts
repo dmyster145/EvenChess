@@ -1,5 +1,7 @@
 /**
- * Branding image generator — renders "Chess" logo as 1-bit PNG (BMP fallback if compression unavailable).
+ * The strip image above the board: the captured-pieces strip, or a CHECK!/CHECKMATE! banner, or
+ * blank. All are 1-bit BMPs; the two banners are also pre-encoded as PNG at startup
+ * (preloadBrandingImages) and use the PNG once it is ready.
  */
 
 import { ImageRawDataUpdate } from '@evenrealities/even_hub_sdk';
@@ -31,7 +33,8 @@ function setPixel(pixels: Uint8Array, x: number, y: number, on: number): void {
   }
 }
 
-// Font: 12 wide x 16 tall
+// Banner font: 12 wide x 16 tall, only the letters CHECK! and CHECKMATE! need.
+const BRAND_CHAR_W = 12;
 const BRAND_FONT: Record<string, number[]> = {
   'E': [
     0b011111111110,
@@ -49,42 +52,6 @@ const BRAND_FONT: Record<string, number[]> = {
     0b110000000000,
     0b111111111111,
     0b011111111110,
-    0b000000000000,
-  ],
-  'V': [
-    0b110000000011,
-    0b110000000011,
-    0b110000000011,
-    0b011000000110,
-    0b011000000110,
-    0b011000000110,
-    0b001100001100,
-    0b001100001100,
-    0b001100001100,
-    0b000110011000,
-    0b000110011000,
-    0b000011110000,
-    0b000011110000,
-    0b000001100000,
-    0b000001100000,
-    0b000000000000,
-  ],
-  'N': [
-    0b110000000011,
-    0b111000000011,
-    0b111100000011,
-    0b111110000011,
-    0b110111000011,
-    0b110011100011,
-    0b110001110011,
-    0b110000111011,
-    0b110000011111,
-    0b110000001111,
-    0b110000000111,
-    0b110000000011,
-    0b110000000011,
-    0b110000000011,
-    0b110000000011,
     0b000000000000,
   ],
   'C': [
@@ -122,42 +89,6 @@ const BRAND_FONT: Record<string, number[]> = {
     0b110000000011,
     0b110000000011,
     0b000000000000,
-  ],
-  'S': [
-    0b001111111100,
-    0b011111111110,
-    0b111000000111,
-    0b110000000011,
-    0b110000000000,
-    0b111000000000,
-    0b011111100000,
-    0b001111111100,
-    0b000001111110,
-    0b000000000111,
-    0b000000000011,
-    0b110000000011,
-    0b111000000111,
-    0b011111111110,
-    0b001111111100,
-    0b000000000000,
-  ],
-  '.': [
-    0b0000,
-    0b0000,
-    0b0000,
-    0b0000,
-    0b0000,
-    0b0000,
-    0b0110,
-    0b1111,
-    0b1111,
-    0b0110,
-    0b0000,
-    0b0000,
-    0b0000,
-    0b0000,
-    0b0000,
-    0b0000,
   ],
   'K': [
     0b110000000111,
@@ -251,10 +182,6 @@ const BRAND_FONT: Record<string, number[]> = {
   ],
 };
 
-function brandCharWidth(ch: string): number {
-  return ch === '.' ? 4 : 12;
-}
-
 function drawBrandChar(
   pixels: Uint8Array,
   x: number,
@@ -264,33 +191,18 @@ function drawBrandChar(
   const glyph = BRAND_FONT[ch];
   if (!glyph) return 0;
   
-  const charWidth = brandCharWidth(ch);
   const charHeight = 16;
   
   for (let row = 0; row < charHeight; row++) {
     const bits = glyph[row] ?? 0;
-    for (let col = 0; col < charWidth; col++) {
-      if (bits & (1 << (charWidth - 1 - col))) {
+    for (let col = 0; col < BRAND_CHAR_W; col++) {
+      if (bits & (1 << (BRAND_CHAR_W - 1 - col))) {
         setPixel(pixels, x + col, y + row, 1);
       }
     }
   }
   
-  return charWidth + 2;
-}
-
-function drawKnightIcon(pixels: Uint8Array, x: number, y: number): void {
-  const knightBitmap = PIECE_SILHOUETTES['n'];
-  if (!knightBitmap) return;
-  
-  for (let row = 0; row < PIECE_SIZE; row++) {
-    const bits = knightBitmap[row] ?? 0;
-    for (let col = 0; col < PIECE_SIZE; col++) {
-      if (bits & (1 << (PIECE_SIZE - 1 - col))) {
-        setPixel(pixels, x + col, y + row, 1);
-      }
-    }
-  }
+  return BRAND_CHAR_W + 2;
 }
 
 // ── Captured-pieces strip ─────────────────────────────────────────────────
@@ -505,18 +417,6 @@ function create1BitBmp(pixels: Uint8Array): Uint8Array {
 
 // ── Pixel renderers (bit-packed, MSB first) ───────────────────────────────
 
-function makeBrandPixels(): Uint8Array {
-  const rowBytes = getBmpRowBytes(BRAND_WIDTH);
-  const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
-  let xPos = 2;
-  const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
-  for (const ch of 'CHESS') {
-    xPos += drawBrandChar(pixels, xPos, yPos, ch);
-  }
-  drawKnightIcon(pixels, xPos + 4, Math.floor((BRAND_HEIGHT - 19) / 2));
-  return pixels;
-}
-
 function makeBlankPixels(): Uint8Array {
   return new Uint8Array(Math.ceil(BRAND_WIDTH / 8) * BRAND_HEIGHT);
 }
@@ -525,7 +425,7 @@ function makeStatusPixels(text: string): Uint8Array {
   const rowBytes = getBmpRowBytes(BRAND_WIDTH);
   const pixels = new Uint8Array(rowBytes * BRAND_HEIGHT);
   let totalWidth = 0;
-  for (const ch of text) totalWidth += brandCharWidth(ch) + 2;
+  for (let i = 0; i < text.length; i++) totalWidth += BRAND_CHAR_W + 2;
   if (text.length > 0) totalWidth -= 2;
   let xPos = Math.floor((BRAND_WIDTH - totalWidth) / 2);
   const yPos = Math.floor((BRAND_HEIGHT - 16) / 2);
@@ -539,18 +439,11 @@ function makeBrandingUpdate(imageData: Uint8Array | number[]): ImageRawDataUpdat
 
 // ── Caches ────────────────────────────────────────────────────────────────
 
-let cachedBrandImage: ImageRawDataUpdate | null = null;
 let cachedBlankBrandImage: ImageRawDataUpdate | null = null;
 let cachedCheckBrandImage: ImageRawDataUpdate | null = null;
 let cachedCheckmateBrandImage: ImageRawDataUpdate | null = null;
 
 // ── Sync BMP render (fallback) ────────────────────────────────────────────
-
-export function renderBrandingImage(): ImageRawDataUpdate {
-  if (cachedBrandImage) return cachedBrandImage;
-  cachedBrandImage = makeBrandingUpdate(Array.from(create1BitBmp(makeBrandPixels())));
-  return cachedBrandImage;
-}
 
 export function renderBlankBrandingImage(): ImageRawDataUpdate {
   if (cachedBlankBrandImage) return cachedBlankBrandImage;

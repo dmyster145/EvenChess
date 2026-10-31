@@ -38,7 +38,7 @@ Chess/
 │   ├── evenhub/        # SDK bridge: init, page setup, text/image updates, event subscription
 │   ├── chess/          # ChessService (chess.js wrapper), square-utils
 │   ├── engine/         # TurnLoop, StockfishBridge (worker), profiles
-│   ├── bullet/         # Clock (tick, increment, format, expiry)
+│   ├── bullet/         # Clock display format (the clock runs in the reducer)
 │   ├── academy/        # Drills (coordinates, knight path, tactics, mate, PGN), puzzles, knight logic
 │   ├── storage/        # Persistence (game save, difficulty, board markers)
 │   └── input/          # SDK event → Action mapping (scroll/tap/double-tap), replay fixtures

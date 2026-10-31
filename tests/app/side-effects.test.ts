@@ -35,7 +35,7 @@ function setup() {
 describe('side-effects: system exit request', () => {
   it('tapping Exit opens the system dialog once and schedules no screen updates while it is up', () => {
     const { store, calls } = setup();
-    store.dispatch({ type: 'TAP', selectedIndex: 0, selectedName: '' }); // Exit item
+    store.dispatch({ type: 'TAP' }); // Exit item
     expect(calls.systemExits).toBe(1);
     expect(calls.flushCancels).toBe(1);
     expect(calls.brandingCancels).toBe(1);

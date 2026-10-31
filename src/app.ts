@@ -21,7 +21,6 @@
 
 import { ChessService } from './chess/chessservice';
 import { createStore } from './state/store';
-import type { Action } from './state/contracts';
 import { mapEvenHubEvent } from './input/actions';
 import { BoardRenderer } from './render/boardimage';
 import { type EvenHubEvent } from '@evenrealities/even_hub_sdk';
@@ -33,7 +32,6 @@ import { setBackgroundState, onBackgroundRestore } from './storage/background-st
 import { attachDebugCopyApi, debugLog, markRunStart } from './debug/logger';
 import { initBoardSnapshot } from './debug/board-snapshot';
 import { activateKeepAlive } from './utils/keep-alive';
-import { recordPerfDispatch } from './perf/dispatch-trace';
 import { createFlush } from './app/flush';
 import { createBranding } from './app/branding';
 import { createBulletTimer } from './app/bullet-timer';
@@ -94,17 +92,13 @@ export async function initApp(): Promise<void> {
     isDeviceConnected: true,
   };
 
-  function dispatchWithPerfSource(source: 'input' | 'timer' | 'app', action: Action): void {
-    recordPerfDispatch(source, action);
-    store.dispatch(action);
-  }
 
   // Module wiring. Order matters only by reference: each createX returns plain objects with no
-  // active timers / subscriptions until the relevant trigger (subscribe, attach, etc.).
-  const autosave = createAutosave({ store, dispatch: (a) => dispatchWithPerfSource('app', a) });
+  // active timers / subscriptions until the relevant trigger (subscribe, an event, etc.).
+  const autosave = createAutosave({ store, dispatch: (a) => store.dispatch(a) });
   const bulletTimer = createBulletTimer({
     store,
-    onTick: () => dispatchWithPerfSource('timer', { type: 'TIMER_TICK' }),
+    onTick: () => store.dispatch({ type: 'TIMER_TICK' }),
   });
   const flush = createFlush({
     bridge,
@@ -128,7 +122,6 @@ export async function initApp(): Promise<void> {
     bulletTimer,
     autosave,
     deviceFlags,
-    imageContainersActive: () => imageContainersActive,
   });
   const sideEffects = createSideEffects({
     store,
@@ -264,7 +257,7 @@ export async function initApp(): Promise<void> {
         return;
       }
 
-      dispatchWithPerfSource('input', action);
+      store.dispatch(action);
     }
   }
 
@@ -292,9 +285,7 @@ export async function initApp(): Promise<void> {
     store,
     flush,
     branding,
-    lifecycle,
     imageContainersActive: () => imageContainersActive,
-    setImageContainersActive: (v) => { imageContainersActive = v; },
     hubEventHandler: handleHubEvent,
     deviceStatusHandler: (status) => lifecycle.onDeviceStatusChanged(status),
     setDeviceStatusUnsubscribe: (fn) => {
@@ -317,8 +308,6 @@ export async function initApp(): Promise<void> {
     // Safety net: never leave the glasses mic open if the webview is torn down.
     window.addEventListener('pagehide', () => voice.dispose());
   }
-
-  lifecycle.attach();
 
   // Persistent-image-failure recovery — a safety net for genuine BLE wedges (not the exit-dialog
   // case, which lifecycle.ts now handles correctly via the inverted-polarity event model). The

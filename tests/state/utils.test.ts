@@ -1,11 +1,10 @@
 /**
  * Unit tests for state utility functions.
- * Verifies move number calculation and phase type checking.
+ * Verifies move number calculation and Play As color resolution.
  */
 
 import { describe, it, expect } from 'vitest';
-import { getMoveNumber, isMenuPhase, isConfirmPhase, resolvePlayerColor } from '../../src/state/utils';
-import type { UIPhase } from '../../src/state/contracts';
+import { getMoveNumber, resolvePlayerColor } from '../../src/state/utils';
 
 describe('resolvePlayerColor', () => {
   it('maps white→w and black→b', () => {
@@ -51,77 +50,5 @@ describe('getMoveNumber', () => {
     expect(getMoveNumber(100)).toBe(51);
     expect(getMoveNumber(199)).toBe(100);
     expect(getMoveNumber(200)).toBe(101);
-  });
-});
-
-describe('isMenuPhase', () => {
-  const menuPhases: UIPhase[] = [
-    'menu',
-    'viewLog',
-    'difficultySelect',
-    'resetConfirm',
-    'exitConfirm',
-    'modeSelect',
-    'bulletSetup',
-    'academySelect',
-    'coordinateDrill',
-    'tacticsDrill',
-    'mateDrill',
-    'knightPathDrill',
-    'pgnStudy',
-  ];
-
-  const nonMenuPhases: UIPhase[] = [
-    'idle',
-    'pieceSelect',
-    'destSelect',
-    'promotionSelect',
-    'displayOptionsSelect',
-  ];
-
-  it('returns true for menu-related phases', () => {
-    for (const phase of menuPhases) {
-      expect(isMenuPhase(phase)).toBe(true);
-    }
-  });
-
-  it('returns false for non-menu phases', () => {
-    for (const phase of nonMenuPhases) {
-      expect(isMenuPhase(phase)).toBe(false);
-    }
-  });
-});
-
-describe('isConfirmPhase', () => {
-  it('returns true for resetConfirm', () => {
-    expect(isConfirmPhase('resetConfirm')).toBe(true);
-  });
-
-  it('returns true for exitConfirm', () => {
-    expect(isConfirmPhase('exitConfirm')).toBe(true);
-  });
-
-  it('returns false for all other phases', () => {
-    const otherPhases: UIPhase[] = [
-      'idle',
-      'pieceSelect',
-      'destSelect',
-      'menu',
-      'viewLog',
-      'difficultySelect',
-      'displayOptionsSelect',
-      'modeSelect',
-      'bulletSetup',
-      'academySelect',
-      'coordinateDrill',
-      'tacticsDrill',
-      'mateDrill',
-      'knightPathDrill',
-      'pgnStudy',
-    ];
-
-    for (const phase of otherPhases) {
-      expect(isConfirmPhase(phase)).toBe(false);
-    }
   });
 });

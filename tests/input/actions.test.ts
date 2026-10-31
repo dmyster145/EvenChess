@@ -23,13 +23,7 @@ describe('input/actions', () => {
         currentSelectItemIndex: 2,
         currentSelectItemName: 'Nf3',
       });
-      const action = mapListEvent(event, idle);
-      expect(action).not.toBeNull();
-      expect(action!.type).toBe('TAP');
-      if (action!.type === 'TAP') {
-        expect(action.selectedIndex).toBe(2);
-        expect(action.selectedName).toBe('Nf3');
-      }
+      expect(mapListEvent(event, idle)).toEqual({ type: 'TAP' });
     });
 
     it('maps DOUBLE_CLICK_EVENT to DOUBLE_TAP', () => {

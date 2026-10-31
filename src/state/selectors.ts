@@ -258,101 +258,6 @@ export function getCarouselSelectedIndex(state: GameState): number {
   }
 }
 
-export function getStatusText(state: GameState): string {
-  if (state.gameOver) {
-    const reason = state.gameOver.charAt(0).toUpperCase() + state.gameOver.slice(1);
-    return `Game Over: ${reason}`;
-  }
-
-  if (state.engineThinking) {
-    return 'Engine thinking...';
-  }
-
-  const turnLabel = state.turn === 'w' ? 'White' : 'Black';
-  const parts: string[] = [`${turnLabel} to move`];
-
-  if (state.lastMove) {
-    parts.push(`Last: ${state.lastMove}`);
-  }
-
-  const moveNum = getMoveNumber(state.history.length);
-  parts.push(`Move ${moveNum}`);
-
-  switch (state.phase) {
-    case 'idle':
-      parts.push('Scroll to select piece');
-      break;
-    case 'rowSelect':
-      parts.push('Tap to choose row');
-      break;
-    case 'pieceSelect': {
-      const row = getSelectedRow(state);
-      parts.push(row != null ? `Row ${row}: tap to choose piece` : 'Tap to choose piece');
-      break;
-    }
-    case 'destSelect': {
-      const piece = getSelectedPiece(state);
-      if (piece) {
-        parts.push(`${piece.label}: tap to move`);
-      }
-      break;
-    }
-  }
-
-  return parts.join(' | ');
-}
-
-export function getBoardPreviewData(state: GameState): {
-  originSquare: string | null;
-  destSquare: string | null;
-} {
-  const piece = getSelectedPiece(state);
-  const move = getSelectedMove(state);
-  return {
-    originSquare: piece?.square ?? null,
-    destSquare: move?.to ?? null,
-  };
-}
-
-export function getCarouselDisplayText(state: GameState): string {
-  const items = getCarouselItems(state);
-  const index = getCarouselSelectedIndex(state);
-
-  switch (state.phase) {
-    case 'rowSelect': {
-      if (items.length === 0) return 'No moves';
-      const current = items[index] ?? items[0];
-      return `< ${current} >  (${index + 1}/${items.length})`;
-    }
-
-    case 'pieceSelect': {
-      if (items.length === 0) return 'No pieces';
-      const current = items[index] ?? items[0];
-      return `< ${current} >  (${index + 1}/${items.length})`;
-    }
-
-    case 'destSelect': {
-      const piece = getSelectedPiece(state);
-      if (items.length === 0) return 'No moves';
-      const current = items[index] ?? items[0];
-      const prefix = piece ? `${piece.label}: ` : '';
-      return `${prefix}< ${current} >  (${index + 1}/${items.length})`;
-    }
-
-    case 'promotionSelect': {
-      if (items.length === 0) return 'No options';
-      const current = items[index] ?? items[0];
-      return `< ${current} >  (${index + 1}/${items.length})`;
-    }
-
-    case 'idle':
-    default:
-      if (state.engineThinking) return '';
-      if (state.gameOver) return 'Double-tap for new game';
-      return 'Scroll to begin';
-  }
-}
-
 export function getMenuDisplayText(state: GameState): string {
   const lines: string[] = [''];
 
@@ -381,7 +286,7 @@ export function getDifficultyDisplayText(state: GameState): string {
   return lines.join('\n');
 }
 
-export function getCustomDifficultyDisplayText(state: GameState): string {
+function getCustomDifficultyDisplayText(state: GameState): string {
   const level = state.customSkillLevel;
   const lines: string[] = ['', 'CUSTOM DIFFICULTY'];
   lines.push(`  Level: ${ARROW_LEFT} ${level} ${ARROW_RIGHT}   (0–9)`);
@@ -437,7 +342,7 @@ export function getDisplayOptionsDisplayText(state: GameState): string {
   return lines.join('\n');
 }
 
-export function getPlayAsDisplayText(state: GameState): string {
+function getPlayAsDisplayText(state: GameState): string {
   const lines: string[] = ['', 'PLAY AS', ''];
 
   PLAY_AS_LABELS.forEach((label, i) => {
@@ -492,20 +397,6 @@ export function getResetConfirmDisplayText(state: GameState): string {
   lines.push('');
 
   const options = ['Confirm Reset', 'Cancel'];
-  options.forEach((label, i) => {
-    const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
-    lines.push(`${prefix}${label}`);
-  });
-
-  return lines.join('\n');
-}
-
-export function getExitConfirmDisplayText(state: GameState): string {
-  const lines: string[] = ['', 'UNSAVED CHANGES', ''];
-  lines.push('Save before exit?');
-  lines.push('');
-
-  const options = ['Save & Exit', 'Cancel'];
   options.forEach((label, i) => {
     const prefix = i === state.menuSelectedIndex ? '> ' : '  ';
     lines.push(`${prefix}${label}`);
@@ -722,8 +613,6 @@ export function getCombinedDisplayText(state: GameState, options?: CombinedDispl
       return getPlayAsDisplayText(state);
     case 'resetConfirm':
       return getResetConfirmDisplayText(state);
-    case 'exitConfirm':
-      return getExitConfirmDisplayText(state);
     case 'modeSelect':
       return getModeSelectDisplayText(state);
     case 'bulletSetup':

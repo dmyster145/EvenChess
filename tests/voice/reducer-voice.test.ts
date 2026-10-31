@@ -15,7 +15,7 @@ function createState(overrides?: Partial<GameState>): GameState {
     fen: 'startpos', turn: 'w', pieces, phase: 'idle',
     selectedPieceId: null, selectedMoveIndex: 0, pendingPromotionMove: null,
     selectedPromotionIndex: 0, mode: 'play', history: [], lastMove: null,
-    lastMoveToSquare: null, playerLastMoveToSquare: null, engineThinking: false,
+    playerLastMoveToSquare: null, engineThinking: false,
     inCheck: false, gameOver: null, pendingMove: null, menuSelectedIndex: 0,
     hasUnsavedChanges: false, previousPhase: null, difficulty: 'casual',
     customSkillLevel: 5, logScrollOffset: 0, timerActive: false,
@@ -54,7 +54,7 @@ describe('reducer — voice actions', () => {
     expect(next.pendingMove).toEqual(move);
     expect(next.history).toEqual(['Nc3']);
     expect(next.lastMove).toBe('Nc3');
-    expect(next.lastMoveToSquare).toBe('c3');
+    expect(next.playerLastMoveToSquare).toBe('c3');
     expect(next.hasUnsavedChanges).toBe(true);
     expect(next.voice?.pendingConfirm).toBeNull();
     expect(next.voice?.status).toContain('Nc3');

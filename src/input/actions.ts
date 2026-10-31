@@ -206,11 +206,7 @@ export function mapListEvent(event: List_ItemEvent, state: GameState): Action | 
     case OsEventTypeList.CLICK_EVENT: {
       if (isClickDuplicate()) return null;
       if (!tryConsumeTap('TAP')) return null;
-      return {
-        type: 'TAP',
-        selectedIndex: event.currentSelectItemIndex ?? 0,
-        selectedName: event.currentSelectItemName ?? '',
-      };
+      return { type: 'TAP' };
     }
 
     case OsEventTypeList.DOUBLE_CLICK_EVENT: {
@@ -242,7 +238,7 @@ export function mapTextEvent(event: Text_ItemEvent, state: GameState): Action | 
     case OsEventTypeList.CLICK_EVENT: {
       if (isClickDuplicate()) return null;
       if (!tryConsumeTap('TAP')) return null;
-      return { type: 'TAP', selectedIndex: 0, selectedName: '' };
+      return { type: 'TAP' };
     }
 
     case OsEventTypeList.DOUBLE_CLICK_EVENT: {
@@ -273,7 +269,7 @@ export function mapSysEvent(event: Sys_ItemEvent, state: GameState): Action | nu
     case OsEventTypeList.CLICK_EVENT: {
       if (isClickDuplicate()) return null;
       if (!tryConsumeTap('TAP')) return null;
-      return { type: 'TAP', selectedIndex: 0, selectedName: '' };
+      return { type: 'TAP' };
     }
 
     case OsEventTypeList.DOUBLE_CLICK_EVENT: {

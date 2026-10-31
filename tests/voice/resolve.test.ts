@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveVoiceMove } from '../../src/voice/resolve';
 import type { GameState, PieceEntry } from '../../src/state/contracts';
 import { parseVoiceCommand } from '../../src/voice/parse';
+import { ChessService } from '../../src/chess/chessservice';
 
 function mkState(pieces: PieceEntry[], playerColor: 'w' | 'b' = 'w'): GameState {
   return { pieces, playerColor, turn: playerColor } as unknown as GameState;
@@ -154,5 +155,27 @@ describe('resolveVoiceMove', () => {
       expect(r.kind).toBe('move');
       if (r.kind === 'move') expect(r.move.uci).toBe('b1c3');
     });
+  });
+});
+
+describe('resolveVoiceMove: "takes"', () => {
+  // White pawn e5 can take d5 en passant on d6, and the knight on c4 can move quietly to d6.
+  const enPassant = (): GameState => {
+    const pieces = new ChessService('4k3/8/8/3pP3/2N5/8/8/4K3 w - d6 0 1').getPiecesWithMoves();
+    return mkState(pieces);
+  };
+
+  it('without "takes", two pieces reaching the square is ambiguous', () => {
+    expect(resolveVoiceMove(parseVoiceCommand('d6'), enPassant()).kind).toBe('ambiguous');
+  });
+
+  it('"takes" picks the en passant capture over the quiet knight move', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('takes d6'), enPassant());
+    expect(r).toMatchObject({ kind: 'move', move: { from: 'e5', to: 'd6', san: 'exd6' } });
+  });
+
+  it('a misheard "takes" with no capture available still finds the move', () => {
+    const r = resolveVoiceMove(parseVoiceCommand('knight takes c3'), mkState([knightB1, pawnE2]));
+    expect(r).toMatchObject({ kind: 'move', move: { uci: 'b1c3' } });
   });
 });

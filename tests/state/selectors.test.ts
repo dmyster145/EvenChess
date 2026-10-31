@@ -4,16 +4,12 @@ import {
   getSelectedMove,
   getCarouselItems,
   getCarouselSelectedIndex,
-  getStatusText,
-  getBoardPreviewData,
-  getCarouselDisplayText,
   getMenuDisplayText,
   getDifficultyDisplayText,
   getDisplayOptionsDisplayText,
   getBoardViewColor,
   getLogDisplayText,
   getResetConfirmDisplayText,
-  getExitConfirmDisplayText,
   getModeSelectDisplayText,
   getBulletSetupDisplayText,
   getAcademySelectDisplayText,
@@ -70,7 +66,6 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     mode: 'play',
     history: [],
     lastMove: null,
-    lastMoveToSquare: null,
     playerLastMoveToSquare: null,
     engineThinking: false,
     inCheck: false,
@@ -240,46 +235,6 @@ describe('selectors', () => {
       expect(getCarouselSelectedIndex(state)).toBe(2);
     });
   });
-
-  describe('getStatusText', () => {
-    it('shows game-over reason', () => {
-      const state = createTestState({ gameOver: 'checkmate' });
-      expect(getStatusText(state)).toContain('Checkmate');
-    });
-
-    it('shows engine thinking', () => {
-      const state = createTestState({ engineThinking: true });
-      expect(getStatusText(state)).toContain('thinking');
-    });
-
-    it('shows turn and phase hint', () => {
-      const state = createTestState();
-      const text = getStatusText(state);
-      expect(text).toContain('White to move');
-      expect(text).toContain('Scroll');
-    });
-  });
-
-  describe('getBoardPreviewData', () => {
-    it('returns nulls when nothing selected', () => {
-      const state = createTestState();
-      const data = getBoardPreviewData(state);
-      expect(data.originSquare).toBeNull();
-      expect(data.destSquare).toBeNull();
-    });
-
-    it('returns origin and dest when selected', () => {
-      const state = createTestState({
-        selectedPieceId: 'w-q-d1',
-        selectedMoveIndex: 1,
-      });
-      const data = getBoardPreviewData(state);
-      expect(data.originSquare).toBe('d1');
-      expect(data.destSquare).toBe('h5');
-    });
-  });
-
-  // ── Move Expansion Tests (via getCarouselItems) ─────────────────────────────
 
   describe('move expansion (expandMoveName)', () => {
     it('expands piece moves with full piece name', () => {
@@ -523,55 +478,6 @@ describe('selectors', () => {
 
   // ── Carousel Display Text Tests ─────────────────────────────────────────────
 
-  describe('getCarouselDisplayText', () => {
-    it('shows "Scroll to begin" in idle', () => {
-      const state = createTestState({ phase: 'idle' });
-      expect(getCarouselDisplayText(state)).toBe('Scroll to begin');
-    });
-
-    it('shows empty when engine thinking', () => {
-      const state = createTestState({ phase: 'idle', engineThinking: true });
-      expect(getCarouselDisplayText(state)).toBe('');
-    });
-
-    it('shows double-tap hint when game over', () => {
-      const state = createTestState({ phase: 'idle', gameOver: 'checkmate' });
-      expect(getCarouselDisplayText(state)).toContain('Double-tap');
-    });
-
-    it('shows piece selection with row-scoped counter in pieceSelect', () => {
-      const rank1: PieceEntry[] = [
-        { id: 'w-q-d1', label: 'Qd1', color: 'w', type: 'q', square: 'd1', moves: [{ uci: 'd1d3', san: 'Qd3', from: 'd1', to: 'd3' }] },
-        { id: 'w-r-h1', label: 'Rh1', color: 'w', type: 'r', square: 'h1', moves: [{ uci: 'h1g1', san: 'Rg1', from: 'h1', to: 'g1' }] },
-      ];
-      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-q-d1', pieces: rank1 });
-      const text = getCarouselDisplayText(state);
-      expect(text).toContain('Qd1');
-      expect(text).toContain('1/2');
-    });
-
-    it('shows row selection with counter in rowSelect', () => {
-      // d1 = rank 1, f3 = rank 3 → candidate rows [1, 3]; d1 selected → row 1 (index 0)
-      const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-q-d1' });
-      const text = getCarouselDisplayText(state);
-      expect(text).toContain('Row 1');
-      expect(text).toContain('1/2');
-    });
-
-    it('shows move selection with piece prefix in destSelect', () => {
-      const state = createTestState({
-        phase: 'destSelect',
-        selectedPieceId: 'w-q-d1',
-        selectedMoveIndex: 0,
-      });
-      const text = getCarouselDisplayText(state);
-      expect(text).toContain('Qd1');
-      expect(text).toContain('Queen D3');
-    });
-  });
-
-  // ── Menu Display Text Tests ─────────────────────────────────────────────────
-
   describe('getMenuDisplayText', () => {
     it('renders the menu options (top-level menu has no header by design)', () => {
       // The top-level menu intentionally omits a header string; submenus
@@ -687,22 +593,6 @@ describe('selectors', () => {
       expect(text).toContain('Cancel');
     });
   });
-
-  describe('getExitConfirmDisplayText', () => {
-    it('shows UNSAVED CHANGES header', () => {
-      const state = createTestState({ phase: 'exitConfirm' });
-      const text = getExitConfirmDisplayText(state);
-      expect(text).toContain('UNSAVED CHANGES');
-    });
-
-    it('shows save options', () => {
-      const state = createTestState({ phase: 'exitConfirm' });
-      const text = getExitConfirmDisplayText(state);
-      expect(text).toContain('Save');
-    });
-  });
-
-  // ── Mode Select Display Text Tests ──────────────────────────────────────────
 
   describe('getModeSelectDisplayText', () => {
     it('shows MODE header', () => {

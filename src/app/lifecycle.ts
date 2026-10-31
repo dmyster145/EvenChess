@@ -16,6 +16,11 @@
  *
  * The firmware also emits DUPLICATE events for one physical transition (~50–100ms apart), so all
  * sys events are deduped by (type, time) before any state-changing decision.
+ *
+ * Browser visibilitychange/pagehide/pageshow are deliberately NOT used: the SDK's sys events
+ * (4/5/6/7) are the authoritative foreground/background/exit signal on G2. The browser events fire
+ * at unpredictable times in iOS WKWebView, and racing them against this state machine caused the
+ * exit-dialog freeze.
  */
 
 import type { Store } from '../state/store';
@@ -43,13 +48,9 @@ export interface LifecycleDeps {
   autosave: AutosaveController;
   /** Mutable read-write reference to the wearing/connected flags consumed by flush.ts. */
   deviceFlags: DeviceStatusFlags;
-  /** True once the text-only startup page has been upgraded to the full layout. */
-  imageContainersActive: () => boolean;
 }
 
 export interface LifecycleController {
-  attach(): void;
-  detach(): void;
   /** Forwarded from the SDK's `onEvenHubEvent`; handles only the sysEvent lifecycle types. */
   onHubEvent(event: EvenHubEvent): void;
   /** Forwarded from the SDK's `onDeviceStatusChanged`. */
@@ -70,8 +71,6 @@ const ABNORMAL_EXIT = (OsEventTypeList as unknown as { ABNORMAL_EXIT_EVENT?: num
 const SYSTEM_EXIT = (OsEventTypeList as unknown as { SYSTEM_EXIT_EVENT?: number }).SYSTEM_EXIT_EVENT ?? 7;
 
 export function createLifecycle(deps: LifecycleDeps): LifecycleController {
-  const subscriptions = new Set<() => void>();
-  let attached = false;
   let isHidden = false;
   // Set when a FOREGROUND_ENTER arrives while we already believe we're showing — i.e. an overlay
   // (e.g. the glasses' system menu) appeared on top of the app. The
@@ -90,26 +89,8 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
   let lastSysType = -1;
   let lastSysAt = 0;
 
-  function attach(): void {
-    if (attached) return;
-    attached = true;
-    // NOTE: we intentionally do NOT wire browser visibilitychange/pagehide/pageshow listeners.
-    // The SDK's sys events (4/5/6/7) are the authoritative foreground/background/exit signal on
-    // G2; the browser events fire at unpredictable times in iOS WKWebView and racing them
-    // against the sys-event state machine was a source of the exit-dialog freeze. The reference
-    // weather/snake apps rely solely on sys events too.
-  }
-
-  function detach(): void {
-    for (const unsubscribe of subscriptions) {
-      try {
-        unsubscribe();
-      } catch (err) {
-        console.error('[lifecycle] unsubscribe error', err);
-      }
-    }
-    subscriptions.clear();
-    attached = false;
+  /** Forget overlay/background pause bookkeeping once the app has shut down. */
+  function resetPauseTracking(): void {
     overlayActive = false;
     overlayPausedBullet = false;
     hiddenPausedBullet = false;
@@ -210,7 +191,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
       } catch (err) {
         console.error('[lifecycle] bridge.shutdown error', err);
       }
-      detach();
+      resetPauseTracking();
     })();
   }
 
@@ -360,5 +341,5 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     }
   }
 
-  return { attach, detach, onHubEvent, onDeviceStatusChanged };
+  return { onHubEvent, onDeviceStatusChanged };
 }

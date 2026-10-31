@@ -43,7 +43,6 @@ const SUBMENU_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
   'displayOptionsSelect',
   'playAsSelect',
   'resetConfirm',
-  'exitConfirm',
   'viewLog',
 ]);
 

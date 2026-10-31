@@ -255,11 +255,11 @@ describe('action sequence', () => {
     expect(store.getState().selectedPieceId).toBe('w-n-g1');
 
     // Descend into the row → piece selection
-    store.dispatch({ type: 'TAP', selectedIndex: 0, selectedName: 'Ng1' });
+    store.dispatch({ type: 'TAP' });
     expect(store.getState().phase).toBe('pieceSelect');
 
     // Confirm piece → destination selection
-    store.dispatch({ type: 'TAP', selectedIndex: 0, selectedName: 'Ng1' });
+    store.dispatch({ type: 'TAP' });
     expect(store.getState().phase).toBe('destSelect');
 
     // Double-tap backs out one level to pieceSelect (unconditional, no gesture window)

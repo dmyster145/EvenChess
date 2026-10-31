@@ -13,7 +13,7 @@ import type { Store } from '../state/store';
 import type { EvenHubBridge } from '../evenhub/bridge';
 import type { FlushController } from './flush';
 import type { BrandingController } from './branding';
-import type { LifecycleController, DeviceStatusUpdate } from './lifecycle';
+import type { DeviceStatusUpdate } from './lifecycle';
 import { composePageForState, composeStartupPage, composeTextOnlyStartupPage } from '../render/composer';
 import type { EvenHubEvent } from '@evenrealities/even_hub_sdk';
 
@@ -24,9 +24,7 @@ export interface ReinitDeps {
   store: Store;
   flush: FlushController;
   branding: BrandingController;
-  lifecycle: LifecycleController;
   imageContainersActive: () => boolean;
-  setImageContainersActive: (active: boolean) => void;
   /** Pulled in so reinit can re-subscribe events after the new bridge is up. */
   hubEventHandler: (event: EvenHubEvent) => void;
   deviceStatusHandler: (status: DeviceStatusUpdate) => void;

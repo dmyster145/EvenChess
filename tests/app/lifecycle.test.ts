@@ -144,8 +144,7 @@ describe('createLifecycle', () => {
     vi.useRealTimers();
   });
 
-  function makeLifecycle(opts?: { imageContainersActive?: boolean }): ReturnType<typeof createLifecycle> {
-    const imageContainersActive = opts?.imageContainersActive ?? true;
+  function makeLifecycle(): ReturnType<typeof createLifecycle> {
     return createLifecycle({
       bridge,
       store,
@@ -154,7 +153,6 @@ describe('createLifecycle', () => {
       bulletTimer,
       autosave,
       deviceFlags,
-      imageContainersActive: () => imageContainersActive,
     });
   }
 
@@ -289,7 +287,7 @@ describe('createLifecycle', () => {
 
   it('exit dialog: FOREGROUND_ENTER (sys=4) leaves the page untouched, does NOT resume as a foreground', () => {
     bridge.dialogPending = true;
-    const lifecycle = makeLifecycle({ imageContainersActive: true });
+    const lifecycle = makeLifecycle();
     lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT));
     // No rebuild while the dialog is up — the firmware retains the last board frame.
     expect(bridge.updatePages).toBe(0);
@@ -301,7 +299,7 @@ describe('createLifecycle', () => {
 
   it('exit dialog: FOREGROUND_EXIT (sys=5) = "No" — clears flag, gentle resync, board left intact (no rebuild, no reload)', () => {
     bridge.dialogPending = true;
-    const lifecycle = makeLifecycle({ imageContainersActive: true });
+    const lifecycle = makeLifecycle();
     lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bridge.clearExitDialogCalls).toBe(1);
     // Must NOT treat as background.
@@ -318,7 +316,6 @@ describe('createLifecycle', () => {
   it('exit dialog: SYSTEM_EXIT (sys=7) = "Yes" — cleans up and shuts down', async () => {
     bridge.dialogPending = true;
     const lifecycle = makeLifecycle();
-    lifecycle.attach();
     lifecycle.onHubEvent(sys(SYSTEM_EXIT));
     expect(bridge.clearExitDialogCalls).toBe(1);
     expect(flush.cancels).toBe(1);
@@ -332,7 +329,7 @@ describe('createLifecycle', () => {
 
   it('exit dialog cancel then a genuine later background works normally', async () => {
     bridge.dialogPending = true;
-    const lifecycle = makeLifecycle({ imageContainersActive: true });
+    const lifecycle = makeLifecycle();
     // "No" tapped — flag cleared.
     lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));
     expect(bridge.dialogPending).toBe(false);
@@ -375,12 +372,5 @@ describe('createLifecycle', () => {
     lifecycle.onDeviceStatusChanged({ isWearing: false, isInCase: false, connectType: 'ble', batteryLevel: 72 });
     expect(deviceFlags.isWearingGlasses).toBe(false);
     expect(deviceFlags.isDeviceConnected).toBe(true);
-  });
-
-  it('attach() is idempotent', () => {
-    const lifecycle = makeLifecycle();
-    lifecycle.attach();
-    lifecycle.attach();
-    lifecycle.detach();
   });
 });

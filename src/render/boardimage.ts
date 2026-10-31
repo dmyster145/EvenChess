@@ -561,29 +561,10 @@ export class BoardRenderer {
   }
 }
 
-export interface BoardImages {
-  top: ImageRawDataUpdate;
-  bottom: ImageRawDataUpdate;
-}
-
-export function renderBoardImages(state: GameState, chess: ChessService): BoardImages {
-  const renderer = new BoardRenderer();
-  const all = renderer.renderFull(state, chess);
-  return { top: all[0]!, bottom: all[1]! };
-}
-
-export function renderBoardImage(state: GameState, chess: ChessService): ImageRawDataUpdate {
-  return renderBoardImages(state, chess).top;
-}
-
 interface Highlight {
   file: number;
   rank: number;
   style: 'selected' | 'destination' | 'rowBand';
-}
-
-export function rankHalf(rank: number): 'top' | 'bottom' {
-  return rankToHalf(rank, SMALL_LAYOUT);
 }
 
 function getHighlights(state: GameState): Highlight[] {

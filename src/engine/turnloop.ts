@@ -2,11 +2,10 @@
  * TurnLoop — orchestrates player move → engine reply flow.
  */
 
-import type { EngineProfile, CarouselMove, Action } from '../state/contracts';
+import type { EngineProfile, CarouselMove } from '../state/contracts';
 import type { Store } from '../state/store';
 import type { ChessService } from '../chess/chessservice';
 import { StockfishBridge } from './stockfishbridge';
-import { recordPerfDispatch, type PerfDispatchSource } from '../perf/dispatch-trace';
 
 /** The engine surface TurnLoop uses (StockfishBridge in the app; a fake in tests). */
 export interface ChessEngine {
@@ -42,11 +41,6 @@ export class TurnLoop {
     this.profile = profile;
   }
 
-  private dispatch(action: Action, source: PerfDispatchSource): void {
-    recordPerfDispatch(source, action);
-    this.store.dispatch(action);
-  }
-
   private clearPendingGameOverTimeout(): void {
     if (this.pendingTimeout) {
       clearTimeout(this.pendingTimeout);
@@ -57,7 +51,7 @@ export class TurnLoop {
   private clearEngineThinkingIfActive(): void {
     const state = this.store.getState();
     if (!state.gameOver && state.engineThinking) {
-      this.dispatch({ type: 'ENGINE_ERROR' }, 'engine');
+      this.store.dispatch({ type: 'ENGINE_ERROR' });
     }
   }
 
@@ -78,7 +72,7 @@ export class TurnLoop {
       }
 
       if (san !== move.san) {
-        this.dispatch({ type: 'PLAYER_MOVE_SAN', san }, 'player');
+        this.store.dispatch({ type: 'PLAYER_MOVE_SAN', san });
       }
 
       this.dispatchRefresh();
@@ -86,12 +80,12 @@ export class TurnLoop {
       const state = this.store.getState();
       if (state.mode === 'bullet' && state.timerActive && state.timers) {
         const playerColor = state.turn === 'b' ? 'w' : 'b';
-        this.dispatch({ type: 'APPLY_INCREMENT', color: playerColor }, 'player');
+        this.store.dispatch({ type: 'APPLY_INCREMENT', color: playerColor });
       }
 
       if (this.chess.isGameOver()) {
         const reason = this.chess.getGameOverReason() ?? 'unknown';
-        this.dispatch({ type: 'GAME_OVER', reason }, 'player');
+        this.store.dispatch({ type: 'GAME_OVER', reason });
         return;
       }
 
@@ -150,7 +144,7 @@ export class TurnLoop {
   }
 
   private async runEngineTurn(requestSeq: number): Promise<void> {
-    this.dispatch({ type: 'ENGINE_THINKING' }, 'engine');
+    this.store.dispatch({ type: 'ENGINE_THINKING' });
 
       let bestMoveUci: string | null = null;
       try {
@@ -201,7 +195,7 @@ export class TurnLoop {
 
       const endsGame = this.chess.isGameOver();
       const engineColor = this.chess.getTurn() === 'w' ? 'b' : 'w'; // the side that just moved
-      this.dispatch({
+      this.store.dispatch({
         type: 'ENGINE_MOVE',
         uci: bestMoveUci,
         san: engineSan,
@@ -209,11 +203,11 @@ export class TurnLoop {
         // Stops the bullet clock at once: GAME_OVER below is delayed 500ms so the move shows first,
         // and the human's clock must not run (and flag) during that pause.
         endsGame,
-      }, 'engine');
+      });
 
       const stateAfterEngine = this.store.getState();
       if (!endsGame && stateAfterEngine.mode === 'bullet' && stateAfterEngine.timerActive && stateAfterEngine.timers) {
-        this.dispatch({ type: 'APPLY_INCREMENT', color: engineColor }, 'engine');
+        this.store.dispatch({ type: 'APPLY_INCREMENT', color: engineColor });
       }
 
       if (endsGame) {
@@ -227,20 +221,20 @@ export class TurnLoop {
           if (current.gameOver || current.fen !== expectedFen || this.chess.getFen() !== expectedFen) {
             return;
           }
-          this.dispatch({ type: 'GAME_OVER', reason }, 'engine');
+          this.store.dispatch({ type: 'GAME_OVER', reason });
         }, 500);
       }
   }
 
   private dispatchRefresh(): void {
-    this.dispatch({
+    this.store.dispatch({
       type: 'REFRESH',
       ...this.chess.getStateSnapshot(),
-    }, 'player');
+    });
   }
 
   private clearEngineThinking(): void {
-    this.dispatch({ type: 'ENGINE_ERROR' }, 'engine');
+    this.store.dispatch({ type: 'ENGINE_ERROR' });
     this.dispatchRefresh();
   }
 

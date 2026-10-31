@@ -19,7 +19,8 @@ const PERF_LOG_DOM_ENABLED = false;
 
 export const PERF_LOG_ENABLED = PERF_LOG_CONSOLE_ENABLED || PERF_LOG_CAPTURE_ENABLED || PERF_LOG_DOM_ENABLED;
 
-if (typeof window !== 'undefined') {
+// Expose the active sink config for on-device inspection, only while perf logging is on.
+if (PERF_LOG_ENABLED && typeof window !== 'undefined') {
   (
     window as Window & {
       __evenChessPerfConfig?: {
@@ -55,16 +56,12 @@ let domFlushTimer: ReturnType<typeof setTimeout> | null = null;
 /** When true, perfLog does not append to DOM or capture (Stop/Start button). */
 let recordingPaused = false;
 
-export function safeNow(): number {
+function safeNow(): number {
   return Date.now();
 }
 
 export function perfNowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
-}
-
-export function isPerfLoggingEnabled(): boolean {
-  return PERF_LOG_ENABLED;
 }
 
 function loadEntries(): void {
@@ -356,7 +353,7 @@ if (PERF_LOG_DOM_ENABLED && typeof document !== 'undefined') {
   }
 }
 
-export function perfLog(msg: string): void {
+function perfLog(msg: string): void {
   if (!PERF_LOG_ENABLED) return;
   if (recordingPaused) return;
 
@@ -385,7 +382,7 @@ export function perfLog(msg: string): void {
 }
 
 /** Avoids building perf log strings when all perf sinks are disabled. */
-export function perfLogLazy(msgFactory: () => string): void {
+function perfLogLazy(msgFactory: () => string): void {
   if (!PERF_LOG_ENABLED) return;
   perfLog(msgFactory());
 }
@@ -397,16 +394,3 @@ export const perfLogIfEnabled: ((msg: string) => void) | undefined = PERF_LOG_EN
 export const perfLogLazyIfEnabled: ((msgFactory: () => string) => void) | undefined = PERF_LOG_ENABLED
   ? perfLogLazy
   : undefined;
-
-export function clearPerfLog(): void {
-  ensureInitialized();
-  if (PERF_LOG_DOM_ENABLED) {
-    clearDomOutput();
-  }
-  if (!PERF_LOG_CAPTURE_ENABLED) return;
-  if (typeof window === 'undefined') return;
-  entries = [];
-  dirty = true;
-  dirtySinceTs = safeNow();
-  flushEntriesForced();
-}

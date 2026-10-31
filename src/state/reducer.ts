@@ -87,7 +87,6 @@ function startFreshGame(state: GameState): GameState {
     selectedPromotionIndex: 0,
     history: [],
     lastMove: null,
-    lastMoveToSquare: null,
     playerLastMoveToSquare: null,
     engineThinking: false,
     gameOver: null,
@@ -122,7 +121,7 @@ function endGame(state: GameState, reason: string): GameState {
  * by the store subscriber layer in app.ts.
  */
 export function reduce(state: GameState, action: Action): GameState {
-  if (state.gameOver && action.type !== 'NEW_GAME' && action.type !== 'OPEN_MENU' && action.type !== 'CLOSE_MENU' && action.type !== 'DOUBLE_TAP' && action.type !== 'RESTORE_STATE') {
+  if (state.gameOver && action.type !== 'NEW_GAME' && action.type !== 'DOUBLE_TAP' && action.type !== 'RESTORE_STATE') {
     return state;
   }
 
@@ -131,7 +130,7 @@ export function reduce(state: GameState, action: Action): GameState {
       return handleScroll(state, action.direction);
 
     case 'TAP':
-      return handleTap(state, action.selectedIndex, action.selectedName);
+      return handleTap(state);
 
     case 'DOUBLE_TAP':
       return handleDoubleTap(state);
@@ -213,18 +212,6 @@ export function reduce(state: GameState, action: Action): GameState {
     case 'FOREGROUND_EXIT':
       return state;
 
-    case 'OPEN_MENU':
-      return handleOpenMenu(state);
-
-    case 'CLOSE_MENU':
-      return handleCloseMenu(state);
-
-    case 'MENU_SELECT':
-      return handleMenuSelect(state, action.option);
-
-    case 'CONFIRM_EXIT':
-      return handleConfirmExit(state, action.save);
-
     case 'CLEAR_SYSTEM_EXIT_REQUEST':
       return state.pendingSystemExitDialog ? { ...state, pendingSystemExitDialog: false } : state;
 
@@ -248,47 +235,11 @@ export function reduce(state: GameState, action: Action): GameState {
         lastTickTime: action.state.timerActive ? Date.now() : null,
       };
 
-    case 'LOAD_GAME':
-      return {
-        ...state,
-        fen: action.fen,
-        history: action.history,
-        turn: action.turn,
-        phase: 'idle',
-        lastMove: null,
-        lastMoveToSquare: null,
-        playerLastMoveToSquare: null,
-        hasUnsavedChanges: false,
-        menuSelectedIndex: 0,
-        previousPhase: null,
-        logScrollOffset: 0,
-      };
-
-    case 'SET_DIFFICULTY':
-      return {
-        ...state,
-        difficulty: action.level,
-        phase: 'menu',
-        menuSelectedIndex: 0,
-      };
-
-    case 'SET_CUSTOM_SKILL_LEVEL': {
-      const clamped = clampCustomSkill(action.value);
-      if (clamped === state.customSkillLevel) return state;
-      return { ...state, customSkillLevel: clamped };
-    }
-
     case 'SET_PLAYER_COLOR':
       return state.playerColor === action.color ? state : { ...state, playerColor: action.color };
 
     case 'MARK_SAVED':
       return { ...state, hasUnsavedChanges: false };
-
-    case 'SET_MODE':
-      return handleSetMode(state, action.mode);
-
-    case 'START_BULLET_GAME':
-      return handleStartBulletGame(state, action.timeControlIndex);
 
     case 'TIMER_TICK':
       return handleTimerTick(state);
@@ -309,15 +260,6 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case 'APPLY_INCREMENT':
       return handleApplyIncrement(state, action.color);
-
-    case 'START_DRILL':
-      return handleStartDrill(state, action.drillType);
-
-    case 'DRILL_ANSWER':
-      return handleDrillAnswer(state, action.correct);
-
-    case 'NEXT_DRILL_QUESTION':
-      return handleNextDrillQuestion(state);
 
     default:
       return state;
@@ -370,17 +312,9 @@ function beginMoveSelection(state: GameState): GameState {
  * - destSelect: order = piece.moves (destination squares rank then file).
  */
 const SETTINGS_PHASES = new Set([
-  'menu', 'exitConfirm', 'resetConfirm', 'difficultySelect', 'customDifficultySelect',
+  'menu', 'resetConfirm', 'difficultySelect', 'customDifficultySelect',
   'displayOptionsSelect', 'playAsSelect', 'modeSelect', 'bulletSetup', 'academySelect',
 ]);
-
-function clampCustomSkill(value: number): number {
-  if (!Number.isFinite(value)) return CUSTOM_SKILL_LEVEL_MIN;
-  const rounded = Math.round(value);
-  if (rounded < CUSTOM_SKILL_LEVEL_MIN) return CUSTOM_SKILL_LEVEL_MIN;
-  if (rounded > CUSTOM_SKILL_LEVEL_MAX) return CUSTOM_SKILL_LEVEL_MAX;
-  return rounded;
-}
 
 function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
   // Invert scroll direction in settings/menu screens vs gameplay
@@ -451,7 +385,6 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       return { ...state, menuSelectedIndex: next };
     }
 
-    case 'exitConfirm':
     case 'resetConfirm':
       return { ...state, menuSelectedIndex: state.menuSelectedIndex === 0 ? 1 : 0 };
 
@@ -616,7 +549,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
   }
 }
 
-function handleTap(state: GameState, _selectedIndex: number, _selectedName: string): GameState {
+function handleTap(state: GameState): GameState {
   switch (state.phase) {
     case 'idle':
       return beginMoveSelection(state);
@@ -666,7 +599,6 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         ...state,
         phase: 'idle',
         lastMove: move.san,
-        lastMoveToSquare: move.to,
         playerLastMoveToSquare: move.to,
         history: newHistory,
         selectedPieceId: null,
@@ -693,7 +625,6 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
         ...state,
         phase: 'idle',
         lastMove: move.san,
-        lastMoveToSquare: move.to,
         playerLastMoveToSquare: move.to,
         history: newHistory,
         selectedPieceId: null,
@@ -712,14 +643,6 @@ function handleTap(state: GameState, _selectedIndex: number, _selectedName: stri
 
     case 'viewLog':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG };
-
-    case 'exitConfirm': {
-      if (state.menuSelectedIndex === 0) {
-        return handleConfirmExit(state, true);
-      } else {
-        return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.EXIT };
-      }
-    }
 
     case 'resetConfirm': {
       if (state.menuSelectedIndex === 0) {
@@ -884,9 +807,6 @@ function handleDoubleTap(state: GameState): GameState {
     case 'resetConfirm':
       return cancelResetConfirm(state);
 
-    case 'exitConfirm':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.EXIT };
-
     case 'difficultySelect':
       return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.DIFFICULTY };
 
@@ -945,7 +865,6 @@ function handleEngineMove(
   action: Extract<Action, { type: 'ENGINE_MOVE' }>,
 ): GameState {
   const newHistory = [...state.history, action.san];
-  const lastMoveToSquare = action.uci.length >= 4 ? action.uci.slice(2, 4) : null;
   return {
     ...state,
     phase: 'idle',
@@ -954,7 +873,6 @@ function handleEngineMove(
     pieces: action.pieces,
     inCheck: action.inCheck,
     lastMove: action.san,
-    lastMoveToSquare,
     history: newHistory,
     engineThinking: false,
     selectedPieceId: null,
@@ -1016,7 +934,6 @@ function handleVoiceConfirm(state: GameState): GameState {
     ...state,
     phase: 'idle',
     lastMove: move.san,
-    lastMoveToSquare: move.to,
     playerLastMoveToSquare: move.to,
     history: newHistory,
     selectedPieceId: null,
@@ -1038,18 +955,14 @@ function handleOpenMenu(state: GameState): GameState {
     return state;
   }
 
-  // Preserve original phase when navigating within menu sub-screens
-  const previousPhase: UIPhase =
-    state.phase === 'menu' || state.phase === 'viewLog' || state.phase === 'difficultySelect' || state.phase === 'customDifficultySelect' || state.phase === 'displayOptionsSelect' || state.phase === 'playAsSelect' || state.phase === 'resetConfirm' || state.phase === 'exitConfirm'
-      ? (state.previousPhase ?? 'idle')
-      : state.phase;
-
   const pauseBulletTimer = state.mode === 'bullet' && state.timerActive && state.timers;
   return {
     ...state,
     phase: 'menu',
     menuSelectedIndex: 0,
-    previousPhase,
+    // The menu opens only from gameplay (idle, or the quick double-tap in pieceSelect); closing it
+    // returns there.
+    previousPhase: state.phase,
     ...(pauseBulletTimer && { timerActive: false, bulletPausedForMenu: true }),
   };
 }
@@ -1131,16 +1044,6 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
       return state;
   }
 }
-
-function handleConfirmExit(state: GameState, save: boolean): GameState {
-  return {
-    ...state,
-    phase: 'idle',
-    hasUnsavedChanges: save ? false : state.hasUnsavedChanges,
-    previousPhase: null,
-  };
-}
-
 
 /**
  * Mode menu choice. Play applies immediately (the current board continues untimed). Bullet and
@@ -1319,22 +1222,6 @@ function handleStartDrill(prev: GameState, drillType: DrillType): GameState {
   }
 }
 
-function handleDrillAnswer(state: GameState, correct: boolean): GameState {
-  if (!state.academyState) return state;
-
-  const score = state.academyState.score;
-  return {
-    ...state,
-    academyState: {
-      ...state.academyState,
-      score: {
-        correct: correct ? score.correct + 1 : score.correct,
-        total: score.total + 1,
-      },
-    },
-  };
-}
-
 function handleDrillTap(state: GameState): GameState {
   if (!state.academyState || state.academyState.drillType !== 'coordinate') {
     return state;
@@ -1383,25 +1270,6 @@ function handleDrillTap(state: GameState): GameState {
         correct: isCorrect ? academy.score.correct + 1 : academy.score.correct,
         total: academy.score.total + 1,
       },
-    },
-  };
-}
-
-function handleNextDrillQuestion(state: GameState): GameState {
-  if (!state.academyState || state.academyState.drillType !== 'coordinate') {
-    return state;
-  }
-
-  const pos = getDefaultCursorPosition();
-  return {
-    ...state,
-    academyState: {
-      ...state.academyState,
-      targetSquare: generateRandomSquare(),
-      cursorFile: pos.file,
-      cursorRank: pos.rank,
-      navAxis: 'file',
-      feedback: 'none',
     },
   };
 }

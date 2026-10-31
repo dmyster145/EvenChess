@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reduce } from '../../src/state/reducer';
-import type { GameState, PieceEntry, Action } from '../../src/state/contracts';
-import { MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX, DRILL_OPTIONS } from '../../src/state/constants';
+import type { GameState, PieceEntry, Action, MenuOption } from '../../src/state/contracts';
+import { MENU_OPTIONS, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX, DRILL_OPTIONS } from '../../src/state/constants';
 import { baseGameState } from '../helpers/game-state';
 import { ChessService } from '../../src/chess/chessservice';
 import { fileRankToSquare } from '../../src/chess/square-utils';
@@ -46,7 +46,6 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     mode: 'play',
     history: [],
     lastMove: null,
-    lastMoveToSquare: null,
     playerLastMoveToSquare: null,
     engineThinking: false,
     inCheck: false,
@@ -68,6 +67,11 @@ function createTestState(overrides?: Partial<GameState>): GameState {
     playerColor: 'w',
     ...overrides,
   };
+}
+
+/** Tap a main-menu item, the way the user picks it: highlight it, then TAP. */
+function pickMenu(state: GameState, option: MenuOption): GameState {
+  return reduce({ ...state, menuSelectedIndex: MENU_OPTIONS.indexOf(option) }, { type: 'TAP' });
 }
 
 describe('reducer', () => {
@@ -173,13 +177,13 @@ describe('reducer', () => {
   describe('TAP', () => {
     it('enters rowSelect from idle on tap', () => {
       const state = createTestState();
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('rowSelect');
     });
 
     it('descends rowSelect → pieceSelect on tap, keeping the selected piece', () => {
       const state = createTestState({ phase: 'rowSelect', selectedPieceId: 'w-p-e2' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('pieceSelect');
       expect(next.selectedPieceId).toBe('w-p-e2');
     });
@@ -187,7 +191,7 @@ describe('reducer', () => {
     it('transitions from pieceSelect to destSelect using internal selection', () => {
       const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' });
       // TAP confirms the internally-tracked piece (w-n-g1)
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('destSelect');
       expect(next.selectedPieceId).toBe('w-n-g1');
       expect(next.selectedMoveIndex).toBe(0);
@@ -195,7 +199,7 @@ describe('reducer', () => {
 
     it('transitions from pieceSelect with second piece selected', () => {
       const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-p-e2' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('destSelect');
       expect(next.selectedPieceId).toBe('w-p-e2');
     });
@@ -206,7 +210,7 @@ describe('reducer', () => {
         selectedPieceId: 'w-n-g1',
         selectedMoveIndex: 1, // second destination = Nh3
       });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('idle');
       expect(next.lastMove).toBe('Nh3');
       expect(next.pendingMove).not.toBeNull();
@@ -233,7 +237,7 @@ describe('reducer', () => {
         selectedMoveIndex: 0,
         pieces,
       });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('promotionSelect');
       expect(next.pendingPromotionMove).toEqual({ from: 'e7', to: 'e8' });
       expect(next.selectedPromotionIndex).toBe(0);
@@ -245,7 +249,7 @@ describe('reducer', () => {
         pendingPromotionMove: { from: 'e7', to: 'e8' },
         selectedPromotionIndex: 1, // Rook
       });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('idle');
       expect(next.pendingPromotionMove).toBeNull();
       expect(next.pendingMove).not.toBeNull();
@@ -332,7 +336,6 @@ describe('reducer', () => {
       expect(next.turn).toBe('w');
       expect(next.pieces).toBe(action.pieces);
       expect(next.lastMove).toBe('e5');
-      expect(next.lastMoveToSquare).toBe('e5');
       expect(next.history).toEqual(['e4', 'e5']);
       expect(next.pendingMove).toBeNull();
     });
@@ -379,61 +382,45 @@ describe('reducer', () => {
 
   // ── Menu Tests ──────────────────────────────────────────────────────────────
 
-  describe('OPEN_MENU', () => {
-    it('opens menu from idle', () => {
-      const state = createTestState({ phase: 'idle' });
-      const next = reduce(state, { type: 'OPEN_MENU' });
+  describe('opening and closing the menu (double-tap)', () => {
+    it('opens the menu from idle, remembering where it came from', () => {
+      const next = reduce(createTestState({ phase: 'idle', menuSelectedIndex: 3 }), { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('menu');
       expect(next.previousPhase).toBe('idle');
       expect(next.menuSelectedIndex).toBe(0);
     });
 
-    it('opens menu from pieceSelect', () => {
-      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1' });
-      const next = reduce(state, { type: 'OPEN_MENU' });
-      expect(next.phase).toBe('menu');
-      expect(next.previousPhase).toBe('pieceSelect');
+    it('a quick double-tap in pieceSelect opens the menu and closing it returns to pieceSelect', () => {
+      const state = createTestState({ phase: 'pieceSelect', selectedPieceId: 'w-n-g1', phaseEnteredAt: Date.now() });
+      const menu = reduce(state, { type: 'DOUBLE_TAP' });
+      expect(menu.previousPhase).toBe('pieceSelect');
+      const back = reduce(menu, { type: 'DOUBLE_TAP' });
+      expect(back.phase).toBe('pieceSelect');
+      expect(back.previousPhase).toBeNull();
     });
 
-    it('preserves previousPhase when already in menu', () => {
-      const state = createTestState({ phase: 'menu', previousPhase: 'destSelect' });
-      const next = reduce(state, { type: 'OPEN_MENU' });
-      expect(next.previousPhase).toBe('destSelect');
-    });
-
-    it('does not open menu during engine thinking', () => {
+    it('does not open the menu while the engine is thinking', () => {
       const state = createTestState({ phase: 'idle', engineThinking: true });
-      const next = reduce(state, { type: 'OPEN_MENU' });
-      expect(next.phase).toBe('idle'); // Unchanged
-    });
-  });
-
-  describe('CLOSE_MENU', () => {
-    it('returns to previous phase', () => {
-      const state = createTestState({ phase: 'menu', previousPhase: 'pieceSelect' });
-      const next = reduce(state, { type: 'CLOSE_MENU' });
-      expect(next.phase).toBe('pieceSelect');
-      expect(next.previousPhase).toBeNull();
+      expect(reduce(state, { type: 'DOUBLE_TAP' })).toBe(state);
     });
 
-    it('returns to idle when no previous phase', () => {
-      const state = createTestState({ phase: 'menu', previousPhase: null });
-      const next = reduce(state, { type: 'CLOSE_MENU' });
+    it('closing returns to idle when there is no previous phase', () => {
+      const next = reduce(createTestState({ phase: 'menu', previousPhase: null }), { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('idle');
     });
   });
 
-  describe('MENU_SELECT', () => {
+  describe('menu items (tap)', () => {
     it('navigates to modeSelect on mode option', () => {
       const state = createTestState({ phase: 'menu' });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'mode' });
+      const next = pickMenu(state, 'mode');
       expect(next.phase).toBe('modeSelect');
     });
 
     it('toggles board markers in place from the Display Options markers row', () => {
       // Board Markers is a binary toggle under Display Options: tapping the row flips it and stays.
       const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 2, showBoardMarkers: true });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.showBoardMarkers).toBe(false);
       expect(next.phase).toBe('displayOptionsSelect');
       expect(next.menuSelectedIndex).toBe(2); // stays on the markers row
@@ -441,7 +428,7 @@ describe('reducer', () => {
 
     it('toggles alignment in place from the Display Options alignment row', () => {
       const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 0, boardAlignment: 'right' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.boardAlignment).toBe('center');
       expect(next.phase).toBe('displayOptionsSelect');
       expect(next.menuSelectedIndex).toBe(0);
@@ -449,7 +436,7 @@ describe('reducer', () => {
 
     it('toggles size in place from the Display Options size row', () => {
       const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'small' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.boardSize).toBe('large');
       expect(next.phase).toBe('displayOptionsSelect');
       expect(next.menuSelectedIndex).toBe(1);
@@ -457,20 +444,20 @@ describe('reducer', () => {
 
     it('navigates to viewLog on viewLog option', () => {
       const state = createTestState({ phase: 'menu', history: ['e4', 'e5'] });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'viewLog' });
+      const next = pickMenu(state, 'viewLog');
       expect(next.phase).toBe('viewLog');
     });
 
     it('navigates to difficultySelect on difficulty option', () => {
       const state = createTestState({ phase: 'menu', difficulty: 'serious' });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'difficulty' });
+      const next = pickMenu(state, 'difficulty');
       expect(next.phase).toBe('difficultySelect');
       expect(next.menuSelectedIndex).toBe(2); // 'serious' = index 2 (easy=0, casual=1, serious=2)
     });
 
     it('navigates to resetConfirm on reset option', () => {
       const state = createTestState({ phase: 'menu' });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'reset' });
+      const next = pickMenu(state, 'reset');
       expect(next.phase).toBe('resetConfirm');
       expect(next.menuSelectedIndex).toBe(1); // Cancel selected by default
     });
@@ -480,7 +467,7 @@ describe('reducer', () => {
       // pendingSystemExitDialog and calls requestSystemExit). Stay in the menu so cancelling leaves
       // the user where they were. (Closing the menu back to the game is double-tap, not this.)
       const state = createTestState({ phase: 'menu', previousPhase: 'idle' });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'exit' });
+      const next = pickMenu(state, 'exit');
       expect(next.pendingSystemExitDialog).toBe(true);
       expect(next.phase).toBe('menu');
     });
@@ -518,27 +505,18 @@ describe('reducer', () => {
   describe('menu tap selection', () => {
     it('tap in menu selects current option', () => {
       const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('viewLog');
     });
   });
 
   // ── Settings Tests ──────────────────────────────────────────────────────────
 
-  describe('SET_DIFFICULTY', () => {
-    it('sets difficulty and returns to menu', () => {
-      const state = createTestState({ phase: 'difficultySelect', difficulty: 'casual' });
-      const next = reduce(state, { type: 'SET_DIFFICULTY', level: 'serious' });
-      expect(next.difficulty).toBe('serious');
-      expect(next.phase).toBe('menu');
-    });
-  });
-
   describe('custom difficulty picker', () => {
     it('tapping Custom in difficultySelect opens the picker phase', () => {
       // Custom is index 3 in DIFFICULTY_OPTIONS (Easy, Casual, Serious, Custom).
       const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 3, customSkillLevel: 4 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('customDifficultySelect');
       // Picker keeps the prior level until the user adjusts it.
       expect(next.customSkillLevel).toBe(4);
@@ -557,7 +535,7 @@ describe('reducer', () => {
 
     it('tapping in the picker commits Custom and returns to menu', () => {
       const state = createTestState({ phase: 'customDifficultySelect', customSkillLevel: 7, difficulty: 'casual' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('menu');
       expect(next.difficulty).toBe('custom');
       expect(next.customSkillLevel).toBe(7);
@@ -575,33 +553,33 @@ describe('reducer', () => {
   describe('Display Options toggles', () => {
     it('tapping the markers row flips showBoardMarkers and stays put', () => {
       const on = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 2, showBoardMarkers: true });
-      const off = reduce(on, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const off = reduce(on, { type: 'TAP' });
       expect(off.showBoardMarkers).toBe(false);
       expect(off.phase).toBe('displayOptionsSelect');
       // Toggling back on.
-      const backOn = reduce(off, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const backOn = reduce(off, { type: 'TAP' });
       expect(backOn.showBoardMarkers).toBe(true);
     });
 
     it('tapping the alignment row flips boardAlignment', () => {
       const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 0, boardAlignment: 'center' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.boardAlignment).toBe('right');
     });
 
     it('tapping the size row flips boardSize', () => {
       const state = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 1, boardSize: 'large' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.boardSize).toBe('small');
     });
 
     it('tapping the position row flips boardPosition and stays put', () => {
       const bottom = createTestState({ phase: 'displayOptionsSelect', menuSelectedIndex: 3, boardPosition: 'bottom' });
-      const top = reduce(bottom, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const top = reduce(bottom, { type: 'TAP' });
       expect(top.boardPosition).toBe('top');
       expect(top.phase).toBe('displayOptionsSelect');
       expect(top.menuSelectedIndex).toBe(3);
-      expect(reduce(top, { type: 'TAP', selectedIndex: 0, selectedName: '' }).boardPosition).toBe('bottom');
+      expect(reduce(top, { type: 'TAP' }).boardPosition).toBe('bottom');
     });
 
     it('scrolling skips the hidden markers row onto Position when the board is large', () => {
@@ -632,7 +610,7 @@ describe('reducer', () => {
   describe('difficulty tap', () => {
     it('tap selects difficulty and returns to menu', () => {
       const state = createTestState({ phase: 'difficultySelect', menuSelectedIndex: 2 }); // index 2 = Serious
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.difficulty).toBe('serious');
       expect(next.phase).toBe('menu');
     });
@@ -640,25 +618,21 @@ describe('reducer', () => {
 
   // ── Mode Tests ──────────────────────────────────────────────────────────────
 
-  describe('SET_MODE', () => {
-    it('sets play mode and returns to idle', () => {
-      const state = createTestState({ phase: 'modeSelect', mode: 'bullet' });
-      const next = reduce(state, { type: 'SET_MODE', mode: 'play' });
+  describe('mode select (tap)', () => {
+    it('Play vs AI applies immediately and drops the bullet clock', () => {
+      const state = createTestState({
+        phase: 'modeSelect', menuSelectedIndex: 0, mode: 'bullet', timerActive: true,
+        timers: { whiteMs: 1000, blackMs: 1000, incrementMs: 0 },
+      });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.mode).toBe('play');
       expect(next.phase).toBe('idle');
       expect(next.timerActive).toBe(false);
+      expect(next.timers).toBeUndefined();
     });
 
-    it('opens bulletSetup without committing bullet mode', () => {
-      const state = createTestState({ phase: 'modeSelect', mode: 'play' });
-      const next = reduce(state, { type: 'SET_MODE', mode: 'bullet' });
-      expect(next.mode).toBe('play');
-      expect(next.phase).toBe('bulletSetup');
-    });
-
-    it('opens academySelect without committing academy mode', () => {
-      const state = createTestState({ phase: 'modeSelect', mode: 'play' });
-      const next = reduce(state, { type: 'SET_MODE', mode: 'academy' });
+    it('Academy opens the drill list without committing academy mode', () => {
+      const next = reduce(createTestState({ phase: 'modeSelect', menuSelectedIndex: 2, mode: 'play' }), { type: 'TAP' });
       expect(next.mode).toBe('play');
       expect(next.phase).toBe('academySelect');
     });
@@ -674,7 +648,7 @@ describe('reducer', () => {
 
     it('tap on Bullet Blitz opens its setup; the mode is unchanged until a game starts', () => {
       const state = createTestState({ phase: 'modeSelect', menuSelectedIndex: 1, mode: 'play' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('bulletSetup');
       expect(next.mode).toBe('play');
     });
@@ -682,25 +656,16 @@ describe('reducer', () => {
 
   // ── Bullet Timer Tests ──────────────────────────────────────────────────────
 
-  describe('START_BULLET_GAME', () => {
-    it('initializes timers with selected time control', () => {
-      const state = createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 0 });
-      const next = reduce(state, { type: 'START_BULLET_GAME', timeControlIndex: 0 });
-      
+  describe('starting a bullet game (tap a time control)', () => {
+    it.each([0, 3])('time control %i sets both clocks and the increment, not yet running', (index) => {
+      const next = reduce(createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: index }), { type: 'TAP' });
       expect(next.phase).toBe('idle');
-      expect(next.timers).toBeDefined();
-      expect(next.timers!.whiteMs).toBe(TIME_CONTROLS[0].initialMs);
-      expect(next.timers!.blackMs).toBe(TIME_CONTROLS[0].initialMs);
-      expect(next.timers!.incrementMs).toBe(TIME_CONTROLS[0].incrementMs);
+      expect(next.timers).toEqual({
+        whiteMs: TIME_CONTROLS[index]!.initialMs,
+        blackMs: TIME_CONTROLS[index]!.initialMs,
+        incrementMs: TIME_CONTROLS[index]!.incrementMs,
+      });
       expect(next.timerActive).toBe(false);
-    });
-
-    it('uses 3+5 time control when index 3', () => {
-      const state = createTestState({ phase: 'bulletSetup' });
-      const next = reduce(state, { type: 'START_BULLET_GAME', timeControlIndex: 3 });
-      
-      expect(next.timers!.whiteMs).toBe(180000); // 3 minutes
-      expect(next.timers!.incrementMs).toBe(5000); // 5 seconds
     });
   });
 
@@ -710,14 +675,6 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 0 });
       const next = reduce(state, { type: 'SCROLL', direction: 'up' });
       expect(next.selectedTimeControlIndex).toBe(1);
-    });
-
-    it('tap starts bullet game', () => {
-      const state = createTestState({ phase: 'bulletSetup', selectedTimeControlIndex: 2 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
-      expect(next.phase).toBe('idle');
-      expect(next.timers).toBeDefined();
-      expect(next.timerActive).toBe(false);
     });
   });
 
@@ -793,10 +750,10 @@ describe('reducer', () => {
 
   // ── Academy Drill Tests ─────────────────────────────────────────────────────
 
-  describe('START_DRILL', () => {
+  describe('starting a drill (tap in academySelect)', () => {
     it('starts coordinate drill', () => {
       const state = createTestState({ phase: 'academySelect' });
-      const next = reduce(state, { type: 'START_DRILL', drillType: 'coordinate' });
+      const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('coordinate') }, { type: 'TAP' });
       
       expect(next.phase).toBe('coordinateDrill');
       expect(next.academyState).toBeDefined();
@@ -807,7 +764,7 @@ describe('reducer', () => {
 
     it('starts knight path drill', () => {
       const state = createTestState({ phase: 'academySelect' });
-      const next = reduce(state, { type: 'START_DRILL', drillType: 'knightPath' });
+      const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }, { type: 'TAP' });
       
       expect(next.phase).toBe('knightPathDrill');
       expect(next.academyState!.knightPath).toBeDefined();
@@ -817,7 +774,7 @@ describe('reducer', () => {
 
     it('starts tactics drill', () => {
       const state = createTestState({ phase: 'academySelect' });
-      const next = reduce(state, { type: 'START_DRILL', drillType: 'tactics' });
+      const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('tactics') }, { type: 'TAP' });
       
       expect(next.phase).toBe('tacticsDrill');
       expect(next.academyState!.tacticsPuzzle).toBeDefined();
@@ -825,7 +782,7 @@ describe('reducer', () => {
 
     it('starts mate drill', () => {
       const state = createTestState({ phase: 'academySelect' });
-      const next = reduce(state, { type: 'START_DRILL', drillType: 'mate' });
+      const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('mate') }, { type: 'TAP' });
       
       expect(next.phase).toBe('mateDrill');
       expect(next.academyState!.tacticsPuzzle).toBeDefined();
@@ -833,7 +790,7 @@ describe('reducer', () => {
 
     it('starts pgn study', () => {
       const state = createTestState({ phase: 'academySelect' });
-      const next = reduce(state, { type: 'START_DRILL', drillType: 'pgn' });
+      const next = reduce({ ...state, menuSelectedIndex: DRILL_OPTIONS.indexOf('pgn') }, { type: 'TAP' });
       
       expect(next.phase).toBe('pgnStudy');
       expect(next.academyState!.pgnStudy).toBeDefined();
@@ -851,50 +808,8 @@ describe('reducer', () => {
 
     it('tap starts selected drill', () => {
       const state = createTestState({ phase: 'academySelect', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('coordinateDrill');
-    });
-  });
-
-  describe('DRILL_ANSWER', () => {
-    it('increments correct count on correct answer', () => {
-      const state = createTestState({
-        phase: 'coordinateDrill',
-        academyState: {
-          drillType: 'coordinate',
-          targetSquare: 'e4',
-          score: { correct: 2, total: 5 },
-          cursorFile: 4,
-          cursorRank: 3,
-          navAxis: 'file',
-          feedback: 'none',
-        },
-      });
-      
-      const next = reduce(state, { type: 'DRILL_ANSWER', correct: true });
-      
-      expect(next.academyState!.score.correct).toBe(3);
-      expect(next.academyState!.score.total).toBe(6);
-    });
-
-    it('does not increment correct count on incorrect answer', () => {
-      const state = createTestState({
-        phase: 'coordinateDrill',
-        academyState: {
-          drillType: 'coordinate',
-          targetSquare: 'e4',
-          score: { correct: 2, total: 5 },
-          cursorFile: 4,
-          cursorRank: 3,
-          navAxis: 'file',
-          feedback: 'none',
-        },
-      });
-      
-      const next = reduce(state, { type: 'DRILL_ANSWER', correct: false });
-      
-      expect(next.academyState!.score.correct).toBe(2);
-      expect(next.academyState!.score.total).toBe(6);
     });
   });
 
@@ -933,7 +848,7 @@ describe('reducer', () => {
         },
       });
       
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       
       expect(next.academyState!.navAxis).toBe('rank');
     });
@@ -952,11 +867,29 @@ describe('reducer', () => {
         },
       });
       
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       
       expect(next.academyState!.feedback).toBe('correct');
       expect(next.academyState!.score.correct).toBe(1);
       expect(next.academyState!.score.total).toBe(1);
+    });
+
+    it('a wrong guess counts toward the total but not the correct count', () => {
+      const state = createTestState({
+        phase: 'coordinateDrill',
+        academyState: {
+          drillType: 'coordinate',
+          targetSquare: 'e4',
+          score: { correct: 2, total: 5 },
+          cursorFile: 0, // a4, not e4
+          cursorRank: 3,
+          navAxis: 'rank',
+          feedback: 'none',
+        },
+      });
+      const next = reduce(state, { type: 'TAP' });
+      expect(next.academyState!.feedback).toBe('incorrect');
+      expect(next.academyState!.score).toEqual({ correct: 2, total: 6 });
     });
   });
 
@@ -1000,35 +933,6 @@ describe('reducer', () => {
 
   // ── Confirm Tests ───────────────────────────────────────────────────────────
 
-  describe('exit confirm', () => {
-    it('scroll toggles between options', () => {
-      const state = createTestState({ phase: 'exitConfirm', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'SCROLL', direction: 'down' });
-      expect(next.menuSelectedIndex).toBe(1);
-      
-      const toggled = reduce(next, { type: 'SCROLL', direction: 'down' });
-      expect(toggled.menuSelectedIndex).toBe(0);
-    });
-
-    it('tap on confirm exits', () => {
-      const state = createTestState({ phase: 'exitConfirm', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
-      expect(next.phase).toBe('idle');
-    });
-
-    it('tap on cancel returns to menu', () => {
-      const state = createTestState({ phase: 'exitConfirm', menuSelectedIndex: 1 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
-      expect(next.phase).toBe('menu');
-    });
-
-    it('double-tap returns to menu', () => {
-      const state = createTestState({ phase: 'exitConfirm' });
-      const next = reduce(state, { type: 'DOUBLE_TAP' });
-      expect(next.phase).toBe('menu');
-    });
-  });
-
   describe('reset confirm', () => {
     it('scroll toggles between options', () => {
       const state = createTestState({ phase: 'resetConfirm', menuSelectedIndex: 1 });
@@ -1038,30 +942,16 @@ describe('reducer', () => {
 
     it('tap on confirm resets (flags pendingReset for the side-effect)', () => {
       const state = createTestState({ phase: 'resetConfirm', menuSelectedIndex: 0 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('idle');
       expect(next.pendingReset).toBe(true);
     });
 
     it('tap on cancel returns to menu without flagging a reset', () => {
       const state = createTestState({ phase: 'resetConfirm', menuSelectedIndex: 1 });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('menu');
       expect(next.pendingReset).toBeFalsy();
-    });
-  });
-
-  describe('CONFIRM_EXIT', () => {
-    it('clears unsavedChanges when save is true', () => {
-      const state = createTestState({ phase: 'exitConfirm', hasUnsavedChanges: true });
-      const next = reduce(state, { type: 'CONFIRM_EXIT', save: true });
-      expect(next.hasUnsavedChanges).toBe(false);
-    });
-
-    it('preserves unsavedChanges when save is false', () => {
-      const state = createTestState({ phase: 'exitConfirm', hasUnsavedChanges: true });
-      const next = reduce(state, { type: 'CONFIRM_EXIT', save: false });
-      expect(next.hasUnsavedChanges).toBe(true);
     });
   });
 
@@ -1083,7 +973,7 @@ describe('reducer', () => {
 
     it('tap returns to menu', () => {
       const state = createTestState({ phase: 'viewLog' });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('menu');
     });
 
@@ -1105,7 +995,7 @@ describe('reducer', () => {
         selectedMoveIndex: 0,
         history: longHistory,
       });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.history.length).toBe(251);
       expect(next.history[0]).toBe('move0');
       expect(next.history[250]).toBe('Nf3');
@@ -1127,26 +1017,6 @@ describe('reducer', () => {
       const state = createTestState({ engineThinking: true });
       const next = reduce(state, { type: 'ENGINE_ERROR' });
       expect(next.engineThinking).toBe(false);
-    });
-  });
-
-  // ── Load Game Tests ─────────────────────────────────────────────────────────
-
-  describe('LOAD_GAME', () => {
-    it('loads saved game state', () => {
-      const state = createTestState();
-      const next = reduce(state, {
-        type: 'LOAD_GAME',
-        fen: 'saved-fen',
-        history: ['e4', 'e5', 'Nf3'],
-        turn: 'b',
-      });
-      
-      expect(next.fen).toBe('saved-fen');
-      expect(next.history).toEqual(['e4', 'e5', 'Nf3']);
-      expect(next.turn).toBe('b');
-      expect(next.phase).toBe('idle');
-      expect(next.hasUnsavedChanges).toBe(false);
     });
   });
 
@@ -1248,9 +1118,9 @@ describe('reducer', () => {
   });
 
   describe('Play As', () => {
-    it('MENU_SELECT playAs opens playAsSelect at the current preference', () => {
+    it('the Play As item opens playAsSelect at the current preference', () => {
       const state = createTestState({ phase: 'menu', playAs: 'black' });
-      const next = reduce(state, { type: 'MENU_SELECT', option: 'playAs' });
+      const next = pickMenu(state, 'playAs');
       expect(next.phase).toBe('playAsSelect');
       expect(next.menuSelectedIndex).toBe(1); // ['white','black','random'] → black = 1
     });
@@ -1266,14 +1136,14 @@ describe('reducer', () => {
 
     it('tap on a fresh board applies immediately (→ idle) and sets the preference', () => {
       const state = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 1, history: [] });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.playAs).toBe('black');
       expect(next.phase).toBe('idle');
     });
 
     it('tap mid-game routes through the reset confirmation, deferring the choice', () => {
       const state = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 2, playAs: 'white', history: ['e4', 'e5'] });
-      const next = reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(state, { type: 'TAP' });
       expect(next.playAs).toBe('white');         // NOT committed until reset is confirmed
       expect(next.pendingPlayAs).toBe('random'); // deferred choice
       expect(next.phase).toBe('resetConfirm');
@@ -1315,13 +1185,13 @@ describe('reducer', () => {
 
   describe('Play As choice is deferred until reset is confirmed', () => {
     const openPlayAs = (state: GameState) =>
-      reduce(reduce(state, { type: 'DOUBLE_TAP' }), { type: 'MENU_SELECT', option: 'playAs' });
+      pickMenu(reduce(state, { type: 'DOUBLE_TAP' }), 'playAs');
 
     it('in-progress: picking a side defers to pendingPlayAs without changing playAs', () => {
       let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       expect(s.phase).toBe('playAsSelect');
       s = { ...s, menuSelectedIndex: 1 }; // 'black'
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      s = reduce(s, { type: 'TAP' });
       expect(s.phase).toBe('resetConfirm');
       expect(s.playAs).toBe('white');        // NOT committed yet
       expect(s.pendingPlayAs).toBe('black');
@@ -1330,8 +1200,8 @@ describe('reducer', () => {
     it('in-progress: Cancel leaves the side unchanged and clears the deferred choice', () => {
       let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       s = { ...s, menuSelectedIndex: 1 }; // black
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → resetConfirm (cursor on Cancel)
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // Cancel
+      s = reduce(s, { type: 'TAP' }); // → resetConfirm (cursor on Cancel)
+      s = reduce(s, { type: 'TAP' }); // Cancel
       expect(s.playAs).toBe('white');        // unchanged (the reported bug)
       expect(s.pendingPlayAs).toBeFalsy();
     });
@@ -1339,7 +1209,7 @@ describe('reducer', () => {
     it('in-progress: double-tap back also discards the deferred choice', () => {
       let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       s = { ...s, menuSelectedIndex: 1 };
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → resetConfirm
+      s = reduce(s, { type: 'TAP' }); // → resetConfirm
       s = reduce(s, { type: 'DOUBLE_TAP' });
       expect(s.playAs).toBe('white');
       expect(s.pendingPlayAs).toBeFalsy();
@@ -1348,9 +1218,9 @@ describe('reducer', () => {
     it('in-progress: Confirm commits the chosen side and flags the reset', () => {
       let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: ['e4', 'e5'] }));
       s = { ...s, menuSelectedIndex: 1 }; // black
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → resetConfirm
+      s = reduce(s, { type: 'TAP' }); // → resetConfirm
       s = { ...s, menuSelectedIndex: 0 }; // Confirm
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      s = reduce(s, { type: 'TAP' });
       expect(s.playAs).toBe('black');        // committed
       expect(s.pendingPlayAs).toBeFalsy();
       expect(s.pendingReset).toBe(true);
@@ -1359,7 +1229,7 @@ describe('reducer', () => {
     it('fresh board: applies immediately without a confirmation', () => {
       let s = openPlayAs(createTestState({ phase: 'idle', playAs: 'white', history: [] }));
       s = { ...s, menuSelectedIndex: 1 }; // black
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      s = reduce(s, { type: 'TAP' });
       expect(s.phase).toBe('idle');
       expect(s.playAs).toBe('black');
     });
@@ -1439,7 +1309,7 @@ describe('reducer', () => {
     });
 
     it('starts on a tap from idle', () => {
-      const next = reduce(bulletIdle(), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(bulletIdle(), { type: 'TAP' });
       expect(next.phase).toBe('rowSelect');
       expect(next.timerActive).toBe(true);
     });
@@ -1451,7 +1321,7 @@ describe('reducer', () => {
     });
 
     it('does not start outside Bullet mode', () => {
-      const next = reduce(createTestState({ mode: 'play' }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      const next = reduce(createTestState({ mode: 'play' }), { type: 'TAP' });
       expect(next.timerActive).toBe(false);
     });
   });
@@ -1465,12 +1335,12 @@ describe('reducer', () => {
     it.each(blocked)('idle scroll and tap do nothing while %s', (_why, over) => {
       const state = createTestState({ phase: 'idle', ...over });
       expect(reduce(state, { type: 'SCROLL', direction: 'down' })).toBe(state);
-      expect(reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' })).toBe(state);
+      expect(reduce(state, { type: 'TAP' })).toBe(state);
     });
 
     it('allows selection on the player\'s own turn as Black', () => {
       const state = createTestState({ phase: 'idle', turn: 'b', playerColor: 'b' });
-      expect(reduce(state, { type: 'TAP', selectedIndex: 0, selectedName: '' }).phase).toBe('rowSelect');
+      expect(reduce(state, { type: 'TAP' }).phase).toBe('rowSelect');
     });
   });
 
@@ -1483,8 +1353,8 @@ describe('reducer', () => {
     it('reset confirm, then opening and closing the menu, does not start a fresh clock', () => {
       let s = reduce(runningBullet(), { type: 'DOUBLE_TAP' });       // menu (clock paused)
       expect(s.timerActive).toBe(false);
-      s = reduce(s, { type: 'MENU_SELECT', option: 'reset' });
-      s = reduce({ ...s, menuSelectedIndex: 0 }, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // Confirm
+      s = pickMenu(s, 'reset');
+      s = reduce({ ...s, menuSelectedIndex: 0 }, { type: 'TAP' }); // Confirm
       expect(s.pendingReset).toBe(true);
       s = reduce(s, { type: 'NEW_GAME' });
       s = reduce(s, { type: 'DOUBLE_TAP' });                          // open menu
@@ -1497,8 +1367,8 @@ describe('reducer', () => {
     it('applying Play As on a fresh board clears the pause flag', () => {
       let s = reduce({ ...runningBullet(), history: [] }, { type: 'DOUBLE_TAP' });
       expect(s.bulletPausedForMenu).toBe(true);
-      s = reduce(s, { type: 'MENU_SELECT', option: 'playAs' });
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      s = pickMenu(s, 'playAs');
+      s = reduce(s, { type: 'TAP' });
       expect(s.phase).toBe('idle');
       expect(s.bulletPausedForMenu).toBe(false);
     });
@@ -1509,8 +1379,8 @@ describe('reducer', () => {
       const timers = { whiteMs: 30000, blackMs: 60000, incrementMs: 0 };
       let s = createTestState({ mode: 'bullet', phase: 'idle', timerActive: true, lastTickTime: 1, timers, history: ['e4'] });
       s = reduce(s, { type: 'DOUBLE_TAP' });                          // menu, clock paused
-      s = reduce(s, { type: 'MENU_SELECT', option: 'mode' });
-      s = reduce({ ...s, menuSelectedIndex: 2 }, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // Academy
+      s = pickMenu(s, 'mode');
+      s = reduce({ ...s, menuSelectedIndex: 2 }, { type: 'TAP' }); // Academy
       expect(s.phase).toBe('academySelect');
       s = reduce(s, { type: 'DOUBLE_TAP' });                          // → modeSelect
       s = reduce(s, { type: 'DOUBLE_TAP' });                          // → menu
@@ -1523,7 +1393,7 @@ describe('reducer', () => {
 
     it('peeking at Bullet Blitz from Play and backing out leaves an untimed Play game', () => {
       let s = createTestState({ mode: 'play', phase: 'modeSelect', previousPhase: 'idle', menuSelectedIndex: 1 });
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' }); // → bulletSetup
+      s = reduce(s, { type: 'TAP' }); // → bulletSetup
       s = reduce(s, { type: 'DOUBLE_TAP' });                          // → modeSelect
       expect(s.mode).toBe('play');
       expect(reduce(s, { type: 'NEW_GAME' }).timers).toBeUndefined();
@@ -1531,7 +1401,7 @@ describe('reducer', () => {
 
     it('starting a time control commits Bullet mode with fresh clocks', () => {
       const s = reduce(createTestState({ mode: 'play', phase: 'bulletSetup', selectedTimeControlIndex: 0 }),
-        { type: 'TAP', selectedIndex: 0, selectedName: '' });
+        { type: 'TAP' });
       expect(s.mode).toBe('bullet');
       expect(s.phase).toBe('idle');
       expect(s.timers).toEqual({ whiteMs: TIME_CONTROLS[0]!.initialMs, blackMs: TIME_CONTROLS[0]!.initialMs, incrementMs: TIME_CONTROLS[0]!.incrementMs });
@@ -1541,7 +1411,7 @@ describe('reducer', () => {
       const s = reduce(createTestState({
         mode: 'bullet', phase: 'academySelect', menuSelectedIndex: 0, timerActive: false,
         timers: { whiteMs: 1, blackMs: 1, incrementMs: 0 },
-      }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      }), { type: 'TAP' });
       expect(s.mode).toBe('academy');
       expect(s.phase).toBe('coordinateDrill');
       expect(s.timers).toBeUndefined();
@@ -1552,13 +1422,12 @@ describe('reducer', () => {
     it('clears last-move squares, promotion, log offset, and pause flags; resets bullet clocks', () => {
       const s = reduce(createTestState({
         gameOver: 'Checkmate', mode: 'bullet', selectedTimeControlIndex: 1, history: ['e4'],
-        lastMoveToSquare: 'g1', playerLastMoveToSquare: 'g1', pendingPromotionMove: { from: 'e7', to: 'e8' },
+        playerLastMoveToSquare: 'g1', pendingPromotionMove: { from: 'e7', to: 'e8' },
         selectedPromotionIndex: 2, logScrollOffset: 3, bulletPausedForMenu: true, pendingPlayAs: 'black',
         timers: { whiteMs: 5, blackMs: 0, incrementMs: 0 },
       }), { type: 'DOUBLE_TAP' });
       expect(s.gameOver).toBeNull();
       expect(s.history).toEqual([]);
-      expect(s.lastMoveToSquare).toBeNull();
       expect(s.playerLastMoveToSquare).toBeNull();
       expect(s.pendingPromotionMove).toBeNull();
       expect(s.selectedPromotionIndex).toBe(0);
@@ -1598,7 +1467,7 @@ describe('reducer', () => {
     });
 
     it.each([
-      ['Cancel', (s: GameState) => reduce({ ...s, menuSelectedIndex: 1 }, { type: 'TAP', selectedIndex: 0, selectedName: '' })],
+      ['Cancel', (s: GameState) => reduce({ ...s, menuSelectedIndex: 1 }, { type: 'TAP' })],
       ['double-tap', (s: GameState) => reduce(s, { type: 'DOUBLE_TAP' })],
     ])('%s from a Play-As confirmation highlights Play As; from Reset highlights Reset', (_how, back) => {
       const fromPlayAs = back(createTestState({ phase: 'resetConfirm', pendingPlayAs: 'black' }));
@@ -1610,17 +1479,17 @@ describe('reducer', () => {
 
   describe('Knight Path cursor', () => {
     it('starts on a legal knight move, so the first tap makes a move', () => {
-      let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP' });
       expect(s.phase).toBe('knightPathDrill');
       const kp = s.academyState!.knightPath!;
       const cursor = fileRankToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
       expect(getKnightMoves(kp.startSquare)).toContain(cursor);
-      s = reduce(s, { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      s = reduce(s, { type: 'TAP' });
       expect(s.academyState!.knightPath!.movesTaken).toBe(1);
     });
 
     it('a first scroll from a non-move square lands on the first legal move', () => {
-      let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP', selectedIndex: 0, selectedName: '' });
+      let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP' });
       const start = getSquareIndices(s.academyState!.knightPath!.startSquare);
       s = { ...s, academyState: { ...s.academyState!, cursorFile: start.file, cursorRank: start.rank } };
       s = reduce(s, { type: 'SCROLL', direction: 'down' });

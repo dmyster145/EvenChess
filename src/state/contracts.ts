@@ -56,7 +56,6 @@ export type UIPhase =
   | 'displayOptionsSelect'
   | 'playAsSelect'
   | 'resetConfirm'
-  | 'exitConfirm'
   | 'modeSelect'
   | 'bulletSetup'
   | 'academySelect'
@@ -152,8 +151,6 @@ export interface GameState {
   mode: GameMode;
   history: string[];
   lastMove: string | null;
-  /** Square the last move went to (player or engine). */
-  lastMoveToSquare: string | null;
   /** Square the player's last move went to; this piece is selected first when entering pieceSelect. */
   playerLastMoveToSquare: string | null;
   engineThinking: boolean;
@@ -222,7 +219,7 @@ export interface GameState {
 
 export type Action =
   | { type: 'SCROLL'; direction: 'up' | 'down' }
-  | { type: 'TAP'; selectedIndex: number; selectedName: string }
+  | { type: 'TAP' }
   | { type: 'DOUBLE_TAP' }
   | { type: 'PLAYER_MOVE_SAN'; san: string }
   /** endsGame: this move ends the game (checkmate/draw); the bullet clock stops immediately. */
@@ -234,28 +231,16 @@ export type Action =
   | { type: 'REFRESH'; fen: string; turn: 'w' | 'b'; pieces: PieceEntry[]; inCheck: boolean }
   | { type: 'FOREGROUND_ENTER' }
   | { type: 'FOREGROUND_EXIT' }
-  | { type: 'OPEN_MENU' }
-  | { type: 'MENU_SELECT'; option: MenuOption }
-  | { type: 'CLOSE_MENU' }
-  | { type: 'CONFIRM_EXIT'; save: boolean }
   | { type: 'CLEAR_SYSTEM_EXIT_REQUEST' }
   | { type: 'RESTORE_STATE'; state: GameState }
-  | { type: 'LOAD_GAME'; fen: string; history: string[]; turn: 'w' | 'b' }
   | { type: 'MARK_SAVED' }
-  | { type: 'SET_DIFFICULTY'; level: DifficultyLevel }
-  | { type: 'SET_CUSTOM_SKILL_LEVEL'; value: number }
   | { type: 'SET_PLAYER_COLOR'; color: PlayerColor }
-  | { type: 'SET_MODE'; mode: GameMode }
-  | { type: 'START_BULLET_GAME'; timeControlIndex: number }
   | { type: 'TIMER_TICK' }
   /** Freeze the bullet clock while a system overlay is open. */
   | { type: 'BULLET_PAUSE' }
   /** Resume the bullet clock after the overlay closes, without charging the paused time. */
   | { type: 'BULLET_RESUME' }
   | { type: 'APPLY_INCREMENT'; color: 'w' | 'b' }
-  | { type: 'START_DRILL'; drillType: DrillType }
-  | { type: 'DRILL_ANSWER'; correct: boolean }
-  | { type: 'NEXT_DRILL_QUESTION' }
   | { type: 'VOICE_LISTEN_START' }
   | { type: 'VOICE_LISTEN_END' }
   | { type: 'VOICE_STATUS'; message: string; durationMs?: number; keepListening?: boolean }
@@ -280,7 +265,6 @@ export function buildInitialState(chess: ChessService): GameState {
     mode: 'play',
     history: [],
     lastMove: null,
-    lastMoveToSquare: null,
     playerLastMoveToSquare: null,
     engineThinking: false,
     inCheck: chess.isInCheck(),

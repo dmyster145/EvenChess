@@ -78,6 +78,14 @@ export function resolveVoiceMove(intent: VoiceIntent, state: GameState): Resolve
     return { kind: 'illegal', message: `No ${what} can reach ${to.toUpperCase()}` };
   }
 
+  // "takes" prefers a capture. Moves to one square only differ in capturing via en passant (the
+  // square is empty, so another piece may move there quietly). If no candidate captures, the word
+  // was probably misheard, so it is ignored rather than rejecting the move.
+  if (intent.isCapture) {
+    const captures = candidates.filter((c) => c.move.san.includes('x'));
+    if (captures.length > 0) candidates = captures;
+  }
+
   // Promotion: candidates split into promotion vs normal. A spoken promotion piece means the
   // pawn promotion; with none spoken, a normal move to the square wins if there is one.
   const promo = candidates.filter((c) => c.move.promotion);
