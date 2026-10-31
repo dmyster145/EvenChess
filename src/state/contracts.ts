@@ -66,6 +66,7 @@ export type UIPhase =
   | 'pgnStudy';
 
 export type MenuOption = 'mode' | 'viewLog' | 'difficulty' | 'playAs' | 'displayOptions' | 'reset' | 'exit';
+export type DisplayOption = 'alignment' | 'size' | 'markers' | 'position';
 
 export type BoardAlignment = 'center' | 'right';
 export type BoardSize = 'small' | 'large';
@@ -129,6 +130,12 @@ export const CUSTOM_SKILL_LEVEL_MIN = 0;
 export const CUSTOM_SKILL_LEVEL_MAX = 9;
 export const CUSTOM_SKILL_LEVEL_DEFAULT = 5;
 
+/** Round into the Custom picker's range; anything non-finite becomes the default level. */
+export function clampCustomSkillLevel(value: number): number {
+  if (!Number.isFinite(value)) return CUSTOM_SKILL_LEVEL_DEFAULT;
+  return Math.min(CUSTOM_SKILL_LEVEL_MAX, Math.max(CUSTOM_SKILL_LEVEL_MIN, Math.round(value)));
+}
+
 export interface EngineProfile {
   name: string;
   skillLevel: number;
@@ -166,13 +173,13 @@ export interface GameState {
    * "End this feature?" confirmation dialog, then clears the flag. Per ER guidance, no app-side
    * cleanup happens here — if the user confirms, cleanup runs in the SYSTEM_EXIT_EVENT handler.
    */
-  pendingSystemExitDialog?: boolean;
+  pendingSystemExitDialog: boolean;
   /**
    * Set only when the user CONFIRMS the reset dialog (resetConfirm → Confirm). side-effects.ts keys
    * the board reset on this flag, not on the resetConfirm→idle phase transition, so a Cancel can
    * never trip a reset. Cleared by NEW_GAME once the reset is applied.
    */
-  pendingReset?: boolean;
+  pendingReset: boolean;
   difficulty: DifficultyLevel;
   /**
    * User-picked level (0..9) for the Custom difficulty. Always present so the picker has a
@@ -191,7 +198,7 @@ export interface GameState {
    * the user confirms the reset; discarded on cancel so cancelling never changes (or persists) the
    * side. On a fresh board the choice applies immediately and this stays null.
    */
-  pendingPlayAs?: PlayAs | null;
+  pendingPlayAs: PlayAs | null;
   /** Resolved human color for the current game. Drives board flip + engine ownership. */
   playerColor: PlayerColor;
   logScrollOffset: number;
@@ -208,7 +215,7 @@ export interface GameState {
    * or a system overlay) and checked on resume, so closing the menu resumes only a clock that was
    * actually ticking — opening the menu before the first move never starts it.
    */
-  bulletPausedForMenu?: boolean;
+  bulletPausedForMenu: boolean;
   lastTickTime: number | null;
   selectedTimeControlIndex: number;
   academyState?: AcademyState;
@@ -273,6 +280,10 @@ export function buildInitialState(chess: ChessService): GameState {
     menuSelectedIndex: 0,
     hasUnsavedChanges: false,
     previousPhase: null,
+    pendingSystemExitDialog: false,
+    pendingReset: false,
+    pendingPlayAs: null,
+    bulletPausedForMenu: false,
     difficulty: 'casual',
     customSkillLevel: CUSTOM_SKILL_LEVEL_DEFAULT,
     boardAlignment: 'right',

@@ -488,8 +488,16 @@ describe('selectors', () => {
       expect(text).not.toContain('MENU');
     });
 
+    it('lists the items in menu order', () => {
+      const lines = getMenuDisplayText(createTestState({ phase: 'menu' })).split('\n').map((l) => l.trim().replace(/^> /, ''));
+      const order = ['Play As', 'Mode', 'View Log', 'Difficulty', 'Display Options', 'Reset', 'Exit'];
+      const found = order.map((label) => lines.findIndex((l) => l.startsWith(label)));
+      expect(found.every((i) => i >= 0)).toBe(true);
+      expect([...found].sort((a, b) => a - b)).toEqual(found);
+    });
+
     it('highlights selected option with >', () => {
-      const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG });
+      const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_INDEX.viewLog });
       const text = getMenuDisplayText(state);
       const lines = text.split('\n');
       const viewLogLine = lines.find(l => l.includes('View Log'));
@@ -710,6 +718,7 @@ describe('selectors', () => {
       const text = getCoordinateDrillDisplayText(state);
       expect(text).toContain('Column:');
       expect(text).toContain('B'); // current file letter
+      expect(text).toContain('Row: 4'); // rank index 3 is the 4th rank
     });
 
     it('shows current column letter when selecting rank', () => {

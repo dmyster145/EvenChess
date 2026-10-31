@@ -21,7 +21,7 @@ import {
 } from './constants';
 import { getMoveNumber } from './utils';
 import { formatTime } from '../bullet/clock';
-import { fileRankToSquare, getFileLetter, getRankNumber } from '../academy/drills';
+import { indicesToSquare, getFileLetter, getRankNumber } from '../chess/square-utils';
 import { rankOfSquare } from '../chess/square-utils';
 import { describeSolution } from '../academy/puzzles';
 import { EASY, CASUAL, SERIOUS, nearestCustomLevel } from '../engine/profiles';
@@ -456,7 +456,7 @@ export function getCoordinateDrillDisplayText(state: GameState): string {
     lines.push('');
     lines.push('Tap: next square');
   } else if (academy.feedback === 'incorrect') {
-    const yourGuess = fileRankToSquare(academy.cursorFile, academy.cursorRank).toUpperCase();
+    const yourGuess = indicesToSquare(academy.cursorFile, academy.cursorRank).toUpperCase();
     lines.push(`X WRONG (${yourGuess})`);
     lines.push('');
     lines.push('Tap: next square');
@@ -505,7 +505,7 @@ export function getKnightPathDisplayText(state: GameState): string {
     lines.push(`${kp.startSquare.toUpperCase()} → ${kp.targetSquare.toUpperCase()}`);
     lines.push(`Moves: ${kp.movesTaken}/${kp.optimalMoves}`);
     lines.push('');
-    const cursorSquare = fileRankToSquare(academy.cursorFile, academy.cursorRank).toUpperCase();
+    const cursorSquare = indicesToSquare(academy.cursorFile, academy.cursorRank).toUpperCase();
     lines.push(`Move to: ${cursorSquare} ${ARROW_UPDOWN}`);
   }
 

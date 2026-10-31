@@ -72,6 +72,10 @@ describe('input/actions', () => {
   });
 
   describe('mapTextEvent', () => {
+    it('treats a missing eventType as CLICK_EVENT (protobuf omits the zero value)', () => {
+      expect(mapTextEvent(new Text_ItemEvent({}), idle)).toEqual({ type: 'TAP' });
+    });
+
     it('maps CLICK_EVENT to TAP', () => {
       const event = new Text_ItemEvent({
         eventType: OsEventTypeList.CLICK_EVENT,

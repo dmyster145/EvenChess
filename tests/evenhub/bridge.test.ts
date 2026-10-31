@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EvenHubBridge } from '../../src/evenhub/bridge';
 import {
+  AudioInputSource,
   ImageRawDataUpdate,
   StartUpPageCreateResult,
   type EvenAppBridge,
@@ -287,6 +288,17 @@ describe('EvenHubBridge', () => {
     await bridge.storageSet('foo', 'bar');
     expect(localStorage.getItem('foo')).toBe('bar');
     expect(fake.storageWrites).toEqual([{ key: 'foo', value: 'bar' }]);
+  });
+
+  it('audioControl opens the glasses mic explicitly and closes without a source', async () => {
+    const calls: unknown[][] = [];
+    (fake as unknown as { audioControl: unknown }).audioControl = vi.fn(async (...args: unknown[]) => {
+      calls.push(args);
+      return true;
+    });
+    expect(await bridge.audioControl(true)).toBe(true);
+    expect(await bridge.audioControl(false)).toBe(true);
+    expect(calls).toEqual([[true, AudioInputSource.Glasses], [false]]);
   });
 
   it('storageGet prefers localStorage when present, falls back to SDK', async () => {

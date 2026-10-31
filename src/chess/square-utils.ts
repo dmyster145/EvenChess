@@ -49,8 +49,6 @@ export function indicesToSquare(file: number, rank: number): string {
   return `${FILES[file]}${RANKS[rank]}`;
 }
 
-export const fileRankToSquare = indicesToSquare;
-
 export function getFileLetter(file: number): string {
   return FILES[file] ?? 'a';
 }

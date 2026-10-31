@@ -1,7 +1,8 @@
 /**
  * Page Composer — translates GameState into Even Hub SDK container configs.
  * 2-column layout: text on left, board on right (split into 2 image containers).
- * Layout is dynamic based on state.boardAlignment and state.boardSize.
+ * The board's position depends on state.boardAlignment (and the View Log screen). Both board
+ * sizes use the same containers; boardSize only changes how cells are drawn inside them.
  */
 
 import {
@@ -12,7 +13,7 @@ import {
 } from '@evenrealities/even_hub_sdk';
 import type { GameState } from '../state/contracts';
 import { getCombinedDisplayText } from '../state/selectors';
-import { DISPLAY_WIDTH } from '../state/constants';
+import { DISPLAY_WIDTH, DISPLAY_HEIGHT } from '../state/constants';
 
 // Master toggle for the invisible gesture-capture container. When true, an invisible
 // full-screen text container (isEventCapture:1) sits behind everything and receives all
@@ -37,22 +38,19 @@ const CONTAINER_NAME_IMAGE_BOTTOM = 'board-bot';
 const CONTAINER_NAME_BRAND = 'brand';
 const CONTAINER_NAME_INPUT = 'input';
 
-// Shared constants (unchanged across layouts)
-const DISPLAY_HEIGHT = 288;
 // The brand container is repurposed as the captured-pieces strip directly above the
 // board: full board width, occupying the ~44px gap above the board. It still also
 // renders the brand mark and the CHECK!/CHECKMATE! banner.
 const BRAND_WIDTH = 200;
 const BRAND_HEIGHT = 40;
 
-// Small board dimensions (per half)
-const SMALL_IMAGE_WIDTH = 200;
-const SMALL_IMAGE_HEIGHT = 100;
+// Board image size (per half). G2 firmware hard-caps image containers at 200×100 regardless of
+// byte size or format, so the "large" board is drawn with bigger cells inside the same containers.
+const IMAGE_WIDTH = 200;
+const IMAGE_HEIGHT = 100;
 
-// G2 firmware hard-caps image containers at 200×100 regardless of byte size or format.
-// "Large" board size is a visual-only change (bigger cell rendering) within the same 200×100 containers.
-const LARGE_IMAGE_WIDTH = SMALL_IMAGE_WIDTH;
-const LARGE_IMAGE_HEIGHT = SMALL_IMAGE_HEIGHT;
+/** Top of the HUD text in the gameplay layout (the strip sits above the board, not the text). */
+const TEXT_Y = 8;
 
 // Gap between text container right edge and board left edge
 const TEXT_BOARD_GAP = 8;
@@ -70,8 +68,8 @@ export interface BoardLayout {
  * When center alignment + viewLog, board shifts right so the full text width is available.
  */
 export function getBoardLayout(state: GameState): BoardLayout {
-  const imageWidth = state.boardSize === 'large' ? LARGE_IMAGE_WIDTH : SMALL_IMAGE_WIDTH;
-  const imageHeight = state.boardSize === 'large' ? LARGE_IMAGE_HEIGHT : SMALL_IMAGE_HEIGHT;
+  const imageWidth = IMAGE_WIDTH;
+  const imageHeight = IMAGE_HEIGHT;
 
   // Both board sizes are vertically centered within the 288px display height.
   const boardTopY = Math.floor((DISPLAY_HEIGHT - imageHeight * 2) / 2);
@@ -128,7 +126,7 @@ function buildInputCaptureContainer(): TextContainerProperty {
  * Used for text-first BLE bring-up; `upgradeToFullLayout` later calls `composePageForState`.
  */
 function buildTextOnlyContainers(state: GameState): ContainerSet {
-  const TEXT_Y = BRAND_HEIGHT + 20 + 4;
+  const startupTextY = BRAND_HEIGHT + 20 + 4;
   const textWidth = DISPLAY_WIDTH;
 
   const textObjects: TextContainerProperty[] = [];
@@ -136,9 +134,9 @@ function buildTextOnlyContainers(state: GameState): ContainerSet {
   textObjects.push(
     new TextContainerProperty({
       xPosition: 0,
-      yPosition: TEXT_Y,
+      yPosition: startupTextY,
       width: textWidth,
-      height: DISPLAY_HEIGHT - TEXT_Y,
+      height: DISPLAY_HEIGHT - startupTextY,
       containerID: CONTAINER_ID_TEXT,
       containerName: CONTAINER_NAME_TEXT,
       content: getCombinedDisplayText(state),
@@ -204,9 +202,6 @@ function buildContainers(state: GameState): ContainerSet {
   const textObjects: TextContainerProperty[] = [];
   const imageObjects: ImageContainerProperty[] = [];
 
-  // The brand/captured strip moved above the board (right column), so the left text
-  // column's top is now free — start the HUD/menu near the top of the display.
-  const TEXT_Y = 8;
   if (USE_INPUT_CAPTURE_CONTAINER) textObjects.push(buildInputCaptureContainer());
   textObjects.push(
     new TextContainerProperty({
@@ -273,8 +268,9 @@ export {
   CONTAINER_NAME_IMAGE_TOP,
   CONTAINER_NAME_IMAGE_BOTTOM,
   CONTAINER_NAME_BRAND,
-  SMALL_IMAGE_WIDTH as IMAGE_WIDTH,
-  SMALL_IMAGE_HEIGHT as IMAGE_HEIGHT,
+  IMAGE_WIDTH,
+  IMAGE_HEIGHT,
   BRAND_WIDTH,
   BRAND_HEIGHT,
+  TEXT_Y,
 };

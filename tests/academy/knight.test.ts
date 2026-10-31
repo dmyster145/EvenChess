@@ -9,22 +9,8 @@ import {
   findKnightDistance,
   generateKnightPuzzle,
   isValidKnightMove,
-  getSquareIndices,
 } from '../../src/academy/knight';
-
-describe('getSquareIndices', () => {
-  it('should convert a1 to file 0, rank 0', () => {
-    expect(getSquareIndices('a1')).toEqual({ file: 0, rank: 0 });
-  });
-
-  it('should convert h8 to file 7, rank 7', () => {
-    expect(getSquareIndices('h8')).toEqual({ file: 7, rank: 7 });
-  });
-
-  it('should convert e4 to file 4, rank 3', () => {
-    expect(getSquareIndices('e4')).toEqual({ file: 4, rank: 3 });
-  });
-});
+import { squareToIndices } from '../../src/chess/square-utils';
 
 describe('getKnightMoves', () => {
   it('should return all valid moves from center square', () => {
@@ -98,18 +84,18 @@ describe('generateKnightPuzzle', () => {
 
   it('should have valid squares', () => {
     const puzzle = generateKnightPuzzle();
-    const startIndices = getSquareIndices(puzzle.start);
-    const targetIndices = getSquareIndices(puzzle.target);
+    const [startFile, startRank] = squareToIndices(puzzle.start);
+    const [targetFile, targetRank] = squareToIndices(puzzle.target);
     
-    expect(startIndices.file).toBeGreaterThanOrEqual(0);
-    expect(startIndices.file).toBeLessThanOrEqual(7);
-    expect(startIndices.rank).toBeGreaterThanOrEqual(0);
-    expect(startIndices.rank).toBeLessThanOrEqual(7);
+    expect(startFile).toBeGreaterThanOrEqual(0);
+    expect(startFile).toBeLessThanOrEqual(7);
+    expect(startRank).toBeGreaterThanOrEqual(0);
+    expect(startRank).toBeLessThanOrEqual(7);
     
-    expect(targetIndices.file).toBeGreaterThanOrEqual(0);
-    expect(targetIndices.file).toBeLessThanOrEqual(7);
-    expect(targetIndices.rank).toBeGreaterThanOrEqual(0);
-    expect(targetIndices.rank).toBeLessThanOrEqual(7);
+    expect(targetFile).toBeGreaterThanOrEqual(0);
+    expect(targetFile).toBeLessThanOrEqual(7);
+    expect(targetRank).toBeGreaterThanOrEqual(0);
+    expect(targetRank).toBeLessThanOrEqual(7);
   });
 
   it('should respect custom minMoves parameter', () => {

@@ -164,6 +164,55 @@ describe('dispatch', () => {
   });
 });
 
+describe('dispatch from a listener', () => {
+  it('delivers every change to every listener in order, each as a real transition', () => {
+    const store = createStore(createTestState({ phase: 'idle' }));
+    const seen: Array<[string, string, string]> = [];
+    // The first listener reacts to idle → rowSelect by dispatching again (rowSelect → pieceSelect).
+    store.subscribe((state, prev) => {
+      seen.push(['first', prev.phase, state.phase]);
+      if (prev.phase === 'idle') store.dispatch({ type: 'TAP' });
+    });
+    store.subscribe((state, prev) => {
+      seen.push(['second', prev.phase, state.phase]);
+    });
+
+    store.dispatch({ type: 'SCROLL', direction: 'down' });
+
+    expect(seen).toEqual([
+      ['first', 'idle', 'rowSelect'],
+      ['second', 'idle', 'rowSelect'],
+      ['first', 'rowSelect', 'pieceSelect'],
+      ['second', 'rowSelect', 'pieceSelect'],
+    ]);
+    expect(store.getState().phase).toBe('pieceSelect');
+  });
+
+  it('updates getState() immediately, even inside a listener', () => {
+    const store = createStore(createTestState({ phase: 'idle' }));
+    let phaseAfterNestedDispatch = '';
+    store.subscribe((_state, prev) => {
+      if (prev.phase !== 'idle') return;
+      store.dispatch({ type: 'TAP' });
+      phaseAfterNestedDispatch = store.getState().phase;
+    });
+    store.dispatch({ type: 'SCROLL', direction: 'down' });
+    expect(phaseAfterNestedDispatch).toBe('pieceSelect');
+  });
+
+  it('keeps notifying after a listener throws', () => {
+    const store = createStore(createTestState({ phase: 'idle' }));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    store.subscribe(() => { throw new Error('boom'); });
+    store.dispatch({ type: 'SCROLL', direction: 'down' });
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.dispatch({ type: 'TAP' });
+    expect(listener).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
+  });
+});
+
 describe('subscribe', () => {
   it('returns an unsubscribe function', () => {
     const initialState = createTestState();

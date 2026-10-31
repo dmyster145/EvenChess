@@ -9,11 +9,8 @@
  */
 
 import type { DifficultyLevel, BoardAlignment, BoardSize, BoardPosition, PlayAs, PlayerColor } from '../state/contracts';
-import {
-  CUSTOM_SKILL_LEVEL_DEFAULT,
-  CUSTOM_SKILL_LEVEL_MAX,
-  CUSTOM_SKILL_LEVEL_MIN,
-} from '../state/contracts';
+import { CUSTOM_SKILL_LEVEL_DEFAULT, clampCustomSkillLevel } from '../state/contracts';
+import { DIFFICULTY_OPTIONS, PLAY_AS_OPTIONS } from '../state/constants';
 
 export interface SavedGame {
   fen: string;
@@ -62,15 +59,9 @@ export function initPersistence(get: StorageGetter, set: StorageSetter): void {
 // Everything read back is untrusted (older builds, hand edits, a partly written value), so each
 // field is checked against its type and falls back to a default rather than entering state.
 
-const DIFFICULTIES: readonly DifficultyLevel[] = ['easy', 'casual', 'serious', 'custom'];
 
 function asDifficulty(value: unknown): DifficultyLevel {
-  return DIFFICULTIES.includes(value as DifficultyLevel) ? (value as DifficultyLevel) : 'casual';
-}
-
-function clampCustomSkill(value: number): number {
-  if (!Number.isFinite(value)) return CUSTOM_SKILL_LEVEL_DEFAULT;
-  return Math.min(CUSTOM_SKILL_LEVEL_MAX, Math.max(CUSTOM_SKILL_LEVEL_MIN, Math.round(value)));
+  return DIFFICULTY_OPTIONS.includes(value as DifficultyLevel) ? (value as DifficultyLevel) : 'casual';
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -100,7 +91,7 @@ export async function saveCustomSkillLevel(level: number): Promise<void> {
 export async function loadCustomSkillLevel(): Promise<number> {
   const raw = await _get(CUSTOM_SKILL_KEY);
   if (raw == null) return CUSTOM_SKILL_LEVEL_DEFAULT;
-  return clampCustomSkill(Number.parseInt(raw, 10));
+  return clampCustomSkillLevel(Number.parseInt(raw, 10));
 }
 
 export async function saveBoardMarkers(showBoardMarkers: boolean): Promise<void> {
@@ -145,7 +136,7 @@ export async function savePlayAs(playAs: PlayAs): Promise<void> {
 
 export async function loadPlayAs(): Promise<PlayAs> {
   const value = await _get(PLAY_AS_KEY);
-  return value === 'white' || value === 'black' || value === 'random' ? value : 'white';
+  return PLAY_AS_OPTIONS.includes(value as PlayAs) ? (value as PlayAs) : 'white';
 }
 
 export async function saveGame(
@@ -181,7 +172,7 @@ export async function loadGame(): Promise<SavedGame | null> {
       history: parsed.history,
       turn,
       difficulty: asDifficulty(parsed.difficulty),
-      customSkillLevel: typeof parsed.customSkillLevel === 'number' ? clampCustomSkill(parsed.customSkillLevel) : undefined,
+      customSkillLevel: typeof parsed.customSkillLevel === 'number' ? clampCustomSkillLevel(parsed.customSkillLevel) : undefined,
       playerColor: parsed.playerColor === 'w' || parsed.playerColor === 'b' ? parsed.playerColor : undefined,
       savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
     };

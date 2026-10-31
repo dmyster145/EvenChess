@@ -18,13 +18,9 @@ import {
 import { PIECE_SILHOUETTES, PIECE_SIZE } from './pieces';
 import {
   BMP_HEADER_SIZE,
-  BMP_SIGNATURE,
-  BMP_DIB_HEADER_SIZE,
-  BMP_PPM,
-  BMP_COLORS_USED,
   getBmpRowStride,
-  getBmpPixelDataSize,
   getBmpFileSize,
+  writeMonoBmpHeader,
 } from './bmp-constants';
 import { squareToDisplayCoords, rankToDisplayRank } from '../chess/square-utils';
 import { encodePixelsToPng } from './png-encode';
@@ -71,32 +67,11 @@ function rankToHalf(rank: number, g: GridLayout): 'top' | 'bottom' {
 }
 
 const BMP_ROW_STRIDE = getBmpRowStride(IMAGE_WIDTH);
-const BMP_PIXEL_DATA_SIZE = getBmpPixelDataSize(IMAGE_WIDTH, IMAGE_HEIGHT);
 const BMP_FILE_SIZE = getBmpFileSize(IMAGE_WIDTH, IMAGE_HEIGHT);
 
 function initBmpBuffer(): Uint8Array {
-  const buf = new ArrayBuffer(BMP_FILE_SIZE);
-  const view = new DataView(buf);
-  const data = new Uint8Array(buf);
-
-  view.setUint8(0, BMP_SIGNATURE[0]); view.setUint8(1, BMP_SIGNATURE[1]);
-  view.setUint32(2, BMP_FILE_SIZE, true);
-  view.setUint32(6, 0, true);
-  view.setUint32(10, BMP_HEADER_SIZE, true);
-  view.setUint32(14, BMP_DIB_HEADER_SIZE, true);
-  view.setInt32(18, IMAGE_WIDTH, true);
-  view.setInt32(22, IMAGE_HEIGHT, true);
-  view.setUint16(26, 1, true);
-  view.setUint16(28, 1, true);
-  view.setUint32(30, 0, true);
-  view.setUint32(34, BMP_PIXEL_DATA_SIZE, true);
-  view.setUint32(38, BMP_PPM, true);
-  view.setUint32(42, BMP_PPM, true);
-  view.setUint32(46, BMP_COLORS_USED, true);
-  view.setUint32(50, BMP_COLORS_USED, true);
-  view.setUint32(54, 0x00000000, true);
-  view.setUint32(58, 0x00ffffff, true);
-
+  const data = new Uint8Array(BMP_FILE_SIZE);
+  writeMonoBmpHeader(data, IMAGE_WIDTH, IMAGE_HEIGHT, 0xffffff);
   return data;
 }
 
@@ -389,19 +364,7 @@ export class BoardRenderer {
     const pixels = this.basePixels;
     const g = this.g;
     const flip = viewColor === 'b';
-    pixels.fill(0);
-
-    for (let rank = 0; rank < 8; rank++) {
-      for (let file = 0; file < 8; file++) {
-        if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0, g);
-        } else {
-          fillCellLightDots(pixels, file, rank, g);
-        }
-      }
-    }
-
-    drawBorder(pixels, g);
+    drawEmptyBoard(pixels, g);
     if (showBoardMarkers) {
       drawFileLabels(pixels, g, flip);
       drawRankLabels(pixels, g, flip);
@@ -423,48 +386,30 @@ export class BoardRenderer {
     }
   }
 
-  /** Fill a pixel buffer with the empty coordinate-drill grid (no highlight). */
-  private fillDrillBase(pixels: Uint8Array): void {
-    const g = this.g;
-    pixels.fill(0);
-    for (let rank = 0; rank < 8; rank++) {
-      for (let file = 0; file < 8; file++) {
-        if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0, g);
-        } else {
-          fillCellLightDots(pixels, file, rank, g);
-        }
-      }
-    }
-    drawBorder(pixels, g);
+  /** Encode both halves of a full-board buffer as BMP updates. */
+  private encodeBothHalvesBmp(pixels: Uint8Array): ImageRawDataUpdate[] {
+    encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, HALF_PIXELS));
+    encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(HALF_PIXELS));
+    return [
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
+      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
+    ];
   }
 
   /** Render empty board for drill mode (no pieces, no labels). Uses cached base; always returns both halves for full board updates. */
   renderDrillBoard(cursorFile: number, cursorRank: number): ImageRawDataUpdate[] {
     if (!this.drillBasePixels) {
       this.drillBasePixels = new Uint8Array(BUF_W * BUF_H);
-      this.fillDrillBase(this.drillBasePixels);
+      drawEmptyBoard(this.drillBasePixels, this.g);
     }
 
     this.workPixels.set(this.drillBasePixels);
     const displayRank = 7 - cursorRank;
     highlightCell(this.workPixels, cursorFile, displayRank, 'selected', this.g);
 
-    // Always return both halves for the coordinate drill so the device never shows a half-stale board
-    // (one panel with old highlight, one with new). Cache and live updates both send full board.
-    const topDirty = true;
-    const bottomDirty = true;
-
-    const dirty: ImageRawDataUpdate[] = [];
-    if (topDirty) {
-      encodeBmpPixels(this.cachedTopBmp, this.workPixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }));
-    }
-    if (bottomDirty) {
-      encodeBmpPixels(this.cachedBottomBmp, this.workPixels.subarray(BUF_W * IMAGE_HEIGHT));
-      dirty.push(new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }));
-    }
-    return dirty;
+    // Always send both halves so the device never shows a half-stale board (one panel with the old
+    // highlight, one with the new).
+    return this.encodeBothHalvesBmp(this.workPixels);
   }
 
   renderKnightPathBoard(
@@ -477,19 +422,7 @@ export class BoardRenderer {
   ): ImageRawDataUpdate[] {
     const pixels = this.workPixels;
     const g = this.g;
-    pixels.fill(0);
-
-    for (let rank = 0; rank < 8; rank++) {
-      for (let file = 0; file < 8; file++) {
-        if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0, g);
-        } else {
-          fillCellLightDots(pixels, file, rank, g);
-        }
-      }
-    }
-
-    drawBorder(pixels, g);
+    drawEmptyBoard(pixels, g);
 
     // Convert rank indices to display coords (rank 1 at bottom = display row 7)
     const knightDisplayRank = 7 - knightRank;
@@ -503,31 +436,13 @@ export class BoardRenderer {
       highlightCell(pixels, highlightFile, highlightDisplayRank, 'selected', g);
     }
 
-    encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-    encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
-
-    return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
-    ];
+    return this.encodeBothHalvesBmp(pixels);
   }
 
   renderFromFen(fen: string): ImageRawDataUpdate[] {
     const pixels = this.workPixels;
     const g = this.g;
-    pixels.fill(0);
-
-    for (let rank = 0; rank < 8; rank++) {
-      for (let file = 0; file < 8; file++) {
-        if ((rank + file) % 2 === 1) {
-          fillCell(pixels, file, rank, 0, g);
-        } else {
-          fillCellLightDots(pixels, file, rank, g);
-        }
-      }
-    }
-
-    drawBorder(pixels, g);
+    drawEmptyBoard(pixels, g);
 
     const fenParts = fen.split(' ');
     const position = fenParts[0] ?? '';
@@ -552,13 +467,7 @@ export class BoardRenderer {
       }
     }
 
-    encodeBmpPixels(this.cachedTopBmp, pixels.subarray(0, BUF_W * IMAGE_HEIGHT));
-    encodeBmpPixels(this.cachedBottomBmp, pixels.subarray(BUF_W * IMAGE_HEIGHT));
-
-    return [
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_TOP, containerName: CONTAINER_NAME_IMAGE_TOP, imageData: this.cachedTopBmp.slice() }),
-      new ImageRawDataUpdate({ containerID: CONTAINER_ID_IMAGE_BOTTOM, containerName: CONTAINER_NAME_IMAGE_BOTTOM, imageData: this.cachedBottomBmp.slice() }),
-    ];
+    return this.encodeBothHalvesBmp(pixels);
   }
 }
 
@@ -649,6 +558,21 @@ function fillCell(pixels: Uint8Array, file: number, rank: number, value: number,
 }
 
 /** Fill a light square with a dot pattern (checkerboard 0/1). */
+/** Clear the buffer and draw the empty checkerboard with its border (no labels or pieces). */
+function drawEmptyBoard(pixels: Uint8Array, g: GridLayout): void {
+  pixels.fill(0);
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      if ((rank + file) % 2 === 1) {
+        fillCell(pixels, file, rank, 0, g);
+      } else {
+        fillCellLightDots(pixels, file, rank, g);
+      }
+    }
+  }
+  drawBorder(pixels, g);
+}
+
 function fillCellLightDots(pixels: Uint8Array, file: number, rank: number, g: GridLayout): void {
   const x0 = cellX(file, g);
   const y0 = cellY(rank, g);
@@ -827,17 +751,16 @@ function drawChar(pixels: Uint8Array, x: number, y: number, ch: string): void {
 }
 
 /** Check if a pixel is on an edge (adjacent to empty space). Used for white piece outlines. */
+/** True if the silhouette has a pixel at (row, col); false outside the PIECE_SIZE box. */
+function isSet(silhouette: number[], row: number, col: number): boolean {
+  if (row < 0 || row >= PIECE_SIZE || col < 0 || col >= PIECE_SIZE) return false;
+  const bits = silhouette[row];
+  return bits !== undefined && (bits & (1 << (PIECE_SIZE - 1 - col))) !== 0;
+}
+
 function isEdgePixel(silhouette: number[], row: number, col: number): boolean {
-  const neighbors: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-  for (const [dr, dc] of neighbors) {
-    const nr = row + dr;
-    const nc = col + dc;
-    if (nr < 0 || nr >= PIECE_SIZE || nc < 0 || nc >= PIECE_SIZE) return true;
-    const rowBits = silhouette[nr];
-    if (rowBits === undefined) return true;
-    if (!(rowBits & (1 << (PIECE_SIZE - 1 - nc)))) return true;
-  }
-  return false;
+  return !isSet(silhouette, row - 1, col) || !isSet(silhouette, row + 1, col) ||
+    !isSet(silhouette, row, col - 1) || !isSet(silhouette, row, col + 1);
 }
 
 function findBottomRow(silhouette: number[]): number {
@@ -845,6 +768,27 @@ function findBottomRow(silhouette: number[]): number {
     if (silhouette[row] && silhouette[row] !== 0) return row;
   }
   return PIECE_SIZE - 1;
+}
+
+/**
+ * Draw a one-pixel ring just outside the silhouette. With `diagonal` false only the 4 orthogonal
+ * neighbours count (a thin ring without chunky corners); with it true all 8 do.
+ */
+function drawRing(pixels: Uint8Array, x0: number, y0: number, silhouette: number[], value: number, diagonal: boolean): void {
+  for (let row = -1; row <= PIECE_SIZE; row++) {
+    for (let col = -1; col <= PIECE_SIZE; col++) {
+      if (isSet(silhouette, row, col)) continue;
+      let adjacent = false;
+      for (let dr = -1; dr <= 1 && !adjacent; dr++) {
+        for (let dc = -1; dc <= 1 && !adjacent; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          if (!diagonal && dr !== 0 && dc !== 0) continue;
+          adjacent = isSet(silhouette, row + dr, col + dc);
+        }
+      }
+      if (adjacent) setPixel(pixels, x0 + col, y0 + row, value);
+    }
+  }
 }
 
 function drawPiece(
@@ -866,118 +810,27 @@ function drawPiece(
   const y0 = cellY(rank, g) + topInset;
 
   if (color === 'b') {
-    const fillVal = 0;
-    if (isDark) {
-      // Dark squares: white outline for contrast
-      const outlineVal = 1;
-      for (let row = -1; row <= PIECE_SIZE; row++) {
-        for (let col = -1; col <= PIECE_SIZE; col++) {
-          // Skip if this pixel IS part of the silhouette
-          const inSilhouette = row >= 0 && row < PIECE_SIZE && col >= 0 && col < PIECE_SIZE &&
-            silhouette[row] !== undefined && (silhouette[row]! & (1 << (PIECE_SIZE - 1 - col)));
-          if (inSilhouette) continue;
-          // Check if any neighbor is part of the silhouette (4-neighbour: thin ring, no chunky corners)
-          let adjacentToSilhouette = false;
-          for (let dr = -1; dr <= 1 && !adjacentToSilhouette; dr++) {
-            for (let dc = -1; dc <= 1 && !adjacentToSilhouette; dc++) {
-              if (Math.abs(dr) + Math.abs(dc) !== 1) continue;
-              const nr = row + dr;
-              const nc = col + dc;
-              if (nr >= 0 && nr < PIECE_SIZE && nc >= 0 && nc < PIECE_SIZE &&
-                  silhouette[nr] !== undefined && (silhouette[nr]! & (1 << (PIECE_SIZE - 1 - nc)))) {
-                adjacentToSilhouette = true;
-              }
-            }
-          }
-          if (adjacentToSilhouette) {
-            setPixel(pixels, x0 + col, y0 + row, outlineVal);
-          }
-        }
-      }
-      for (let row = 0; row < PIECE_SIZE; row++) {
-        const bits = silhouette[row];
-        if (bits === undefined) continue;
-        for (let col = 0; col < PIECE_SIZE; col++) {
-          if (bits & (1 << (PIECE_SIZE - 1 - col))) {
-            setPixel(pixels, x0 + col, y0 + row, fillVal);
-          }
-        }
-      }
-    } else {
-      // Light squares: white outline for contrast (same as dark squares), then black fill
-      const outlineVal = 1;
-      for (let row = -1; row <= PIECE_SIZE; row++) {
-        for (let col = -1; col <= PIECE_SIZE; col++) {
-          const inSilhouette = row >= 0 && row < PIECE_SIZE && col >= 0 && col < PIECE_SIZE &&
-            silhouette[row] !== undefined && (silhouette[row]! & (1 << (PIECE_SIZE - 1 - col)));
-          if (inSilhouette) continue;
-          let adjacentToSilhouette = false;
-          for (let dr = -1; dr <= 1 && !adjacentToSilhouette; dr++) {
-            for (let dc = -1; dc <= 1 && !adjacentToSilhouette; dc++) {
-              if (Math.abs(dr) + Math.abs(dc) !== 1) continue;
-              const nr = row + dr;
-              const nc = col + dc;
-              if (nr >= 0 && nr < PIECE_SIZE && nc >= 0 && nc < PIECE_SIZE &&
-                  silhouette[nr] !== undefined && (silhouette[nr]! & (1 << (PIECE_SIZE - 1 - nc)))) {
-                adjacentToSilhouette = true;
-              }
-            }
-          }
-          if (adjacentToSilhouette) {
-            setPixel(pixels, x0 + col, y0 + row, outlineVal);
-          }
-        }
-      }
-      for (let row = 0; row < PIECE_SIZE; row++) {
-        const bits = silhouette[row];
-        if (bits === undefined) continue;
-        for (let col = 0; col < PIECE_SIZE; col++) {
-          if (bits & (1 << (PIECE_SIZE - 1 - col))) {
-            setPixel(pixels, x0 + col, y0 + row, fillVal);
-          }
-        }
-      }
-    }
-  } else {
-    // White pieces: contrasting outline + solid white interior.
-    const outlineVal = isDark ? 1 : 0;
-    const fillVal = 1;
+    // Black pieces: a thin white ring for contrast on either square colour, then a black fill.
+    drawRing(pixels, x0, y0, silhouette, 1, false);
     for (let row = 0; row < PIECE_SIZE; row++) {
-      const bits = silhouette[row];
-      if (bits === undefined) continue;
       for (let col = 0; col < PIECE_SIZE; col++) {
-        if (bits & (1 << (PIECE_SIZE - 1 - col))) {
-          const edge = isEdgePixel(silhouette, row, col);
-          setPixel(pixels, x0 + col, y0 + row, edge ? outlineVal : fillVal);
-        }
+        if (isSet(silhouette, row, col)) setPixel(pixels, x0 + col, y0 + row, 0);
       }
     }
-    // On light squares add an outer outline ring so the dark border is thick without shrinking the piece.
-    if (!isDark) {
-      for (let row = -1; row <= PIECE_SIZE; row++) {
-        for (let col = -1; col <= PIECE_SIZE; col++) {
-          const inSilhouette = row >= 0 && row < PIECE_SIZE && col >= 0 && col < PIECE_SIZE &&
-            silhouette[row] !== undefined && (silhouette[row]! & (1 << (PIECE_SIZE - 1 - col)));
-          if (inSilhouette) continue;
-          let adjacentToSilhouette = false;
-          for (let dr = -1; dr <= 1 && !adjacentToSilhouette; dr++) {
-            for (let dc = -1; dc <= 1 && !adjacentToSilhouette; dc++) {
-              if (dr === 0 && dc === 0) continue;
-              const nr = row + dr;
-              const nc = col + dc;
-              if (nr >= 0 && nr < PIECE_SIZE && nc >= 0 && nc < PIECE_SIZE &&
-                  silhouette[nr] !== undefined && (silhouette[nr]! & (1 << (PIECE_SIZE - 1 - nc)))) {
-                adjacentToSilhouette = true;
-              }
-            }
-          }
-          if (adjacentToSilhouette) {
-            setPixel(pixels, x0 + col, y0 + row, outlineVal);
-          }
-        }
+    return;
+  }
+
+  // White pieces: contrasting outline + solid white interior.
+  const outlineVal = isDark ? 1 : 0;
+  for (let row = 0; row < PIECE_SIZE; row++) {
+    for (let col = 0; col < PIECE_SIZE; col++) {
+      if (isSet(silhouette, row, col)) {
+        setPixel(pixels, x0 + col, y0 + row, isEdgePixel(silhouette, row, col) ? outlineVal : 1);
       }
     }
   }
+  // On light squares add an outer outline ring so the dark border is thick without shrinking the piece.
+  if (!isDark) drawRing(pixels, x0, y0, silhouette, outlineVal, true);
 }
 
 function squareToCoords(square: string, playerColor: 'w' | 'b' = 'w'): { file: number; rank: number } {

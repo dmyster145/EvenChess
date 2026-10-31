@@ -6,6 +6,9 @@ import {
   type StripOp,
 } from '../../src/render/branding';
 import { BRAND_WIDTH } from '../../src/render/composer';
+import { BoardRenderer } from '../../src/render/boardimage';
+import { ChessService } from '../../src/chess/chessservice';
+import { baseGameState } from '../helpers/game-state';
 
 type Counts = Record<string, number>;
 
@@ -77,5 +80,21 @@ describe('branding preload', () => {
     await preloadBrandingImages();
     const data = renderBlankBrandingImage().imageData as number[];
     expect(String.fromCharCode(data[0]!, data[1]!)).toBe('BM');
+  });
+});
+
+describe('BMP palettes', () => {
+  // Palette entry 1 sits at bytes 58..61 as B, G, R, 0.
+  it('draws the strip in pure green', () => {
+    const data = renderBlankBrandingImage().imageData as number[];
+    expect(data.slice(58, 62)).toEqual([0, 255, 0, 0]);
+  });
+
+  it('draws the board in white', () => {
+    const chess = new ChessService();
+    const [top] = new BoardRenderer().renderFull(baseGameState(), chess);
+    const data = Array.from(top!.imageData as Uint8Array);
+    expect(String.fromCharCode(data[0]!, data[1]!)).toBe('BM');
+    expect(data.slice(58, 62)).toEqual([255, 255, 255, 0]);
   });
 });

@@ -117,7 +117,7 @@ export function resetInputDedup(): void {
 
 /** Returns false if tap was suppressed by cooldown; otherwise records tap and returns true.
  * Note: scroll-suppression currently uses raw tap attempts (accepted or suppressed) to avoid accidental swipe bleed-through. */
-function tryConsumeTap(_intendedActionType: 'TAP' | 'DOUBLE_TAP'): boolean {
+function tryConsumeTap(): boolean {
   recordTap();
   if (isInTapCooldown()) {
     return false;
@@ -145,37 +145,17 @@ function isScrollSuppressed(): boolean {
   return Date.now() - lastTapTime < SCROLL_SUPPRESS_AFTER_TAP_MS;
 }
 
-const DEBUG_EVENTS = false;
-
 export function mapEvenHubEvent(event: EvenHubEvent, state: GameState): Action | null {
   if (!event) {
     console.warn('[InputMapper] Received null/undefined event');
     return null;
   }
 
-  if (DEBUG_EVENTS) {
-    console.log('[InputMapper] Raw event:', JSON.stringify(event));
-  }
-
   try {
-    let action: Action | null = null;
-    if (event.listEvent) {
-      if (DEBUG_EVENTS) {
-        console.log('[InputMapper] listEvent:', event.listEvent.eventType, event.listEvent);
-      }
-      action = mapListEvent(event.listEvent, state);
-    } else if (event.textEvent) {
-      if (DEBUG_EVENTS) {
-        console.log('[InputMapper] textEvent:', event.textEvent.eventType, event.textEvent);
-      }
-      action = mapTextEvent(event.textEvent, state);
-    } else if (event.sysEvent) {
-      if (DEBUG_EVENTS) {
-        console.log('[InputMapper] sysEvent:', event.sysEvent.eventType, event.sysEvent);
-      }
-      action = mapSysEvent(event.sysEvent, state);
-    }
-    return action;
+    if (event.listEvent) return mapListEvent(event.listEvent, state);
+    if (event.textEvent) return mapTextEvent(event.textEvent, state);
+    if (event.sysEvent) return mapSysEvent(event.sysEvent, state);
+    return null;
   } catch (err) {
     console.error('[InputMapper] Error processing event:', err);
     return null;
@@ -183,15 +163,12 @@ export function mapEvenHubEvent(event: EvenHubEvent, state: GameState): Action |
 }
 
 // Per ER skill: "Always use nullish coalescing: event.sysEvent.eventType ?? 0". Protobuf encodes
-// the zero value (CLICK_EVENT = 0) as `undefined` on the wire, so `?? CLICK_EVENT` at the top of
-// each mapper handles the protobuf-omitted-zero case in one place instead of a separate `default`
-// fallback per switch.
+// the zero value (CLICK_EVENT = 0) as `undefined` on the wire, so `?? CLICK_EVENT` in mapGesture
+// handles the protobuf-omitted-zero case in one place.
 
-export function mapListEvent(event: List_ItemEvent, state: GameState): Action | null {
-  if (!event) return null;
-  const eventType = event.eventType ?? OsEventTypeList.CLICK_EVENT;
-
-  switch (eventType) {
+/** Scroll, tap and double-tap, shared by every event source. Null for anything else. */
+function mapGesture(eventType: OsEventTypeList | undefined, state: GameState): Action | null {
+  switch (eventType ?? OsEventTypeList.CLICK_EVENT) {
     case OsEventTypeList.SCROLL_TOP_EVENT:
       if (isScrollSuppressed()) return null; // first, so a dropped scroll is never recorded as accepted
       if (isScrollDebounced('down', state)) return null;
@@ -202,88 +179,39 @@ export function mapListEvent(event: List_ItemEvent, state: GameState): Action | 
       if (isScrollDebounced('up', state)) return null;
       return { type: 'SCROLL', direction: 'up' };
 
-    case OsEventTypeList.CLICK_EVENT: {
+    case OsEventTypeList.CLICK_EVENT:
       if (isClickDuplicate()) return null;
-      if (!tryConsumeTap('TAP')) return null;
+      if (!tryConsumeTap()) return null;
       return { type: 'TAP' };
-    }
 
-    case OsEventTypeList.DOUBLE_CLICK_EVENT: {
+    case OsEventTypeList.DOUBLE_CLICK_EVENT:
       if (isDoubleClickDuplicate()) return null;
-      if (!tryConsumeTap('DOUBLE_TAP')) return null;
+      if (!tryConsumeTap()) return null;
       return { type: 'DOUBLE_TAP' };
-    }
 
     default:
       return null;
   }
+}
+
+export function mapListEvent(event: List_ItemEvent, state: GameState): Action | null {
+  if (!event) return null;
+  return mapGesture(event.eventType, state);
 }
 
 export function mapTextEvent(event: Text_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
-  const eventType = event.eventType ?? OsEventTypeList.CLICK_EVENT;
-
-  switch (eventType) {
-    case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollSuppressed()) return null; // first, so a dropped scroll is never recorded as accepted
-      if (isScrollDebounced('down', state)) return null;
-      return { type: 'SCROLL', direction: 'down' };
-
-    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
-      if (isScrollSuppressed()) return null; // first, so a dropped scroll is never recorded as accepted
-      if (isScrollDebounced('up', state)) return null;
-      return { type: 'SCROLL', direction: 'up' };
-
-    case OsEventTypeList.CLICK_EVENT: {
-      if (isClickDuplicate()) return null;
-      if (!tryConsumeTap('TAP')) return null;
-      return { type: 'TAP' };
-    }
-
-    case OsEventTypeList.DOUBLE_CLICK_EVENT: {
-      if (isDoubleClickDuplicate()) return null;
-      if (!tryConsumeTap('DOUBLE_TAP')) return null;
-      return { type: 'DOUBLE_TAP' };
-    }
-
-    default:
-      return null;
-  }
+  return mapGesture(event.eventType, state);
 }
 
 export function mapSysEvent(event: Sys_ItemEvent, state: GameState): Action | null {
   if (!event) return null;
-  const eventType = event.eventType ?? OsEventTypeList.CLICK_EVENT;
-  switch (eventType) {
-    case OsEventTypeList.SCROLL_TOP_EVENT:
-      if (isScrollSuppressed()) return null; // first, so a dropped scroll is never recorded as accepted
-      if (isScrollDebounced('down', state)) return null;
-      return { type: 'SCROLL', direction: 'down' };
-
-    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
-      if (isScrollSuppressed()) return null; // first, so a dropped scroll is never recorded as accepted
-      if (isScrollDebounced('up', state)) return null;
-      return { type: 'SCROLL', direction: 'up' };
-
-    case OsEventTypeList.CLICK_EVENT: {
-      if (isClickDuplicate()) return null;
-      if (!tryConsumeTap('TAP')) return null;
-      return { type: 'TAP' };
-    }
-
-    case OsEventTypeList.DOUBLE_CLICK_EVENT: {
-      if (isDoubleClickDuplicate()) return null;
-      if (!tryConsumeTap('DOUBLE_TAP')) return null;
-      return { type: 'DOUBLE_TAP' };
-    }
-
+  switch (event.eventType) {
     case OsEventTypeList.FOREGROUND_ENTER_EVENT:
       return { type: 'FOREGROUND_ENTER' };
-
     case OsEventTypeList.FOREGROUND_EXIT_EVENT:
       return { type: 'FOREGROUND_EXIT' };
-
     default:
-      return null;
+      return mapGesture(event.eventType, state);
   }
 }

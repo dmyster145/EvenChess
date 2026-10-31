@@ -12,12 +12,10 @@
 import type { GameState } from '../state/contracts';
 import type { ChessService } from '../chess/chessservice';
 import { BoardRenderer } from '../render/boardimage';
-import { getBoardLayout, BRAND_HEIGHT } from '../render/composer';
+import { getBoardLayout, BRAND_HEIGHT, TEXT_Y } from '../render/composer';
 import { getCombinedDisplayText, getCapturedDisplay } from '../state/selectors';
-import { DISPLAY_WIDTH } from '../state/constants';
+import { DISPLAY_WIDTH, DISPLAY_HEIGHT } from '../state/constants';
 
-const DISPLAY_HEIGHT = 288;
-const TEXT_Y = 8; // mirrors composer.ts buildContainers (gameplay layout)
 const SCALE = 2; // upscale so phone screenshots are legible
 const ON = [120, 255, 140] as const; // glasses green
 const OFF = [0, 0, 0] as const;

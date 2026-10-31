@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reduce } from '../../src/state/reducer';
 import type { GameState, PieceEntry, Action, MenuOption } from '../../src/state/contracts';
-import { MENU_OPTIONS, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX, DRILL_OPTIONS } from '../../src/state/constants';
+import {
+  MODE_OPTIONS, MENU_OPTIONS, MENU_OPTION_COUNT, TIME_CONTROLS, MENU_INDEX, DRILL_OPTIONS } from '../../src/state/constants';
 import { baseGameState } from '../helpers/game-state';
 import { ChessService } from '../../src/chess/chessservice';
-import { fileRankToSquare } from '../../src/chess/square-utils';
-import { getKnightMoves, getSquareIndices } from '../../src/academy/knight';
+import { indicesToSquare, squareToIndices } from '../../src/chess/square-utils';
+import { getKnightMoves } from '../../src/academy/knight';
 
 function createTestState(overrides?: Partial<GameState>): GameState {
   const pieces: PieceEntry[] = [
@@ -382,6 +383,17 @@ describe('reducer', () => {
 
   // ── Menu Tests ──────────────────────────────────────────────────────────────
 
+  describe('backing out of a mode screen (double-tap)', () => {
+    it.each([
+      ['bulletSetup', 'bullet'],
+      ['academySelect', 'academy'],
+    ] as const)('%s returns to Mode with %s highlighted', (phase, mode) => {
+      const next = reduce(createTestState({ phase, menuSelectedIndex: 0 }), { type: 'DOUBLE_TAP' });
+      expect(next.phase).toBe('modeSelect');
+      expect(MODE_OPTIONS[next.menuSelectedIndex]).toBe(mode);
+    });
+  });
+
   describe('opening and closing the menu (double-tap)', () => {
     it('opens the menu from idle, remembering where it came from', () => {
       const next = reduce(createTestState({ phase: 'idle', menuSelectedIndex: 3 }), { type: 'DOUBLE_TAP' });
@@ -474,8 +486,8 @@ describe('reducer', () => {
   });
 
   describe('menu scroll navigation', () => {
-    // Scroll direction is inverted in settings phases (see SETTINGS_PHASES in
-    // reducer.ts) so that a physical scroll-down gesture moves the cursor to
+    // Scroll direction is inverted in settings phases (see INVERTED_SCROLL_PHASES in
+    // state/utils.ts) so that a physical scroll-down gesture moves the cursor to
     // the previous item. Tests use the post-inversion convention: `up` = +1.
     it('cycles menu options forward (scroll up)', () => {
       const state = createTestState({ phase: 'menu', menuSelectedIndex: 0 });
@@ -504,7 +516,7 @@ describe('reducer', () => {
 
   describe('menu tap selection', () => {
     it('tap in menu selects current option', () => {
-      const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG });
+      const state = createTestState({ phase: 'menu', menuSelectedIndex: MENU_INDEX.viewLog });
       const next = reduce(state, { type: 'TAP' });
       expect(next.phase).toBe('viewLog');
     });
@@ -1154,7 +1166,7 @@ describe('reducer', () => {
       const state = createTestState({ phase: 'playAsSelect', menuSelectedIndex: 1 });
       const next = reduce(state, { type: 'DOUBLE_TAP' });
       expect(next.phase).toBe('menu');
-      expect(next.menuSelectedIndex).toBe(MENU_INDEX.PLAY_AS);
+      expect(next.menuSelectedIndex).toBe(MENU_INDEX.playAs);
     });
 
     it('SET_PLAYER_COLOR updates the resolved color', () => {
@@ -1463,7 +1475,7 @@ describe('reducer', () => {
     it('View Log double-tap highlights View Log', () => {
       const s = reduce(createTestState({ phase: 'viewLog' }), { type: 'DOUBLE_TAP' });
       expect(s.phase).toBe('menu');
-      expect(s.menuSelectedIndex).toBe(MENU_INDEX.VIEW_LOG);
+      expect(s.menuSelectedIndex).toBe(MENU_INDEX.viewLog);
     });
 
     it.each([
@@ -1471,9 +1483,9 @@ describe('reducer', () => {
       ['double-tap', (s: GameState) => reduce(s, { type: 'DOUBLE_TAP' })],
     ])('%s from a Play-As confirmation highlights Play As; from Reset highlights Reset', (_how, back) => {
       const fromPlayAs = back(createTestState({ phase: 'resetConfirm', pendingPlayAs: 'black' }));
-      expect(fromPlayAs.menuSelectedIndex).toBe(MENU_INDEX.PLAY_AS);
+      expect(fromPlayAs.menuSelectedIndex).toBe(MENU_INDEX.playAs);
       const fromReset = back(createTestState({ phase: 'resetConfirm', pendingPlayAs: null }));
-      expect(fromReset.menuSelectedIndex).toBe(MENU_INDEX.RESET);
+      expect(fromReset.menuSelectedIndex).toBe(MENU_INDEX.reset);
     });
   });
 
@@ -1482,7 +1494,7 @@ describe('reducer', () => {
       let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP' });
       expect(s.phase).toBe('knightPathDrill');
       const kp = s.academyState!.knightPath!;
-      const cursor = fileRankToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
+      const cursor = indicesToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
       expect(getKnightMoves(kp.startSquare)).toContain(cursor);
       s = reduce(s, { type: 'TAP' });
       expect(s.academyState!.knightPath!.movesTaken).toBe(1);
@@ -1490,10 +1502,10 @@ describe('reducer', () => {
 
     it('a first scroll from a non-move square lands on the first legal move', () => {
       let s = reduce(createTestState({ phase: 'academySelect', menuSelectedIndex: DRILL_OPTIONS.indexOf('knightPath') }), { type: 'TAP' });
-      const start = getSquareIndices(s.academyState!.knightPath!.startSquare);
-      s = { ...s, academyState: { ...s.academyState!, cursorFile: start.file, cursorRank: start.rank } };
+      const [startFile, startRank] = squareToIndices(s.academyState!.knightPath!.startSquare);
+      s = { ...s, academyState: { ...s.academyState!, cursorFile: startFile, cursorRank: startRank } };
       s = reduce(s, { type: 'SCROLL', direction: 'down' });
-      const cursor = fileRankToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
+      const cursor = indicesToSquare(s.academyState!.cursorFile, s.academyState!.cursorRank).toLowerCase();
       expect(cursor).toBe(getKnightMoves(s.academyState!.knightPath!.startSquare)[0]);
     });
   });

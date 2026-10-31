@@ -189,6 +189,11 @@ describe('persistence', () => {
       expect(await loadBoardSize()).toBe('small');
     });
 
+    it('Play As keeps a valid stored choice', async () => {
+      localStorageMock.setItem('evenchess-play-as', 'random');
+      expect(await loadPlayAs()).toBe('random');
+    });
+
     it('Play As and Position accept only their known values', async () => {
       localStorageMock.setItem('evenchess-play-as', 'purple');
       localStorageMock.setItem('evenchess-board-position', 'sideways');

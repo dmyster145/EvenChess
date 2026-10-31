@@ -9,7 +9,7 @@ import { baseGameState } from '../helpers/game-state';
 /** Wires createSideEffects to a real store with counting fakes for everything that talks to the glasses. */
 function setup() {
   const chess = new ChessService();
-  const store = createStore({ ...baseGameState(), phase: 'menu', menuSelectedIndex: MENU_INDEX.EXIT });
+  const store = createStore({ ...baseGameState(), phase: 'menu', menuSelectedIndex: MENU_INDEX.exit });
   let exitDialogPending = false;
   const calls = { systemExits: 0, flushSchedules: 0, brandingSchedules: 0, flushCancels: 0, brandingCancels: 0 };
   const deps = {

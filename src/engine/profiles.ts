@@ -3,7 +3,7 @@
  */
 
 import type { EngineProfile, DifficultyLevel } from '../state/contracts';
-import { CUSTOM_SKILL_LEVEL_MIN, CUSTOM_SKILL_LEVEL_MAX, CUSTOM_SKILL_LEVEL_DEFAULT } from '../state/contracts';
+import { CUSTOM_SKILL_LEVEL_MIN, CUSTOM_SKILL_LEVEL_MAX, clampCustomSkillLevel } from '../state/contracts';
 
 export const EASY: EngineProfile = {
   name: 'Easy',
@@ -35,14 +35,6 @@ const NAMED_PROFILES: Record<Exclude<DifficultyLevel, 'custom'>, EngineProfile> 
   serious: SERIOUS,
 };
 
-function clampCustomLevel(value: number): number {
-  if (!Number.isFinite(value)) return CUSTOM_SKILL_LEVEL_DEFAULT;
-  const rounded = Math.round(value);
-  if (rounded < CUSTOM_SKILL_LEVEL_MIN) return CUSTOM_SKILL_LEVEL_MIN;
-  if (rounded > CUSTOM_SKILL_LEVEL_MAX) return CUSTOM_SKILL_LEVEL_MAX;
-  return rounded;
-}
-
 /**
  * Map the 0..9 custom picker value to a Stockfish profile. Skill spans the full
  * 0..20 Stockfish range; depth scales 4..18 and movetime 400..4000 so weak settings
@@ -50,7 +42,7 @@ function clampCustomLevel(value: number): number {
  * enable MultiPV variety so the engine doesn't pick the same line every time at low skill.
  */
 export function buildCustomEngineProfile(rawLevel: number): EngineProfile {
-  const level = clampCustomLevel(rawLevel);
+  const level = clampCustomSkillLevel(rawLevel);
   const span = CUSTOM_SKILL_LEVEL_MAX - CUSTOM_SKILL_LEVEL_MIN;
   const skillLevel = Math.round((level * 20) / span);
   const depth = 4 + Math.round((level * 14) / span);

@@ -12,7 +12,7 @@
  */
 
 import type { Store } from '../state/store';
-import type { GameState, Action, CarouselMove, UIPhase } from '../state/contracts';
+import type { GameState, Action, CarouselMove } from '../state/contracts';
 import type { ChessService } from '../chess/chessservice';
 import type { TurnLoop } from '../engine/turnloop';
 import type { BoardRenderer } from '../render/boardimage';
@@ -22,42 +22,11 @@ import type { BrandingController } from './branding';
 import type { BulletTimerController } from './bullet-timer';
 import type { AutosaveController } from './autosave';
 import { saveGame, saveDifficulty, saveCustomSkillLevel, saveBoardMarkers, saveBoardSize, saveBoardAlignment, saveBoardPosition, savePlayAs, clearSave } from '../storage/persistence';
-import { resolvePlayerColor } from '../state/utils';
+import { resolvePlayerColor, GAME_PHASES, MENU_PHASES, SUBMENU_PHASES } from '../state/utils';
 import { getEngineProfile } from '../engine/profiles';
 import { extendTapCooldown, TAP_COOLDOWN_MENU_MS, TAP_COOLDOWN_DESTSELECT_MS } from '../input/actions';
 import { composePageForState } from '../render/composer';
 import { BoardRenderer as BoardRendererClass } from '../render/boardimage';
-
-/**
- * Settings/menu phases — entering one of these from a non-settings phase (or transitioning between
- * them via a tap) extends the tap cooldown so a touchpad bounce doesn't immediately fire a second
- * action on the new phase. `viewLog` is included because tap-on-viewLog returns to menu and a
- * bounce would hide the log instantly.
- */
-const SUBMENU_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
-  'modeSelect',
-  'bulletSetup',
-  'academySelect',
-  'difficultySelect',
-  'customDifficultySelect',
-  'displayOptionsSelect',
-  'playAsSelect',
-  'resetConfirm',
-  'viewLog',
-]);
-
-const SETTINGS_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
-  'menu',
-  ...SUBMENU_PHASES,
-]);
-
-const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
-  'idle',
-  'rowSelect',
-  'pieceSelect',
-  'destSelect',
-  'promotionSelect',
-]);
 
 export interface SideEffectsDeps {
   store: Store;
@@ -199,7 +168,7 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
     // without highlights), and on resumption to a phase that DOES have highlights the diff path
     // could miss them or send the wrong half. Forcing a full re-render guarantees the user sees
     // the correct selection outline (bug #4).
-    if (SETTINGS_PHASES.has(prevState.phase) && GAME_PHASES.has(state.phase)) {
+    if (MENU_PHASES.has(prevState.phase) && GAME_PHASES.has(state.phase)) {
       deps.flush.setForceFullRefresh();
       deps.branding.forceNextRefresh();
     }
@@ -220,7 +189,8 @@ export function createSideEffects(deps: SideEffectsDeps): SideEffectsController 
     // hits the submenu's TAP handler and immediately picks the default (returning to menu, or
     // worse, going back to idle in the case of mode/play). User perceives "the option doesn't
     // work" (bugs #1, #2). The 500ms cooldown is well below human "second tap" timing (~250ms+)
-    // but well above SDK touchpad bounce intervals (~10–50ms).
+    // but well above SDK touchpad bounce intervals (~10–50ms). View Log counts as a submenu here:
+    // a tap there returns to the menu, so a bounce would hide the log instantly.
     if (SUBMENU_PHASES.has(state.phase) && !SUBMENU_PHASES.has(prevState.phase)) {
       extendTapCooldown(TAP_COOLDOWN_MENU_MS);
     }

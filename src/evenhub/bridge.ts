@@ -33,6 +33,7 @@ import {
   TextContainerUpgrade,
   ImageRawDataUpdate,
   ImageRawDataUpdateResult,
+  AudioInputSource,
   type EvenAppBridge as EvenAppBridgeType,
   type CreateStartUpPageContainer,
   type RebuildPageContainer,
@@ -137,7 +138,6 @@ export class EvenHubBridge {
   private pendingTextByContainer = new Map<number, PendingText>();
   private imageSenderRunning = false;
   private textSenderRunning = false;
-  private cleared = false;
 
   // Exit-dialog state. shutDownPageContainer(1)'s event polarity is INVERTED vs a real
   // background: the SDK fires FOREGROUND_ENTER (sys=4) when the dialog APPEARS, FOREGROUND_EXIT
@@ -234,10 +234,7 @@ export class EvenHubBridge {
       // localStorage unavailable in some test environments.
     }
     if (localValue !== null) return localValue;
-    if (!this.bridge) return null;
-    const bridge = this.bridge;
-    const value = await this.serializeBleCall(`getLocalStorage(${key})`, () => bridge.getLocalStorage(key), '', BLE_STORAGE_TIMEOUT_MS);
-    return value === '' ? null : value;
+    return this.rawSdkGet(key);
   }
 
   async storageSet(key: string, value: string): Promise<void> {
@@ -416,16 +413,12 @@ export class EvenHubBridge {
         }
 
         if (myRunnerSeq !== this.activeImageSenderRunnerSeq) return;
-        if (this.cleared) {
-          this.cleared = false;
-          break;
-        }
       }
     } finally {
       // Only the active runner should reset state and re-trigger; superseded runners just exit.
       if (myRunnerSeq === this.activeImageSenderRunnerSeq) {
         this.imageSenderRunning = false;
-        if (this.pendingImageByContainer.size > 0 && !this.cleared) {
+        if (this.pendingImageByContainer.size > 0) {
           void this.runImageSender();
         }
       }
@@ -453,14 +446,10 @@ export class EvenHubBridge {
           false,
           BLE_TEXT_TIMEOUT_MS,
         );
-        if (this.cleared) {
-          this.cleared = false;
-          break;
-        }
       }
     } finally {
       this.textSenderRunning = false;
-      if (this.pendingTextByContainer.size > 0 && !this.cleared) {
+      if (this.pendingTextByContainer.size > 0) {
         void this.runTextSender();
       }
     }
@@ -475,7 +464,6 @@ export class EvenHubBridge {
   clearPending(): void {
     this.pendingImageByContainer.clear();
     this.pendingTextByContainer.clear();
-    this.cleared = true;
   }
 
   /**
@@ -491,7 +479,6 @@ export class EvenHubBridge {
     debugLog('forceResetImageTransport', { reason }, 'BRG');
     this.activeImageSenderRunnerSeq = ++this.imageSenderRunnerSeq;
     this.imageSenderRunning = false;
-    this.cleared = false;
     this.pendingImageByContainer.clear();
     this.consecutiveImageSendFailures = 0;
   }
@@ -585,7 +572,8 @@ export class EvenHubBridge {
     const bridge = this.bridge;
     return await this.serializeBleCall(
       `audioControl(${isOpen})`,
-      () => bridge.audioControl(isOpen),
+      // Name the glasses mic explicitly rather than relying on the SDK's default source.
+      () => (isOpen ? bridge.audioControl(true, AudioInputSource.Glasses) : bridge.audioControl(false)),
       false,
       BLE_AUDIO_CTRL_TIMEOUT_MS,
     );

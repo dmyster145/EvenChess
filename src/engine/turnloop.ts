@@ -12,7 +12,6 @@ export interface ChessEngine {
   init(): Promise<void>;
   getBestMove(fen: string, profile: EngineProfile): Promise<string | null>;
   stop(): void;
-  destroy(): void;
 }
 
 export class TurnLoop {
@@ -146,84 +145,84 @@ export class TurnLoop {
   private async runEngineTurn(requestSeq: number): Promise<void> {
     this.store.dispatch({ type: 'ENGINE_THINKING' });
 
-      let bestMoveUci: string | null = null;
-      try {
-        const fen = this.chess.getFen();
-        bestMoveUci = await this.engine.getBestMove(fen, this.searchProfile());
-        if (requestSeq !== this.requestSeq) {
-          return;
-        }
-        const stateAfterAwait = this.store.getState();
-        if (stateAfterAwait.gameOver || this.chess.getFen() !== fen) {
-          this.clearEngineThinkingIfActive();
-          return;
-        }
-      } catch (err) {
-        console.error('[TurnLoop] Engine error:', err);
-        this.clearEngineThinking();
+    let bestMoveUci: string | null = null;
+    try {
+      const fen = this.chess.getFen();
+      bestMoveUci = await this.engine.getBestMove(fen, this.searchProfile());
+      if (requestSeq !== this.requestSeq) {
         return;
       }
-
-      if (!bestMoveUci) {
-        console.error('[TurnLoop] Engine returned no move.');
-        this.clearEngineThinking();
+      const stateAfterAwait = this.store.getState();
+      if (stateAfterAwait.gameOver || this.chess.getFen() !== fen) {
+        this.clearEngineThinkingIfActive();
         return;
       }
+    } catch (err) {
+      console.error('[TurnLoop] Engine error:', err);
+      this.clearEngineThinking();
+      return;
+    }
 
-      let engineSan: string | null = null;
-      try {
-        if (requestSeq !== this.requestSeq) {
+    if (!bestMoveUci) {
+      console.error('[TurnLoop] Engine returned no move.');
+      this.clearEngineThinking();
+      return;
+    }
+
+    let engineSan: string | null = null;
+    try {
+      if (requestSeq !== this.requestSeq) {
+        return;
+      }
+      const stateBeforeApply = this.store.getState();
+      if (stateBeforeApply.gameOver) {
+        this.clearEngineThinkingIfActive();
+        return;
+      }
+      engineSan = this.chess.makeMoveUci(bestMoveUci);
+    } catch (err) {
+      console.error('[TurnLoop] Error applying engine move:', err);
+      this.clearEngineThinking();
+      return;
+    }
+
+    if (!engineSan) {
+      console.error('[TurnLoop] Engine move was illegal:', bestMoveUci);
+      this.clearEngineThinking();
+      return;
+    }
+
+    const endsGame = this.chess.isGameOver();
+    const engineColor = this.chess.getTurn() === 'w' ? 'b' : 'w'; // the side that just moved
+    this.store.dispatch({
+      type: 'ENGINE_MOVE',
+      uci: bestMoveUci,
+      san: engineSan,
+      ...this.chess.getStateSnapshot(),
+      // Stops the bullet clock at once: GAME_OVER below is delayed 500ms so the move shows first,
+      // and the human's clock must not run (and flag) during that pause.
+      endsGame,
+    });
+
+    const stateAfterEngine = this.store.getState();
+    if (!endsGame && stateAfterEngine.mode === 'bullet' && stateAfterEngine.timerActive && stateAfterEngine.timers) {
+      this.store.dispatch({ type: 'APPLY_INCREMENT', color: engineColor });
+    }
+
+    if (endsGame) {
+      const reason = this.chess.getGameOverReason() ?? 'unknown';
+      const expectedFen = this.chess.getFen();
+      const timeoutSeq = requestSeq;
+      this.pendingTimeout = setTimeout(() => {
+        this.pendingTimeout = null;
+        if (timeoutSeq !== this.requestSeq) return;
+        const current = this.store.getState();
+        if (current.gameOver || current.fen !== expectedFen || this.chess.getFen() !== expectedFen) {
           return;
         }
-        const stateBeforeApply = this.store.getState();
-        if (stateBeforeApply.gameOver) {
-          this.clearEngineThinkingIfActive();
-          return;
-        }
-        engineSan = this.chess.makeMoveUci(bestMoveUci);
-      } catch (err) {
-        console.error('[TurnLoop] Error applying engine move:', err);
-        this.clearEngineThinking();
-        return;
-      }
-
-      if (!engineSan) {
-        console.error('[TurnLoop] Engine move was illegal:', bestMoveUci);
-        this.clearEngineThinking();
-        return;
-      }
-
-      const endsGame = this.chess.isGameOver();
-      const engineColor = this.chess.getTurn() === 'w' ? 'b' : 'w'; // the side that just moved
-      this.store.dispatch({
-        type: 'ENGINE_MOVE',
-        uci: bestMoveUci,
-        san: engineSan,
-        ...this.chess.getStateSnapshot(),
-        // Stops the bullet clock at once: GAME_OVER below is delayed 500ms so the move shows first,
-        // and the human's clock must not run (and flag) during that pause.
-        endsGame,
-      });
-
-      const stateAfterEngine = this.store.getState();
-      if (!endsGame && stateAfterEngine.mode === 'bullet' && stateAfterEngine.timerActive && stateAfterEngine.timers) {
-        this.store.dispatch({ type: 'APPLY_INCREMENT', color: engineColor });
-      }
-
-      if (endsGame) {
-        const reason = this.chess.getGameOverReason() ?? 'unknown';
-        const expectedFen = this.chess.getFen();
-        const timeoutSeq = requestSeq;
-        this.pendingTimeout = setTimeout(() => {
-          this.pendingTimeout = null;
-          if (timeoutSeq !== this.requestSeq) return;
-          const current = this.store.getState();
-          if (current.gameOver || current.fen !== expectedFen || this.chess.getFen() !== expectedFen) {
-            return;
-          }
-          this.store.dispatch({ type: 'GAME_OVER', reason });
-        }, 500);
-      }
+        this.store.dispatch({ type: 'GAME_OVER', reason });
+      }, 500);
+    }
   }
 
   private dispatchRefresh(): void {
@@ -236,11 +235,5 @@ export class TurnLoop {
   private clearEngineThinking(): void {
     this.store.dispatch({ type: 'ENGINE_ERROR' });
     this.dispatchRefresh();
-  }
-
-  destroy(): void {
-    this.requestSeq++;
-    this.clearPendingGameOverTimeout();
-    this.engine.destroy();
   }
 }

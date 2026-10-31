@@ -100,8 +100,3 @@ export function isValidKnightMove(from: string, to: string): boolean {
   const validMoves = getKnightMoves(from);
   return validMoves.includes(to.toLowerCase());
 }
-
-export function getSquareIndices(square: string): { file: number; rank: number } {
-  const [file, rank] = squareToIndices(square);
-  return { file, rank };
-}

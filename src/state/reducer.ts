@@ -12,7 +12,7 @@
  * A tap in Idle also reaches RowSelect here, but app.ts intercepts it first to start voice input.
  */
 
-import type { GameState, Action, PieceEntry, UIPhase, MenuOption, GameMode, DrillType } from './contracts';
+import type { GameState, Action, PieceEntry, MenuOption, GameMode, DrillType } from './contracts';
 import { CUSTOM_SKILL_LEVEL_MIN, CUSTOM_SKILL_LEVEL_MAX } from './contracts';
 import {
   MENU_OPTIONS,
@@ -28,6 +28,8 @@ import {
   LOG_MAX_VISIBLE,
   MODE_OPTIONS,
   MODE_OPTION_COUNT,
+  MODE_INDEX,
+  RESET_CONFIRM_INDEX,
   TIME_CONTROLS,
   TIME_CONTROL_COUNT,
   DRILL_OPTIONS,
@@ -36,18 +38,14 @@ import {
   PROMOTION_OPTION_COUNT,
   PROMOTION_PIECE_KEYS,
 } from './constants';
-import { rankOfSquare } from '../chess/square-utils';
+import { rankOfSquare, indicesToSquare, squareToIndices } from '../chess/square-utils';
 import { getCandidateRows, getPiecesOnRow, getSelectedRow, getBoardViewColor } from './selectors';
-import { generateRandomSquare, moveCursorAxis, fileRankToSquare, getDefaultCursorPosition } from '../academy/drills';
-import { generateKnightPuzzle, getKnightMoves, isValidKnightMove, getSquareIndices } from '../academy/knight';
+import { generateRandomSquare, moveCursorAxis, getDefaultCursorPosition } from '../academy/drills';
+import { generateKnightPuzzle, getKnightMoves, isValidKnightMove } from '../academy/knight';
 import { getRandomTacticsPuzzle, getRandomMatePuzzle } from '../academy/puzzles';
 import { getRandomFamousGame } from '../academy/pgn';
 import { STARTING_FEN } from '../chess/chessservice';
-
-/** Gameplay phases the bullet clock may resume in after a system overlay closes. */
-const GAME_PHASES: ReadonlySet<UIPhase> = new Set<UIPhase>([
-  'idle', 'rowSelect', 'pieceSelect', 'destSelect', 'promotionSelect',
-]);
+import { GAME_PHASES, INVERTED_SCROLL_PHASES } from './utils';
 
 /**
  * True when the human may begin selecting a move: it is their turn and no engine search or
@@ -304,17 +302,11 @@ function beginMoveSelection(state: GameState): GameState {
   };
 }
 
-/** Menu and settings screens, where scrolling runs the opposite way to gameplay (see handleScroll). */
-const SETTINGS_PHASES = new Set([
-  'menu', 'resetConfirm', 'difficultySelect', 'customDifficultySelect',
-  'displayOptionsSelect', 'playAsSelect', 'modeSelect', 'bulletSetup', 'academySelect',
-]);
-
 /**
  * Scroll (swipe) handling:
  * - SCROLL_BOTTOM_EVENT → direction 'down' → next item (+1 in spatial order).
  * - SCROLL_TOP_EVENT → direction 'up' → previous item (-1).
- * - Menu and settings screens (SETTINGS_PHASES) invert the direction first.
+ * - Menu and settings screens (INVERTED_SCROLL_PHASES) invert the direction first.
  * - rowSelect: order = candidate rows ascending ('down' = next = higher rank). Which way that
  *   moves on screen depends on the board's orientation (see getBoardViewColor).
  * - pieceSelect: order = movable pieces on the active row only (file a→h).
@@ -322,7 +314,7 @@ const SETTINGS_PHASES = new Set([
  */
 function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
   // Invert scroll direction in settings/menu screens vs gameplay
-  const d: 'up' | 'down' = SETTINGS_PHASES.has(state.phase)
+  const d: 'up' | 'down' = INVERTED_SCROLL_PHASES.has(state.phase)
     ? (direction === 'down' ? 'up' : 'down')
     : direction;
   switch (state.phase) {
@@ -390,7 +382,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
     }
 
     case 'resetConfirm':
-      return { ...state, menuSelectedIndex: state.menuSelectedIndex === 0 ? 1 : 0 };
+      return { ...state, menuSelectedIndex: state.menuSelectedIndex === RESET_CONFIRM_INDEX.confirm ? RESET_CONFIRM_INDEX.cancel : RESET_CONFIRM_INDEX.confirm };
 
     case 'difficultySelect': {
       const idx = state.menuSelectedIndex;
@@ -403,7 +395,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
 
     case 'customDifficultySelect': {
       // Picker bounds are clamped — no wraparound, so 9 + down stays at 9.
-      // Inversion is already applied above via SETTINGS_PHASES; here 'down' = next = higher number.
+      // Inversion is already applied above via INVERTED_SCROLL_PHASES; here 'down' = next = higher number.
       const next = d === 'down'
         ? Math.min(CUSTOM_SKILL_LEVEL_MAX, state.customSkillLevel + 1)
         : Math.max(CUSTOM_SKILL_LEVEL_MIN, state.customSkillLevel - 1);
@@ -417,7 +409,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
           ? (idx + 1) % DISPLAY_OPTIONS_OPTION_COUNT
           : (idx - 1 + DISPLAY_OPTIONS_OPTION_COUNT) % DISPLAY_OPTIONS_OPTION_COUNT;
       // Markers are disabled in large-board mode — skip that row when navigating.
-      if (state.boardSize === 'large' && next === DISPLAY_OPTIONS_INDEX.MARKERS) {
+      if (state.boardSize === 'large' && next === DISPLAY_OPTIONS_INDEX.markers) {
         next = d === 'down'
           ? (next + 1) % DISPLAY_OPTIONS_OPTION_COUNT
           : (next - 1 + DISPLAY_OPTIONS_OPTION_COUNT) % DISPLAY_OPTIONS_OPTION_COUNT;
@@ -496,7 +488,7 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
       const validMoves = getKnightMoves(kp.currentSquare);
       if (validMoves.length === 0) return state;
 
-      const currentHighlight = fileRankToSquare(
+      const currentHighlight = indicesToSquare(
         state.academyState.cursorFile,
         state.academyState.cursorRank
       );
@@ -509,14 +501,14 @@ function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
           : (currentIdx - 1 + validMoves.length) % validMoves.length;
 
       const nextSquare = validMoves[nextIdx]!;
-      const nextPos = getSquareIndices(nextSquare);
+      const [nextFile, nextRank] = squareToIndices(nextSquare);
 
       return {
         ...state,
         academyState: {
           ...state.academyState,
-          cursorFile: nextPos.file,
-          cursorRank: nextPos.rank,
+          cursorFile: nextFile,
+          cursorRank: nextRank,
           feedback: 'none',
         },
       };
@@ -646,10 +638,10 @@ function handleTap(state: GameState): GameState {
     }
 
     case 'viewLog':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.viewLog };
 
     case 'resetConfirm': {
-      if (state.menuSelectedIndex === 0) {
+      if (state.menuSelectedIndex === RESET_CONFIRM_INDEX.confirm) {
         // Confirm: commit any deferred Play As choice, then flag the reset explicitly so
         // side-effects.ts performs it (keyed on the flag, not on the resetConfirm→idle transition).
         // The NEW_GAME it dispatches clears the flag, the clock, and the menu's pause marker.
@@ -678,7 +670,7 @@ function handleTap(state: GameState): GameState {
         ...state,
         difficulty: selectedDifficulty,
         phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.DIFFICULTY,
+        menuSelectedIndex: MENU_INDEX.difficulty,
       };
     }
 
@@ -688,7 +680,7 @@ function handleTap(state: GameState): GameState {
         ...state,
         difficulty: 'custom',
         phase: 'menu',
-        menuSelectedIndex: MENU_INDEX.DIFFICULTY,
+        menuSelectedIndex: MENU_INDEX.difficulty,
       };
     }
 
@@ -719,7 +711,7 @@ function handleTap(state: GameState): GameState {
         // only on confirm (resetConfirm), so cancelling leaves playAs (and its persisted value)
         // unchanged. The confirm path reuses the reset flow, whose new-game side-effect resolves
         // playerColor from the now-committed playAs and re-rolls 'random'.
-        return { ...state, pendingPlayAs: chosen, phase: 'resetConfirm', menuSelectedIndex: 1 };
+        return { ...state, pendingPlayAs: chosen, phase: 'resetConfirm', menuSelectedIndex: RESET_CONFIRM_INDEX.cancel };
       }
       // Fresh board: apply immediately — the playAsSelect→idle transition is picked up by the
       // new-game side-effect.
@@ -762,7 +754,7 @@ function handleTap(state: GameState): GameState {
  * so the side stays unchanged, and returns to the menu item that led here.
  */
 function cancelResetConfirm(state: GameState): GameState {
-  const menuSelectedIndex = state.pendingPlayAs ? MENU_INDEX.PLAY_AS : MENU_INDEX.RESET;
+  const menuSelectedIndex = state.pendingPlayAs ? MENU_INDEX.playAs : MENU_INDEX.reset;
   return { ...state, pendingPlayAs: null, phase: 'menu', menuSelectedIndex };
 }
 
@@ -805,13 +797,13 @@ function handleDoubleTap(state: GameState): GameState {
       return handleCloseMenu(state);
 
     case 'viewLog':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.VIEW_LOG };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.viewLog };
 
     case 'resetConfirm':
       return cancelResetConfirm(state);
 
     case 'difficultySelect':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.DIFFICULTY };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.difficulty };
 
     case 'customDifficultySelect':
       // Back out to the tier selector with Custom highlighted so the user can re-pick.
@@ -822,19 +814,19 @@ function handleDoubleTap(state: GameState): GameState {
       };
 
     case 'playAsSelect':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.PLAY_AS };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.playAs };
 
     case 'displayOptionsSelect':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.DISPLAY_OPTIONS };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.displayOptions };
 
     case 'modeSelect':
-      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.MODE };
+      return { ...state, phase: 'menu', menuSelectedIndex: MENU_INDEX.mode };
 
     case 'bulletSetup':
-      return { ...state, phase: 'modeSelect', menuSelectedIndex: 1 };
+      return { ...state, phase: 'modeSelect', menuSelectedIndex: MODE_INDEX.bullet };
 
     case 'academySelect':
-      return { ...state, phase: 'modeSelect', menuSelectedIndex: 2 };
+      return { ...state, phase: 'modeSelect', menuSelectedIndex: MODE_INDEX.academy };
 
     case 'coordinateDrill': {
       const academy = state.academyState;
@@ -975,7 +967,7 @@ function handleCloseMenu(state: GameState): GameState {
   // wasn't running when the menu opened.
   const resumeBulletTimer =
     state.bulletPausedForMenu && state.mode === 'bullet' && state.timers && !state.gameOver &&
-    (state.previousPhase === 'idle' || state.previousPhase === 'rowSelect' || state.previousPhase === 'pieceSelect' || state.previousPhase === 'destSelect');
+    state.previousPhase !== null && GAME_PHASES.has(state.previousPhase);
   return {
     ...state,
     phase: state.previousPhase ?? 'idle',
@@ -1031,7 +1023,7 @@ function handleMenuSelect(state: GameState, option: MenuOption): GameState {
       return {
         ...state,
         phase: 'resetConfirm',
-        menuSelectedIndex: 1,
+        menuSelectedIndex: RESET_CONFIRM_INDEX.cancel,
       };
 
     case 'exit':
@@ -1260,7 +1252,7 @@ function handleDrillTap(state: GameState): GameState {
   }
 
   // Rank axis: submit the guess
-  const guessSquare = fileRankToSquare(academy.cursorFile, academy.cursorRank);
+  const guessSquare = indicesToSquare(academy.cursorFile, academy.cursorRank);
   const targetSquare = academy.targetSquare ?? '';
   const isCorrect = guessSquare.toLowerCase() === targetSquare.toLowerCase();
 
@@ -1280,7 +1272,8 @@ function handleDrillTap(state: GameState): GameState {
 /** Knight Path cursor starts on the knight's first legal move, so the first tap is a real move. */
 function firstKnightMoveCursor(square: string): { file: number; rank: number } {
   const first = getKnightMoves(square)[0];
-  return getSquareIndices(first ?? square);
+  const [file, rank] = squareToIndices(first ?? square);
+  return { file, rank };
 }
 
 function handleKnightPathTap(state: GameState): GameState {
@@ -1313,7 +1306,7 @@ function handleKnightPathTap(state: GameState): GameState {
   const kp = academy.knightPath;
   if (!kp) return state;
 
-  const moveTarget = fileRankToSquare(academy.cursorFile, academy.cursorRank).toLowerCase();
+  const moveTarget = indicesToSquare(academy.cursorFile, academy.cursorRank).toLowerCase();
 
   if (!isValidKnightMove(kp.currentSquare, moveTarget)) {
     return state;

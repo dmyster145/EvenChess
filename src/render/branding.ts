@@ -14,10 +14,10 @@ import {
 import { PIECE_SILHOUETTES, PIECE_SIZE } from './pieces';
 import {
   BMP_HEADER_SIZE,
-  BMP_SIGNATURE,
   getBmpRowBytes,
   getBmpRowStride,
   getBmpFileSize,
+  writeMonoBmpHeader,
 } from './bmp-constants';
 import { encodePackedPixelsToPng } from './png-encode';
 
@@ -385,24 +385,8 @@ function create1BitBmp(pixels: Uint8Array): Uint8Array {
   const fileSize = getBmpFileSize(BRAND_WIDTH, BRAND_HEIGHT);
 
   const bmp = new Uint8Array(fileSize);
-
-  bmp[0] = BMP_SIGNATURE[0]; bmp[1] = BMP_SIGNATURE[1];
-  bmp[2] = fileSize & 0xff;
-  bmp[3] = (fileSize >> 8) & 0xff;
-  bmp[4] = (fileSize >> 16) & 0xff;
-  bmp[5] = (fileSize >> 24) & 0xff;
-  bmp[10] = BMP_HEADER_SIZE;
-
-  bmp[14] = 40;
-  bmp[18] = BRAND_WIDTH & 0xff;
-  bmp[19] = (BRAND_WIDTH >> 8) & 0xff;
-  bmp[22] = BRAND_HEIGHT & 0xff;
-  bmp[23] = (BRAND_HEIGHT >> 8) & 0xff;
-  bmp[26] = 1;
-  bmp[28] = 1;
-
-  bmp[54] = 0; bmp[55] = 0; bmp[56] = 0; bmp[57] = 0;
-  bmp[58] = 0; bmp[59] = 255; bmp[60] = 0; bmp[61] = 0;
+  // The strip's "on" colour has always been pure green; the board uses white.
+  writeMonoBmpHeader(bmp, BRAND_WIDTH, BRAND_HEIGHT, 0x00ff00);
 
   for (let y = 0; y < BRAND_HEIGHT; y++) {
     const srcRow = BRAND_HEIGHT - 1 - y;
