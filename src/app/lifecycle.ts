@@ -3,8 +3,8 @@
  *
  * CRITICAL: shutDownPageContainer(1)'s SDK event polarity is INVERTED vs a real background.
  * After an exit request the SDK fires:
- *   - FOREGROUND_ENTER (sys=4) when the dialog APPEARS (~100ms later). The page container is
- *     cleared host-side at this point — this is the cue to rebuildPageContainer.
+ *   - FOREGROUND_ENTER (sys=4) when the dialog APPEARS (~100ms later). Leave the page untouched:
+ *     rebuilding it here is what used to blank the board (see onExitDialogShown).
  *   - FOREGROUND_EXIT  (sys=5) when the user taps "No" (dialog cancelled — KEEP RUNNING).
  *   - SYSTEM_EXIT      (sys=7) when the user taps "Yes" (confirmed exit — clean up).
  * So a FOREGROUND_EXIT right after an exit request means "cancelled, keep running" — NOT
@@ -145,7 +145,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
 
   // --- Exit-dialog handling (inverted polarity) ---
 
-  // The exit dialog (menu double-tap → shutDownPageContainer(1)) is ENABLED for ER submission.
+  // The exit dialog (the menu's Exit item → shutDownPageContainer(1)) is ENABLED for ER submission.
   // CRITICAL: while it is on screen we must do NOTHING to the page/images — mirror the firmware
   // long-press exit, which the app doesn't touch and which leaves the board intact. The earlier
   // "rebuild the page on sys=4" step is what DECOMPOSED the board: rebuildPageContainer swaps the
@@ -254,13 +254,12 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleController {
     // INVERSE order of a genuine background (FOREGROUND_EXIT to leave, FOREGROUND_ENTER to return).
     // We tell them apart by isHidden at ENTER time: a FOREGROUND_ENTER received while we already
     // believe we're showing means an overlay appeared, so the paired FOREGROUND_EXIT is that overlay
-    // dismissing — NOT a real background. Treating that EXIT as a background is what would suspend
-    // the bullet timer and latch the app "hidden" every time the user closed the system menu.
+    // dismissing — NOT a real background. Treating that EXIT as a background would suspend the
+    // bullet timer and latch the app "hidden" every time the user closed the overlay.
     if (eventType === FOREGROUND_ENTER) {
       if (!isHidden) {
         overlayActive = true;
-        // Pause the bullet clock while the overlay is up — matching the hand-rolled
-        // menu, which pauses via handleOpenMenu. Only when it's actually running, so we can decide
+        // Pause the bullet clock while the overlay is up, as the app's own menu does (handleOpenMenu). Only when it's actually running, so we can decide
         // on dismiss whether to resume (and never start a not-yet-started clock).
         overlayPausedBullet = pauseRunningBullet();
         debugLog('overlay appeared (foreground-enter while showing) — pausing bullet clock if running', { paused: overlayPausedBullet }, 'LCY');

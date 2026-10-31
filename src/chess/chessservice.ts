@@ -18,6 +18,9 @@ const PIECE_LABEL: Record<PieceSymbol, string> = {
   p: 'Pawn',
 };
 
+/** Promotion choices in carousel order: queen first. */
+const PROMOTION_ORDER: Record<string, number> = { q: 0, r: 1, b: 2, n: 3 };
+
 export class ChessService {
   private game: Chess;
   private cachedPieces: PieceEntry[] | null = null;
@@ -111,7 +114,7 @@ export class ChessService {
       const id = ChessService.pieceId(piece.color, piece.type, square);
       const label = `${PIECE_LABEL[piece.type]} ${square.toUpperCase()}`;
 
-      // Prioritize: captures first, then moves towards opponent's side, then by destination (rank, file), then promotion Q,R,B,N
+      // Order: captures first, then furthest toward the opponent, then file a→h, then promotion Q,R,B,N.
       const sortedMoves = [...pieceMoves].sort((a, b) => {
         const captureA = !!a.captured;
         const captureB = !!b.captured;
@@ -121,10 +124,8 @@ export class ChessService {
         const progressA = piece.color === 'w' ? toRankA : 9 - toRankA;
         const progressB = piece.color === 'w' ? toRankB : 9 - toRankB;
         if (progressA !== progressB) return progressB - progressA; // higher progress (towards opponent) first
-        if (toRankA !== toRankB) return toRankA - toRankB;
         if (a.to !== b.to) return a.to.charCodeAt(0) - b.to.charCodeAt(0);
-        const promoOrder: Record<string, number> = { q: 0, r: 1, b: 2, n: 3 };
-        return (promoOrder[a.promotion ?? ''] ?? 4) - (promoOrder[b.promotion ?? ''] ?? 4);
+        return (PROMOTION_ORDER[a.promotion ?? ''] ?? 4) - (PROMOTION_ORDER[b.promotion ?? ''] ?? 4);
       });
 
       const carouselMoves: CarouselMove[] = sortedMoves.map((m) => ({

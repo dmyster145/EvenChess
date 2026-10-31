@@ -185,16 +185,16 @@ describe('createLifecycle', () => {
     expect(autosave.flushes).toBe(1);
   });
 
-  // --- Overlay disambiguation (SDK 0.0.14 native OS context menu) ---
-  // The OS menu surfaces as FOREGROUND_ENTER (appeared) then FOREGROUND_EXIT (dismissed) — the
+  // --- Overlay disambiguation (a system overlay such as the glasses' system menu) ---
+  // An overlay surfaces as FOREGROUND_ENTER (appeared) then FOREGROUND_EXIT (dismissed) — the
   // inverse order of a genuine background. Closing it must NOT be treated as a background (which
   // would suspend the bullet timer and latch the app "hidden").
 
-  it('native menu open (ENTER while showing) then close (EXIT) does NOT suspend the timer or hide', async () => {
+  it('system overlay open (ENTER while showing) then close (EXIT) does NOT suspend the timer or hide', async () => {
     const lifecycle = makeLifecycle();
-    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT)); // menu appeared
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_ENTER_EVENT)); // overlay appeared
     await vi.advanceTimersByTimeAsync(700);
-    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));  // menu dismissed
+    lifecycle.onHubEvent(sys(OsEventTypeList.FOREGROUND_EXIT_EVENT));  // overlay dismissed
     expect(bulletTimer.suspended).toBe(0);
     expect(autosave.flushes).toBe(0);
     expect(bulletTimer.resumed).toBe(0);
@@ -279,7 +279,7 @@ describe('createLifecycle', () => {
 
   // --- Exit-dialog path (inverted polarity) ---
 
-  // The exit dialog (menu double-tap → shutDownPageContainer(1)) is ENABLED for ER submission.
+  // The exit dialog (the menu's Exit item → shutDownPageContainer(1)) is ENABLED for ER submission.
   // While it is on screen the app must do NOTHING to the page/images — a rebuild or force-repaint
   // during this window decomposes the board (image containers become empty placeholders whose
   // refills come back sendFailed). Mirror the firmware long-press exit, which leaves the board

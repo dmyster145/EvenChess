@@ -1,9 +1,15 @@
 /**
- * State reducer — pure function `(state, action) => state`.
+ * State reducer — `(state, action) => state`. Synchronous and free of I/O; it does read Date.now()
+ * (clocks, phase timing) and Math.random() (Academy puzzles). The effects a state change implies
+ * (moves, engine requests, saving) run in app/side-effects.ts and engine/turnloop.ts.
  *
- * Implements the UI state machine:
- *   Idle ─tap/scroll─▶ RowSelect ─tap─▶ PieceSelect ─tap─▶ DestSelect ─tap─▶ Idle
- *                       │ dbltap→menu     │ dbltap→RowSelect   │ dbltap→PieceSelect
+ * Gameplay state machine (each double-tap goes back one level):
+ *
+ *   Idle ─scroll─▶ RowSelect ─tap─▶ PieceSelect ─tap─▶ DestSelect ─tap─▶ (PromotionSelect ─tap─▶) Idle
+ *    │  ◀─dbltap──             ◀─dbltap──            ◀─dbltap──           ◀─dbltap──
+ *    └─dbltap─▶ Menu (double-tap closes it)
+ *
+ * A tap in Idle also reaches RowSelect here, but app.ts intercepts it first to start voice input.
  */
 
 import type { GameState, Action, PieceEntry, UIPhase, MenuOption, GameMode, DrillType } from './contracts';
@@ -116,10 +122,7 @@ function endGame(state: GameState, reason: string): GameState {
   };
 }
 
-/**
- * Pure reducer — side-effects (move execution, engine requests) are handled
- * by the store subscriber layer in app.ts.
- */
+/** Apply one action. See the header for what "pure" means here and where effects run. */
 export function reduce(state: GameState, action: Action): GameState {
   if (state.gameOver && action.type !== 'NEW_GAME' && action.type !== 'DOUBLE_TAP' && action.type !== 'RESTORE_STATE') {
     return state;
@@ -216,10 +219,10 @@ export function reduce(state: GameState, action: Action): GameState {
       return state.pendingSystemExitDialog ? { ...state, pendingSystemExitDialog: false } : state;
 
     case 'RESTORE_STATE':
-      // Replay state captured by background-state.ts before the host migrated us to a headless
-      // WebView. Reset transient flags that don't survive the move (engine work isn't actually
-      // running in this WebView yet; pending moves were lost). The chess service must be reloaded
-      // from action.state.fen by the caller before the next flush — done in the app subscriber.
+      // Replay the snapshot background-state.ts saved before the host moved us to a new WebView.
+      // That snapshot already drops transient fields; clearing them again here is defense in depth
+      // (no engine search is running in this WebView, and any pending move was lost). The caller
+      // reloads the chess service from action.state.fen before the next flush.
       return {
         ...action.state,
         engineThinking: false,
@@ -301,21 +304,22 @@ function beginMoveSelection(state: GameState): GameState {
   };
 }
 
-/**
- * Scroll (swipe) handling during gameplay:
- * - SCROLL_BOTTOM_EVENT → direction 'down' → next item (+1 in spatial order).
- * - SCROLL_TOP_EVENT → direction 'up' → previous item (-1).
- * - rowSelect: order = candidate rows ascending. 'down' = next (+1) = higher rank =
- *   band moves UP the screen (board is rank-8-top, never flipped), so a physical
- *   swipe-up moves the highlighted row up. Same direction convention as pieceSelect.
- * - pieceSelect: order = movable pieces on the active row only (file a→h).
- * - destSelect: order = piece.moves (destination squares rank then file).
- */
+/** Menu and settings screens, where scrolling runs the opposite way to gameplay (see handleScroll). */
 const SETTINGS_PHASES = new Set([
   'menu', 'resetConfirm', 'difficultySelect', 'customDifficultySelect',
   'displayOptionsSelect', 'playAsSelect', 'modeSelect', 'bulletSetup', 'academySelect',
 ]);
 
+/**
+ * Scroll (swipe) handling:
+ * - SCROLL_BOTTOM_EVENT → direction 'down' → next item (+1 in spatial order).
+ * - SCROLL_TOP_EVENT → direction 'up' → previous item (-1).
+ * - Menu and settings screens (SETTINGS_PHASES) invert the direction first.
+ * - rowSelect: order = candidate rows ascending ('down' = next = higher rank). Which way that
+ *   moves on screen depends on the board's orientation (see getBoardViewColor).
+ * - pieceSelect: order = movable pieces on the active row only (file a→h).
+ * - destSelect: order = piece.moves (destination squares rank then file).
+ */
 function handleScroll(state: GameState, direction: 'up' | 'down'): GameState {
   // Invert scroll direction in settings/menu screens vs gameplay
   const d: 'up' | 'down' = SETTINGS_PHASES.has(state.phase)
@@ -771,9 +775,8 @@ function handleDoubleTap(state: GameState): GameState {
       return handleOpenMenu(state);
 
     case 'rowSelect':
-      // Back out to the idle "tap to speak / scroll to begin" screen. The settings
-      // menu is one more double-tap away (idle → menu), so swiping into row select
-      // by mistake no longer drops the user straight into settings.
+      // Back out to the idle "tap to speak / scroll to begin" screen. The settings menu is one more
+      // double-tap away (idle → menu).
       return { ...state, phase: 'idle', selectedPieceId: null, selectedMoveIndex: 0 };
 
     case 'pieceSelect': {

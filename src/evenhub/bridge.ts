@@ -16,9 +16,12 @@
  *
  * Design notes:
  *   - One serial sender loop per "kind" (image, text). Each loop drains its pending Map.
- *   - All SDK calls — image, text, page rebuild, storage, device-info, shutdown — are serialized
+ *   - SDK calls — image, text, page rebuild, storage, device-info, shutdown — are serialized
  *     through a single Promise chain (`bleChain`). Per ER glasses-ui guidance: "Serialize all
  *     bridge calls, not just images — concurrent render + storage calls can crash the connection."
+ *     Two exceptions: requestSystemExit()'s shutDownPageContainer(1) is fire-and-forget and NOT
+ *     on the chain (per ER guidance for the exit dialog), and the subscribe* passthroughs only
+ *     register listeners, so they are not serialized either.
  *   - Each serialized call is wrapped in Promise.race against a per-call timeout so a hung BLE hop
  *     can't permanently wedge the chain. Per ER guidance: "Add a per-call timeout to BLE calls."
  *   - Non-success result enums (sendFailed, etc.) are detected explicitly via

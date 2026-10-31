@@ -278,7 +278,7 @@ export async function initApp(): Promise<void> {
   // taken while the engine was thinking hands the move back to it.
   void turnLoop.init().then(resumeEngineIfItsTurn);
 
-  // Reinit controller is exposed via the debug menu only. Holds references to the unsubscribe
+  // Reinit controller is reachable only from the console hook below. Holds references to the unsubscribe
   // setters so it can replace them after a reinit without leaking listeners.
   const reinit = createReinit({
     bridge,
@@ -297,7 +297,7 @@ export async function initApp(): Promise<void> {
       launchSourceUnsubscribe = fn;
     },
   });
-  // Surface for debug menu: window.__evenchess_reinit('reason')
+  // Console hook for debugging: window.__evenchess_reinit('reason')
   if (typeof window !== 'undefined') {
     (window as unknown as { __evenchess_reinit: (reason?: string) => Promise<void> }).__evenchess_reinit =
       (reason = 'manual') => reinit.reinit(reason);
@@ -309,9 +309,9 @@ export async function initApp(): Promise<void> {
     window.addEventListener('pagehide', () => voice.dispose());
   }
 
-  // Persistent-image-failure recovery — a safety net for genuine BLE wedges (not the exit-dialog
-  // case, which lifecycle.ts now handles correctly via the inverted-polarity event model). The
-  // bridge fires this after consecutive non-success updateImageRawData results. Recovery: reset
+  // Persistent-image-failure recovery — a safety net for genuine BLE wedges. It can't revive the
+  // image channel after the exit dialog's "No" (see lifecycle.ts onExitDialogCancelled); there the
+  // retry just fails again, harmlessly. The bridge fires this after consecutive non-success updateImageRawData results. Recovery: reset
   // the sender state and force-flush so the latest state is re-queued. We deliberately do NOT
   // rebuild the page here — a rebuild swaps the live image containers for empty placeholders, and
   // if the followup fills also fail the board goes blank (worse than frozen-but-visible).
@@ -330,7 +330,7 @@ export async function initApp(): Promise<void> {
   // input or auto-upgrade below).
   const startupOk = await setupTextOnlyStartup(bridge, store);
   if (!startupOk) {
-    console.error('[EvenChess] Initial setupPage failed; the app will retry via reinit on next user input.');
+    console.error('[EvenChess] Initial setupPage failed; the full-layout upgrade will be attempted on the next input.');
   } else {
     // Auto-upgrade after text-first startup so users who never tap still see the board.
     void upgradeToFullLayout({

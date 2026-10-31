@@ -75,8 +75,8 @@ export const LOG_MAX_VISIBLE = 5;
 export const DISPLAY_WIDTH = 576;
 
 /**
- * Gesture disambiguation: a double-tap within this time of a tap entering pieceSelect is treated as
- * one quick double-tap whose first half was read as that tap, so it opens the menu instead of
- * backing up to rowSelect (see handleDoubleTap 'pieceSelect').
+ * Gesture disambiguation: a double-tap within this time of a rowSelect tap entering pieceSelect is
+ * treated as one quick double-tap whose first half was read as that tap, so it opens the menu
+ * instead of backing up to rowSelect (see handleDoubleTap 'pieceSelect').
  */
 export const GESTURE_DISAMBIGUATION_MS = 200;

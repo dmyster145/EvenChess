@@ -5,12 +5,12 @@
  * gray4 on-device (see `ImageRawDataUpdateResult.imageToGray4Failed`).
  *
  * We pass `cnum=4` — the value empirically validated in production. UPNG
- * quantizes pure 2-color input to a 2-entry palette, yielding IHDR bit-depth 2.
- * Higher `cnum` values (e.g. 16) can let UPNG pick bit-depth 1 for the same
+ * quantizes pure 2-color input to a 2-color indexed PNG with bit depth 2.
+ * Higher `cnum` values (e.g. 16) can let UPNG pick bit depth 1 for the same
  * 2-color content; 1-bit PNGs render **solid green** on G2 firmware. We log a
  * one-shot warning if the encoder ever produces a 1-bit PNG so the regression
- * is visible in device logs — the raw 4-bit gray fallback (see `./gray4.ts`)
- * covers that case.
+ * is visible in device logs. If encoding fails (empty result), callers fall
+ * back to sending the 1-bit BMP instead.
  *
  * Encodes are serialized to avoid contention on device WebViews.
  */
@@ -140,14 +140,13 @@ function checkPngBitDepth(png: Uint8Array, label: string): void {
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Encode unpacked B&W pixels (1 byte per pixel, 0 or 1) to a 4-bit indexed PNG.
- * Used by the board renderer. _slot is unused (kept for API compatibility).
+ * Encode unpacked B&W pixels (1 byte per pixel, 0 or 1) to a 2-color indexed PNG.
+ * Used by the board renderer. Returns an empty array if encoding fails.
  */
 export async function encodePixelsToPng(
   pixels: Uint8Array,
   width: number,
   height: number,
-  _slot = 0,
 ): Promise<Uint8Array> {
   const startMs = PERF_LOG_ENABLED ? perfNowMs() : 0;
   return enqueueSerializedPngEncode(() => {
@@ -165,8 +164,8 @@ export async function encodePixelsToPng(
 }
 
 /**
- * Encode bit-packed B&W pixels (8 pixels per byte, MSB first) to a 4-bit
- * indexed PNG. Used by the branding renderer.
+ * Encode bit-packed B&W pixels (8 pixels per byte, MSB first) to a 2-color
+ * indexed PNG. Used by the branding renderer. Returns an empty array if encoding fails.
  */
 export async function encodePackedPixelsToPng(
   pixels: Uint8Array,

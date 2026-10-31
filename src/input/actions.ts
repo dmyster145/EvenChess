@@ -80,10 +80,9 @@ function isInTapCooldown(): boolean {
 // Per ER guidance: the G2 firmware emits DUPLICATE input events for one physical gesture
 // (~50–100ms apart). One physical tap → 2× CLICK; one physical double-tap → 2× DOUBLE_CLICK.
 // Dedup windows of 1–20ms are useless; use ~130ms for single taps and ~600ms for
-// state-changing double-tap actions. This dedup runs BEFORE any state-changing decision (the
-// menu double-tap → shutDownPageContainer(1) short-circuit in app.ts) — a duplicate
-// DOUBLE_CLICK that slipped through used to fire the exit dialog twice, corrupting the SDK's
-// page/dialog state so the board never came back after "No".
+// state-changing double-tap actions. This dedup runs BEFORE any state-changing decision: a
+// duplicate DOUBLE_CLICK that slipped through would open the menu from idle and immediately close
+// it again (double-tap toggles idle ↔ menu).
 const CLICK_DEDUP_MS = 130;
 const DOUBLE_CLICK_DEDUP_MS = 600;
 let lastAcceptedClickAt = 0;

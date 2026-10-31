@@ -15,9 +15,8 @@ import { createFlush } from '../../src/app/flush';
 import { CONTAINER_ID_TEXT } from '../../src/render/composer';
 import type { EvenHubBridge } from '../../src/evenhub/bridge';
 
-// jsdom-style globals — the BoardRenderer touches `document.createElement('canvas')` for the PNG
-// path. In a node-only test environment this returns undefined, which makes renderPngAsync return
-// [] — exactly the BMP fallback path. That suffices for these tests; we assert the fallback works.
+// The real BoardRenderer runs here; its PNG encoder (UPNG) is pure JS, so these tests exercise the
+// same PNG path as the device.
 
 interface FakeBridge {
   imageCalls: Array<{ id: number; payload: { containerID?: number; imageData?: unknown } }>;

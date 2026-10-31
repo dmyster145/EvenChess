@@ -33,8 +33,13 @@ describe('formatTime', () => {
     expect(formatTime(69000)).toBe('1:09');
   });
 
-  it('handles sub-second precision (floors)', () => {
-    expect(formatTime(1500)).toBe('0:01'); // 1.5 seconds -> 1 second
-    expect(formatTime(999)).toBe('0:00'); // 0.999 seconds -> 0 seconds
+  it('rounds partial seconds up, so 0:00 appears only when time is out', () => {
+    expect(formatTime(1500)).toBe('0:02');
+    expect(formatTime(1)).toBe('0:01');
+    expect(formatTime(59001)).toBe('1:00');
+  });
+
+  it('never shows negative time', () => {
+    expect(formatTime(-1500)).toBe('0:00');
   });
 });

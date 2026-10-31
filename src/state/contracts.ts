@@ -161,8 +161,8 @@ export interface GameState {
   hasUnsavedChanges: boolean;
   previousPhase: UIPhase | null;
   /**
-   * Set by the reducer when the user double-taps in the settings menu. The app subscriber observes
-   * the false→true transition and calls `bridge.shutDownPageContainer(1)` to surface the system's
+   * Set when the user taps the menu's Exit item (handleMenuSelect 'exit'). side-effects.ts sees the
+   * false→true transition and calls `bridge.requestSystemExit()`, which shows the system's
    * "End this feature?" confirmation dialog, then clears the flag. Per ER guidance, no app-side
    * cleanup happens here — if the user confirms, cleanup runs in the SYSTEM_EXIT_EVENT handler.
    */

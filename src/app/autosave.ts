@@ -16,7 +16,7 @@ type Snapshot = Pick<GameState, 'fen' | 'history' | 'turn' | 'difficulty' | 'cus
 
 export interface AutosaveDeps {
   store: Store;
-  /** Used to dispatch MARK_SAVED after a successful save. Optional dependency so tests can pass a no-op. */
+  /** Dispatches MARK_SAVED after a successful save. Injected so tests can capture it or pass a no-op. */
   dispatch: (action: Action) => void;
 }
 

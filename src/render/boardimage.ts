@@ -295,7 +295,8 @@ export class BoardRenderer {
 
   /**
    * Same as render() but encodes dirty halves as PNG for smaller BLE payload.
-   * Returns [] in non-browser or if canvas fails (caller can fall back to render()).
+   * Returns [] only when nothing changed. If PNG encoding fails, it falls back to render()'s BMPs
+   * itself, so callers never need a fallback of their own.
    */
   async renderPngAsync(state: GameState, chess: ChessService, forceBothHalves = false): Promise<ImageRawDataUpdate[]> {
     const fen = state.fen;
@@ -340,10 +341,10 @@ export class BoardRenderer {
 
       const topPixels = this.workPixels.subarray(0, HALF_PIXELS);
       const bottomPixels = this.workPixels.subarray(HALF_PIXELS);
-      // Encode top/bottom in parallel on separate reusable canvas slots to reduce total encode time.
+      // Encodes run one at a time in png-encode's queue.
       const [topPng, bottomPng] = await Promise.all([
-        topDirty ? encodePixelsToPng(topPixels, IMAGE_WIDTH, IMAGE_HEIGHT, 0) : Promise.resolve(new Uint8Array(0)),
-        bottomDirty ? encodePixelsToPng(bottomPixels, IMAGE_WIDTH, IMAGE_HEIGHT, 1) : Promise.resolve(new Uint8Array(0)),
+        topDirty ? encodePixelsToPng(topPixels, IMAGE_WIDTH, IMAGE_HEIGHT) : Promise.resolve(new Uint8Array(0)),
+        bottomDirty ? encodePixelsToPng(bottomPixels, IMAGE_WIDTH, IMAGE_HEIGHT) : Promise.resolve(new Uint8Array(0)),
       ]);
       if ((topDirty && topPng.length === 0) || (bottomDirty && bottomPng.length === 0)) {
         return this.render(state, chess, true);
@@ -364,13 +365,13 @@ export class BoardRenderer {
     this.currentHighlightKeys = tmpKeys;
     refreshDirtyHalvesFromBase(this.workPixels, this.basePixels, highlights, topDirty, bottomDirty, this.g);
 
-    // FEN/marker changes may dirty both halves; parallel PNG encode keeps CPU time small vs transport time.
+    // FEN/marker changes may dirty both halves.
     const [topPng, bottomPng] = await Promise.all([
       topDirty
-        ? encodePixelsToPng(this.workPixels.subarray(0, HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, 0)
+        ? encodePixelsToPng(this.workPixels.subarray(0, HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT)
         : Promise.resolve(new Uint8Array(0)),
       bottomDirty
-        ? encodePixelsToPng(this.workPixels.subarray(HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT, 1)
+        ? encodePixelsToPng(this.workPixels.subarray(HALF_PIXELS), IMAGE_WIDTH, IMAGE_HEIGHT)
         : Promise.resolve(new Uint8Array(0)),
     ]);
     if ((topDirty && topPng.length === 0) || (bottomDirty && bottomPng.length === 0)) return this.render(state, chess, true);

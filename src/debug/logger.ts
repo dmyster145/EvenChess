@@ -64,16 +64,14 @@ export function getDebugLogText(): string {
 export function copyDebugLog(): boolean {
   const text = getDebugLogText();
   if (!text) return false;
-  // navigator.clipboard.writeText requires a secure context AND a fresh user-gesture permission
-  // grant. On iOS WKWebView hosting an Even Hub plugin neither is reliably available — the API
-  // exists but writeText() rejects silently (or the Promise never resolves), so the deprecated
-  // execCommand('copy') path is the durable fallback. Try the modern API first, fall through
-  // synchronously if it isn't usable.
+  // Both copy methods run on purpose. navigator.clipboard.writeText needs a secure context and a
+  // fresh user gesture; on iOS WKWebView it can reject, never settle, or resolve without copying,
+  // so its result can't be trusted. The deprecated execCommand('copy') then runs as well, and the
+  // returned boolean reflects that call only.
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
       const writePromise = navigator.clipboard.writeText(text);
-      // Attach a catch handler so a rejection doesn't bubble to an unhandled rejection. If the
-      // modern API fails, the fallback below has already run synchronously above.
+      // Swallow a rejection so it doesn't surface as an unhandled rejection.
       Promise.resolve(writePromise).catch(() => {});
     } catch {
       // fall through to execCommand

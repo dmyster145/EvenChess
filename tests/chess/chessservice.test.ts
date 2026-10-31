@@ -111,4 +111,18 @@ describe('ChessService', () => {
     expect(knight!.moves.length).toBeGreaterThan(0);
     expect(knight!.moves[0]?.san).toBe('Nxe5'); // capture should be first
   });
+
+  it('orders quiet moves furthest toward the opponent first, then by file a→h', () => {
+    const chess = new ChessService('4k3/8/8/8/8/8/8/R3K3 w - - 0 1');
+    const rook = chess.getPiecesWithMoves().find((p) => p.square === 'a1');
+    expect(rook!.moves.map((m) => m.uci)).toEqual([
+      'a1a8', 'a1a7', 'a1a6', 'a1a5', 'a1a4', 'a1a3', 'a1a2', 'a1b1', 'a1c1', 'a1d1',
+    ]);
+  });
+
+  it('orders promotions queen, rook, bishop, knight', () => {
+    const chess = new ChessService('4k3/1P6/8/8/8/8/8/4K3 w - - 0 1');
+    const pawn = chess.getPiecesWithMoves().find((p) => p.square === 'b7');
+    expect(pawn!.moves.map((m) => m.uci)).toEqual(['b7b8q', 'b7b8r', 'b7b8b', 'b7b8n']);
+  });
 });

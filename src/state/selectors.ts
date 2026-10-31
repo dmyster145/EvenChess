@@ -126,8 +126,8 @@ function formatCaptured(counts: Record<string, number>, white: boolean): string 
 /**
  * Captured pieces derived from the FEN as a material diff (starting material minus
  * what's on the board). Promotions skew the count slightly — acceptable for a HUD.
- * `top` = captured Black pieces (Black's side renders at the top of the board);
- * `bottom` = captured White pieces.
+ * `top` = Black's lost pieces, `bottom` = White's. The order is fixed and does not follow the
+ * board's orientation.
  */
 export function getCapturedDisplay(state: GameState): { top: string; bottom: string } {
   const { white, black } = getCapturedCounts(state);
@@ -354,9 +354,7 @@ function getPlayAsDisplayText(state: GameState): string {
   return lines.join('\n');
 }
 
-/**
- * Truncates to most recent moves to stay within SDK's 2000 char limit.
- */
+/** The View Log screen: LOG_MAX_VISIBLE move pairs starting at logScrollOffset. */
 export function getLogDisplayText(state: GameState): string {
   const lines: string[] = ['', 'MOVE LOG', ''];
 

@@ -179,10 +179,8 @@ async function renderImagesForState(
     return renderer.renderFull(state, chess);
   }
 
-  // Live play: PNG-first for smaller BLE payload. PNG returns [] on encoder failure → BMP fallback.
-  const png = await renderer.renderPngAsync(state, chess);
-  if (png.length > 0) return png;
-  return renderer.render(state, chess);
+  // Live play: PNG for a smaller BLE payload (the renderer falls back to BMP itself on encode failure).
+  return renderer.renderPngAsync(state, chess);
 }
 
 function computePgnPositionFen(moves: string[]): string {

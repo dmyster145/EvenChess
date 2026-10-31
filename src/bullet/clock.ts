@@ -3,9 +3,12 @@
  * TIMER_TICK and APPLY_INCREMENT handling.
  */
 
-/** Format milliseconds as M:SS, rounding down to the whole second. */
+/**
+ * Format milliseconds as M:SS, rounding up to the whole second, so the clock shows 0:00 only once
+ * the time has actually run out.
+ */
 export function formatTime(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${min}:${sec.toString().padStart(2, '0')}`;

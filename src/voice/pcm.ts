@@ -3,7 +3,7 @@
  *
  * The SDK types `audioEvent.audioPcm` as `Uint8Array`, but the host-side Uint8List is
  * JSON-bridged and in practice arrives as a `Uint8Array`, a `number[]` of byte values,
- * an `ArrayBuffer`, or a base64 `string` (see SDK index.d.ts comment ~L858). All of
+ * an `ArrayBuffer`, or a base64 `string` (see the SDK's AudioEvent payload docs). All of
  * them are little-endian signed 16-bit PCM, 16 kHz, mono. Normalize to Float32 [-1,1].
  */
 

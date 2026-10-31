@@ -2,12 +2,13 @@
  * Push-to-talk voice controller.
  *
  * Lifecycle: tap-in-idle → start() → mic on → stream PCM to the recognizer →
- * end-of-speech (silence) or timeout → finalize → parse → resolve → dispatch a move
- * or a status → mic off.
+ * end-of-speech (silence) or timeout → finalize → parse → resolve → park the matched
+ * move for tap-to-confirm, or show a status → mic off.
  *
  * Voice is purely additive: if the model fails to load or the mic is unavailable,
  * start() returns false so the caller falls back to the manual scroll carousel.
- * The mic is force-closed on every exit path (lifecycle teardown / dispose).
+ * The mic is force-closed on every exit path: app.ts calls cancel() on FOREGROUND_EXIT
+ * and dispose() on pagehide.
  */
 
 import type { Store } from '../state/store';
@@ -20,7 +21,7 @@ import { payloadToFloat32, meanAbsAmplitude, type AudioPayload } from './pcm';
 export interface VoiceControllerDeps {
   store: Store;
   bridge: Pick<EvenHubBridge, 'audioControl'>;
-  /** Relative URL of the bundled Vosk model archive (offline). */
+  /** Root-absolute URL of the bundled Vosk model archive (offline), e.g. '/vosk/model.tar.gz'. */
   modelUrl: string;
   /** Speech engine; defaults to Vosk. Tests pass a fake. */
   engine?: VoiceEngine;
@@ -37,7 +38,7 @@ const ENDPOINT_POLL_MS = 150;
 const ERROR_STATUS_MS = 3500;
 
 export interface VoiceController {
-  /** Begin loading the model (call once at app init so the first press is instant). */
+  /** Start loading the model in the background so the first press is instant. Safe to call again. */
   warm(): void;
   /** Attempt to start listening. Returns false if voice isn't usable right now. */
   start(): boolean;
