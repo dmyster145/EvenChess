@@ -14,9 +14,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const MODEL_URL = 'https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip';
+/** SHA-256 of that zip. The model is bundled into the .ehpk, so a changed download is rejected. */
+const MODEL_SHA256 = '30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498';
 const OUT_DIR = path.join(__dirname, '..', 'public', 'vosk');
 const OUT_FILE = path.join(OUT_DIR, 'model.tar.gz');
 /** Abort a stalled download after this long without data. */
@@ -34,7 +37,9 @@ function download(url, dest, redirects = 0) {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         // Location may be relative; resolve it against the URL that redirected.
-        return resolve(download(new URL(res.headers.location, url).toString(), dest, redirects + 1));
+        const next = new URL(res.headers.location, url);
+        if (next.protocol !== 'https:') return reject(new Error(`refusing non-https redirect to ${next}`));
+        return resolve(download(next.toString(), dest, redirects + 1));
       }
       if (res.statusCode !== 200) {
         res.resume();
@@ -69,6 +74,8 @@ function findModelDir(root) {
   try {
     console.log('[fetch-vosk-model] downloading', MODEL_URL);
     await download(MODEL_URL, zipPath);
+    const sha256 = crypto.createHash('sha256').update(fs.readFileSync(zipPath)).digest('hex');
+    if (sha256 !== MODEL_SHA256) throw new Error(`checksum mismatch: got ${sha256}, expected ${MODEL_SHA256}`);
 
     console.log('[fetch-vosk-model] extracting…');
     execFileSync('unzip', ['-q', zipPath, '-d', tmp], { stdio: 'inherit' });

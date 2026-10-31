@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.1.0 — Unreleased
+
+### Added
+
+- **Display Options → Position (Bottom/Top).** Choose whether your pieces are drawn at
+  the bottom or the top of the board. Saved with the other display options.
+- **Bullet clock pauses during system overlays and in the background**, and resumes
+  without charging the paused time. A clock that has not started yet stays stopped.
+
+### Changed
+
+- **Even Hub SDK 0.0.14 → 0.0.16.** Requires Even App 2.2.10 or newer
+  (`min_app_version` 2.2.10, `min_sdk_version` 0.0.16).
+- **Removed the `compressMode` image patch from 2.0.5.** The Even App fixed the image
+  bug on its side in 2.2.9, so board images work without it.
+- **Double-tap from idle opens the in-app menu again.** The native OS context menu tried
+  in this release was reverted.
+- **Help-page font is self-hosted**, so the app no longer requests the `network`
+  permission. `g2-microphone` (voice moves) is the only permission.
+- The Custom difficulty picker shows where Easy, Casual, and Serious sit on its scale.
+- The bullet clock starts on your first move action (scroll, tap, or voice), not only on
+  a scroll.
+- Choosing Bullet or Academy and then backing out keeps the current game and clock.
+
+### Fixed
+
+- Bullet clock display rounds up, so 0:00 appears only when time has run out.
+- A Custom difficulty level picked while on Easy, Casual, or Serious is now saved.
+- Returning from the background no longer resets the game or its move log.
+- In Bullet, the increment goes to the engine's own color, and the engine's think time
+  is capped by its remaining clock. An engine move that ends the game stops the clock.
+- A finished or unreadable saved game starts a new game instead of a dead board.
+- You can no longer start selecting a move while the engine is thinking.
+- View Log scrolls through the whole game; PGN Study marks the move just played.
+- Voice: a leading "a" ("a knight to C3") is ignored; "takes" prefers the capture;
+  spoken promotions ("E8 queen") work when another piece can reach the square; a short
+  pause no longer cuts a command off; a cancelled session can't leak into the next.
+- Academy: Tactics replaced with 13 verified positions; solutions show the full line;
+  Knight Path fallback puzzles use the correct move count.
+- Input: a stray scroll right after a tap no longer swallows your next swipe.
+- The captured-pieces strip shows both sides (with "+N" when it overflows) instead of
+  dropping Black's pieces.
+- Saved settings and games are validated on load; invalid values fall back to defaults.
+
 ## 2.0.5 — 2026-07-13
 
 ### Fixed
@@ -8,8 +52,7 @@
   tags every image payload `compressMode: 2` (LZ4) but the bundle ships no LZ4
   compression, so the host rejected every image with `sendFailed` (text was
   unaffected). Patched the static serializer at bridge init to strip the bogus
-  field, restoring the pre-0.0.12 wire format. See
-  [docs/sdk-0.0.12-image-compressmode-bug.md](docs/sdk-0.0.12-image-compressmode-bug.md).
+  field, restoring the pre-0.0.12 wire format.
 - **Board no longer decomposes when the exit dialog is cancelled.** The lifecycle no
   longer rebuilds/repaints the page while the system exit dialog is on screen (that
   emptied the image containers); it now leaves the firmware's retained frame intact.

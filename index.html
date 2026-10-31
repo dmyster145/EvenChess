@@ -4,9 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chess - Smart Chess for Even Realities G2</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
       :root {
         /* Text Colors (TC) */
@@ -451,6 +448,7 @@
           <li><a href="#academy">Academy Drills</a></li>
           <li id="debug-console-nav" hidden><a href="#debug-console">Debug Console</a></li>
           <li><a href="#tips">Tips & Tricks</a></li>
+          <li><a href="#licenses">Licenses</a></li>
         </ul>
       </nav>
 
@@ -485,7 +483,8 @@
             <ul>
               <li><strong>Easy:</strong> Lighter opponent with more varied play</li>
               <li><strong>Casual:</strong> Good for practice; forgiving AI</li>
-              <li><strong>Serious:</strong> Full-strength Stockfish for a real fight</li>
+              <li><strong>Serious:</strong> Strong Stockfish (Skill 15) for a real fight</li>
+              <li><strong>Custom:</strong> Pick your own level from 0 to 9 (see <a href="#menu-options">Menu Options</a>)</li>
             </ul>
             <p>Games auto-save, so you can pick up where you left off. When you continue a saved game, the difficulty you used for that game is restored with it.</p>
 
@@ -541,7 +540,7 @@
 
               <div class="gesture-card">
                 <strong>Speak (Voice)</strong>
-                From the idle screen, tap once to start listening, then say your move. Tap or scroll again to cancel. Works fully offline.
+                On your turn, tap once from the idle screen to start listening, then say your move. The glasses show "Heard: …": tap to play it, double-tap to cancel, or scroll to discard it and pick a move by hand. Works fully offline.
               </div>
             </div>
 
@@ -557,7 +556,14 @@
             <p>The row you are choosing is framed with a bold outline so it is easy to see.</p>
 
             <h3>Or Just Say It</h3>
-            <p>From the idle screen, tap once and speak your move, for example "e4", "knight to c3", "bishop takes f7", "castle kingside", or "e8 queen" to promote. It listens offline and plays the move if it is legal. If it cannot tell what you meant, it shows a short message so you can try again or fall back to scroll selection. Tap or scroll to cancel listening.</p>
+            <p>On your turn, tap once from the idle screen and speak your move, for example "e4", "knight to c3", "bishop takes f7", "castle kingside", or "e8 queen" to promote. It listens offline and stops when you pause. Nothing is played until you confirm:</p>
+            <ul>
+              <li>The glasses show <strong>"Heard: …"</strong> with the move it understood</li>
+              <li><strong>Tap</strong> to play it</li>
+              <li><strong>Double-tap</strong> to cancel it</li>
+              <li><strong>Scroll</strong> to discard it and select a move by hand instead</li>
+            </ul>
+            <p>If it did not catch anything, or the move is illegal or ambiguous, it shows a short message (such as "Didn't catch that" or "Which knight…?") and nothing is played. Tap to try again or scroll to select by hand. While it is listening, tap to stop. If voice is not ready yet (for example right after launch), a tap starts manual selection instead.</p>
 
             <div class="tip">
               <strong>Tip:</strong> Double-tap any time to back up a step.
@@ -587,8 +593,8 @@
             <ul>
               <li><strong>Easy:</strong> Lighter opponent with more varied play</li>
               <li><strong>Casual:</strong> Good for practice; forgiving AI</li>
-              <li><strong>Serious:</strong> Full-strength Stockfish for a real fight</li>
-              <li><strong>Custom:</strong> Dial the engine's skill level yourself (0–9)</li>
+              <li><strong>Serious:</strong> Strong Stockfish (Skill 15) for a real fight</li>
+              <li><strong>Custom:</strong> Dial the engine's strength yourself, from 0 (beginner) to 9 (expert, Stockfish's top skill setting). The picker shows which levels are closest to Easy, Casual, and Serious</li>
             </ul>
 
             <h3>Display Options</h3>
@@ -713,6 +719,23 @@
         </details>
       </section>
 
+      <!-- Licenses -->
+      <section class="section" id="licenses">
+        <details>
+          <summary>Licenses</summary>
+          <div class="section-content">
+            <p>Chess is built on these open-source projects:</p>
+            <ul>
+              <li><strong>Stockfish</strong> (stockfish.js 10.0.2): GNU General Public License v3.0. Source: <a href="https://github.com/niklasf/stockfish.js/tree/e105072e84cf8ee5dd5219e2c5be29c3b8bf8a5a">github.com/niklasf/stockfish.js (commit e105072, &ldquo;Bump 10.0.2&rdquo;)</a>. The license text and source details ship with the app as <code>stockfish/Copying.txt</code> and <code>stockfish/SOURCE.txt</code>.</li>
+              <li><strong>chess.js</strong>: BSD 2-Clause License</li>
+              <li><strong>vosk-browser</strong> and the <strong>Vosk small English model</strong>: Apache License 2.0</li>
+              <li><strong>UPNG.js</strong> (upng-js): MIT License</li>
+              <li><strong>DM Sans</strong> font: SIL Open Font License 1.1</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
       <!-- Footer -->
       <footer class="footer">
         <p>Chess <span id="app-version"></span> | Built for Even Realities G2</p>
@@ -722,7 +745,7 @@
         <details>
           <summary>Debug Console (Perf Panel)</summary>
           <div class="section-content">
-            <p>The floating perf console panel is preserved on this page and uses the same DOM IDs and controls as EvenSolitaire.</p>
+            <p>A floating panel on this page that shows live performance timings while you play, for troubleshooting slowdowns.</p>
 
             <h3>Panel Controls</h3>
             <ul>
@@ -739,8 +762,8 @@
       </section>
 
       <!-- Board snapshot (capture current glasses frame from real hardware) -->
-      <section class="section" id="board-snapshot">
-        <details open>
+      <section class="section" id="board-snapshot" hidden>
+        <details>
           <summary>Board snapshot (capture what's on the glasses)</summary>
           <div class="section-content">
             <p style="margin-top:8px;">
@@ -755,7 +778,7 @@
       </section>
 
       <!-- Debug log (sync investigation) -->
-      <section class="section" id="debug-log">
+      <section class="section" id="debug-log" hidden>
         <details>
           <summary>Debug log (copy when slowdown occurs)</summary>
           <div class="section-content">
@@ -798,6 +821,17 @@
         }
       }
 
+      // Developer tools (board snapshot, debug log) are hidden unless the URL has ?debug (any value).
+      function syncDebugToolsVisibility() {
+        var visible = new URLSearchParams(window.location.search).has('debug');
+        ['board-snapshot', 'debug-log'].forEach(function (id) {
+          var section = document.getElementById(id);
+          if (!section) return;
+          if (visible) section.removeAttribute('hidden');
+          else section.setAttribute('hidden', '');
+        });
+      }
+
       // Expand the section that matches the given id (or current URL hash)
       function openSectionForHash(idOrEmpty) {
         const id = idOrEmpty != null ? idOrEmpty : window.location.hash.substring(1);
@@ -819,10 +853,12 @@
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function () {
           syncDebugDocsVisibility();
+          syncDebugToolsVisibility();
           openSectionForHash();
         });
       } else {
         syncDebugDocsVisibility();
+        syncDebugToolsVisibility();
         openSectionForHash();
       }
 

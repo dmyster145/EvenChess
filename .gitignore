@@ -16,10 +16,17 @@ build/
 .cursor/rules/
 docs/
 
+# Stockfish worker, WASM and license, copied from node_modules on install (scripts/copy-stockfish.cjs)
+public/stockfish/
+
+# Claude Code: agent worktrees and personal settings
+.claude/worktrees/
+.claude/settings.local.json
+
 # Vendored Vosk speech model (~40 MB) — fetched via `npm run fetch:voice-model`
 public/vosk/model.tar.gz*
 
-# Packaged app artifact (reproducible via `npx evenhub pack`)
+# Packaged app artifact (reproducible via `npm run pack`)
 *.ehpk
 
 # IDE and OS
