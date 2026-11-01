@@ -90,6 +90,24 @@ describe('background snapshot', () => {
     expect(restoreFromBackgroundSnapshot(snap, new ChessService())!.gameOver).toBe(result);
   });
 
+  it('a newer snapshot of a live game never invents a loss on time from a clock at zero', () => {
+    const before = { ...midGameBullet(), timers: { whiteMs: 0, blackMs: 5000, incrementMs: 0 } };
+    expect(restoreFromBackgroundSnapshot(buildBackgroundSnapshot(before), new ChessService())!.gameOver).toBeNull();
+  });
+
+  it('out-of-range picker values in a snapshot fall back to the defaults', () => {
+    const fresh = restoreFromBackgroundSnapshot(buildBackgroundSnapshot(baseGameState()), new ChessService())!;
+    const snap = { ...buildBackgroundSnapshot(midGameBullet()), customSkillLevel: 42, selectedTimeControlIndex: 6 };
+    const after = restoreFromBackgroundSnapshot(snap, new ChessService())!;
+    expect(after.customSkillLevel).toBe(9);
+    expect(after.selectedTimeControlIndex).toBe(fresh.selectedTimeControlIndex);
+    const negative = restoreFromBackgroundSnapshot({ ...snap, customSkillLevel: -3, selectedTimeControlIndex: -1 }, new ChessService())!;
+    expect(negative.customSkillLevel).toBe(0);
+    expect(negative.selectedTimeControlIndex).toBe(fresh.selectedTimeControlIndex);
+    const last = restoreFromBackgroundSnapshot({ ...snap, selectedTimeControlIndex: 5 }, new ChessService())!;
+    expect(last.selectedTimeControlIndex).toBe(5);
+  });
+
   it.each([
     ['nothing', undefined],
     ['another version', { ...buildBackgroundSnapshot(midGameBullet()), version: BACKGROUND_STATE_VERSION + 1 }],

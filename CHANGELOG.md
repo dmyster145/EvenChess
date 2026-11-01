@@ -39,13 +39,14 @@
 - In Bullet, a flag fall while a voice move waited for its tap no longer locks the
   game-over screen; double-tap starts a new game.
 - In Bullet, time is charged to the side that was thinking at each turn change, not to
-  whoever is on move at the next clock tick.
+  whoever is on move at the next clock tick. A move made after your clock ran out loses
+  on time; the increment no longer brings it back.
 - Closing the menu after leaving an Academy drill returns to the Academy list, not to a
   play board stuck in Academy mode.
 - Returning from the background keeps a finished game's result, and no longer lets the
   engine play a random move if it was asked to move before Stockfish had loaded.
 - The Custom difficulty picker fits on screen again ("8–9: Expert" was cut off).
-- Voice: "queen side castle" castles queenside; "knight takes a pawn on D5" works; when
+- Voice: "queen side castle" and "king castles queen side" castle queenside; "knight takes a pawn on D5" works; when
   two pawns can promote on one square, the prompts suggest a command that completes it.
 - Voice: a leading "a" ("a knight to C3") is ignored; "takes" prefers the capture;
   spoken promotions ("E8 queen") work when another piece can reach the square; a short

@@ -37,10 +37,14 @@ export class TurnLoop {
   /**
    * Start the engine once; later calls share the same start-up. Engine turns wait on it too: a
    * background restore can ask for a move before app.ts calls init(), and an engine asked before
-   * it is ready answers with a random fallback move.
+   * it is ready answers with a random fallback move. A failed start-up is forgotten, so the next
+   * engine turn tries again instead of failing for good.
    */
   init(): Promise<void> {
-    this.ready ??= this.engine.init();
+    this.ready ??= this.engine.init().catch((err: unknown) => {
+      this.ready = null;
+      throw err;
+    });
     return this.ready;
   }
 
@@ -85,6 +89,7 @@ export class TurnLoop {
       this.dispatchRefresh();
 
       const state = this.store.getState();
+      if (state.gameOver) return; // the player's clock ran out before the move landed
       if (state.mode === 'bullet' && state.timerActive && state.timers) {
         const playerColor = state.turn === 'b' ? 'w' : 'b';
         this.store.dispatch({ type: 'APPLY_INCREMENT', color: playerColor });

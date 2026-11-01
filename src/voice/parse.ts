@@ -52,15 +52,15 @@ function detectCastle(words: string[]): 'k' | 'q' | undefined {
   if (!words.some(isCastleWord)) return undefined;
   if (words.some((w) => w === 'queenside' || w === 'long')) return 'q';
   if (words.some((w) => w === 'kingside' || w === 'short')) return 'k';
-  // "queen side castle" / "castle king side" (the recognizer's grammar spells them as two words):
-  // 'queen'/'king' count on either side of 'castle' when they read as a side, i.e. followed by
-  // 'side' or right next to 'castle'.
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
-    if (w !== 'queen' && w !== 'king') continue;
-    if (words[i + 1] === 'side' || isCastleWord(words[i + 1]) || isCastleWord(words[i - 1])) {
-      return w === 'queen' ? 'q' : 'k';
-    }
+  // "queen side castle" / "castle king side" (the recognizer's grammar spells them as two words).
+  // A 'queen'/'king' followed by 'side' wins first, so the king named as the piece in "king
+  // castles queen side" doesn't pick the side; otherwise one right next to 'castle' counts.
+  for (const isSide of [
+    (i: number) => words[i + 1] === 'side',
+    (i: number) => isCastleWord(words[i + 1]) || isCastleWord(words[i - 1]),
+  ]) {
+    const i = words.findIndex((w, j) => (w === 'queen' || w === 'king') && isSide(j));
+    if (i >= 0) return words[i] === 'queen' ? 'q' : 'k';
   }
   // Otherwise only a side word after 'castle' counts ("castle on the queen ...").
   const ci = words.findIndex(isCastleWord);

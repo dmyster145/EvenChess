@@ -103,6 +103,13 @@ describe('parseVoiceCommand', () => {
     expect(parseVoiceCommand('castle queen side')).toEqual({ castle: 'q' });
   });
 
+  it('a "side" phrase beats the king named as the piece ("king castles queen side")', () => {
+    expect(parseVoiceCommand('king castles queen side')).toEqual({ castle: 'q' });
+    expect(parseVoiceCommand('castle king queen side')).toEqual({ castle: 'q' });
+    expect(parseVoiceCommand('castle my king queen side')).toEqual({ castle: 'q' });
+    expect(parseVoiceCommand('queen castles king side')).toEqual({ castle: 'k' });
+  });
+
   it('parses castling with the side spoken before "castle" ("queen side castle")', () => {
     expect(parseVoiceCommand('queen side castle')).toEqual({ castle: 'q' });
     expect(parseVoiceCommand('king side castle')).toEqual({ castle: 'k' });

@@ -365,7 +365,7 @@ describe('reducer', () => {
 
     it('stops the bullet clock at once when the engine move ends the game', () => {
       const state = createTestState({
-        mode: 'bullet', engineThinking: true, turn: 'b', timerActive: true, lastTickTime: 1,
+        mode: 'bullet', engineThinking: true, turn: 'b', timerActive: true, lastTickTime: Date.now(),
         timers: { whiteMs: 60000, blackMs: 60000, incrementMs: 0 },
       });
       const engineMove = (endsGame?: boolean): Action => ({
@@ -845,6 +845,40 @@ describe('reducer', () => {
       const moved = reduce(state, { type: 'REFRESH', fen: state.fen, turn: 'b', pieces: state.pieces, inCheck: false });
       expect(moved.timers).toEqual({ whiteMs: 9700, blackMs: 10000, incrementMs: 0 });
       expect(moved.lastTickTime).toBe(now);
+    });
+
+    it('a mover whose clock ran out before the move landed loses on time, and an increment cannot save them', () => {
+      const now = Date.now();
+      const state = createTestState({
+        mode: 'bullet', turn: 'w', playerColor: 'w', timerActive: true, lastTickTime: now - 450,
+        timers: { whiteMs: 300, blackMs: 10000, incrementMs: 5000 },
+      });
+      const moved = reduce(state, { type: 'REFRESH', fen: state.fen, turn: 'b', pieces: state.pieces, inCheck: false });
+      expect(moved.gameOver).toBe('Black wins on time!');
+      expect(moved.timerActive).toBe(false);
+      expect(reduce(moved, { type: 'APPLY_INCREMENT', color: 'w' }).timers!.whiteMs).toBe(0);
+
+      const engineTurn = createTestState({
+        mode: 'bullet', turn: 'b', playerColor: 'w', timerActive: true, lastTickTime: now - 450,
+        timers: { whiteMs: 10000, blackMs: 300, incrementMs: 0 },
+      });
+      const engineMoved = reduce(engineTurn, {
+        type: 'ENGINE_MOVE', uci: 'e7e5', san: 'e5', fen: state.fen, turn: 'w', pieces: state.pieces, inCheck: false,
+      });
+      expect(engineMoved.gameOver).toBe('White wins on time!');
+      expect(engineMoved.timerActive).toBe(false);
+    });
+
+    it('a mover with time left after settling plays on', () => {
+      const now = Date.now();
+      const state = createTestState({
+        mode: 'bullet', turn: 'w', playerColor: 'w', timerActive: true, lastTickTime: now - 299,
+        timers: { whiteMs: 300, blackMs: 10000, incrementMs: 0 },
+      });
+      const moved = reduce(state, { type: 'REFRESH', fen: state.fen, turn: 'b', pieces: state.pieces, inCheck: false });
+      expect(moved.gameOver).toBeNull();
+      expect(moved.timers!.whiteMs).toBe(1);
+      expect(moved.timerActive).toBe(true);
     });
 
     it('a REFRESH that keeps the same turn, or a stopped clock, settles nothing', () => {

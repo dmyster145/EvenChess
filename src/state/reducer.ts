@@ -211,7 +211,7 @@ export function reduce(state: GameState, action: Action): GameState {
       return startFreshGame(state);
 
     case 'REFRESH':
-      return {
+      return flagMoverOutOfTime(state, {
         ...state,
         ...settleClockOnTurnChange(state, action.turn),
         fen: action.fen,
@@ -220,7 +220,7 @@ export function reduce(state: GameState, action: Action): GameState {
         inCheck: action.inCheck,
         pendingMove: null,
         hasUnsavedChanges: state.history.length > 0, // Mark as unsaved if game has moves
-      };
+      });
 
     case 'FOREGROUND_ENTER':
     case 'FOREGROUND_EXIT':
@@ -879,7 +879,7 @@ function handleEngineMove(
   action: Extract<Action, { type: 'ENGINE_MOVE' }>,
 ): GameState {
   const newHistory = [...state.history, action.san];
-  return {
+  return flagMoverOutOfTime(state, {
     ...state,
     ...settleClockOnTurnChange(state, action.turn),
     phase: 'idle',
@@ -895,7 +895,7 @@ function handleEngineMove(
     pendingMove: null,
     hasUnsavedChanges: true,
     ...(action.endsGame && { timerActive: false }),
-  };
+  });
 }
 
 function handlePlayerMoveSan(state: GameState, san: string): GameState {
@@ -1100,8 +1100,8 @@ function handleStartBulletGame(state: GameState, timeControlIndex: number): Game
 /**
  * When the turn passes, charge the time since the last tick to the side that just moved and
  * restart the tick from now. Without this, the next TIMER_TICK (every 500 ms) would bill that
- * whole span to the side now on move. A mover who ran out within the span is left at 0 rather
- * than flagged: the move is already on the board, and the next tick on their turn flags them.
+ * whole span to the side now on move. A mover who ran out within the span is left at 0 here and
+ * flagged by flagMoverOutOfTime once the move is applied.
  */
 function settleClockOnTurnChange(state: GameState, nextTurn: 'w' | 'b'): Partial<GameState> {
   if (!state.timerActive || !state.timers || nextTurn === state.turn) return {};
@@ -1112,6 +1112,16 @@ function settleClockOnTurnChange(state: GameState, nextTurn: 'w' | 'b'): Partial
     timers: { ...state.timers, [key]: Math.max(0, state.timers[key] - elapsed) },
     lastTickTime: now,
   };
+}
+
+/**
+ * After a move settled the clock: a mover whose time ran out before the move landed loses on
+ * time, before any increment can bring their clock back.
+ */
+function flagMoverOutOfTime(prev: GameState, next: GameState): GameState {
+  if (!prev.timerActive || !next.timers || next.turn === prev.turn) return next;
+  if (next.timers[prev.turn === 'w' ? 'whiteMs' : 'blackMs'] > 0) return next;
+  return endGame({ ...next, timerActive: false }, `${prev.turn === 'w' ? 'Black' : 'White'} wins on time!`);
 }
 
 function handleTimerTick(state: GameState): GameState {

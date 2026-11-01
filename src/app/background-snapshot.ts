@@ -7,7 +7,8 @@
  * position, move history, mode, and bullet clocks, plus the display/difficulty settings.
  */
 
-import { buildInitialState } from '../state/contracts';
+import { buildInitialState, clampCustomSkillLevel } from '../state/contracts';
+import { TIME_CONTROL_COUNT } from '../state/constants';
 import type {
   GameState,
   GameMode,
@@ -79,6 +80,10 @@ function isTimers(value: unknown): value is NonNullable<GameState['timers']> {
   return ['whiteMs', 'blackMs', 'incrementMs'].every((k) => typeof t[k] === 'number' && Number.isFinite(t[k]));
 }
 
+function isTimeControlIndex(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) < TIME_CONTROL_COUNT;
+}
+
 /**
  * The result of a finished game: the snapshot's own when it has one, else worked out from the
  * board (mate or draw) or a bullet clock at zero, for snapshots written before gameOver was kept.
@@ -87,6 +92,7 @@ function restoredGameOver(snap: Partial<BackgroundSnapshot>, chess: ChessService
   if (typeof snap.gameOver === 'string' && snap.gameOver) return snap.gameOver;
   const reason = chess.getGameOverReason();
   if (reason) return reason;
+  if (snap.gameOver !== undefined) return null; // a newer snapshot of a live game
   if (timers?.whiteMs === 0) return 'Black wins on time!';
   if (timers?.blackMs === 0) return 'White wins on time!';
   return null;
@@ -114,7 +120,7 @@ export function restoreFromBackgroundSnapshot(saved: unknown, chess: ChessServic
     fen: snap.fen,
     turn: snap.turn ?? fresh.turn,
     difficulty: snap.difficulty ?? fresh.difficulty,
-    customSkillLevel: snap.customSkillLevel ?? fresh.customSkillLevel,
+    customSkillLevel: typeof snap.customSkillLevel === 'number' ? clampCustomSkillLevel(snap.customSkillLevel) : fresh.customSkillLevel,
     boardAlignment: snap.boardAlignment ?? fresh.boardAlignment,
     boardSize: snap.boardSize ?? fresh.boardSize,
     boardPosition: snap.boardPosition ?? fresh.boardPosition,
@@ -128,7 +134,9 @@ export function restoreFromBackgroundSnapshot(saved: unknown, chess: ChessServic
     timers,
     timerActive: false,
     lastTickTime: null,
-    selectedTimeControlIndex: snap.selectedTimeControlIndex ?? fresh.selectedTimeControlIndex,
+    selectedTimeControlIndex: isTimeControlIndex(snap.selectedTimeControlIndex)
+      ? snap.selectedTimeControlIndex
+      : fresh.selectedTimeControlIndex,
     gameOver: restoredGameOver(snap, chess, timers),
   };
 }

@@ -51,6 +51,29 @@ describe('TurnLoop', () => {
     expect(engine.calls).toHaveLength(1);
   });
 
+  it('a failed engine start-up is retried on the next engine turn', async () => {
+    const { engine, loop } = setup({ playerColor: 'b' });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let inits = 0;
+    engine.init = () => { inits += 1; return inits === 1 ? Promise.reject(new Error('boom')) : Promise.resolve(); };
+
+    await loop.requestEngineMove();
+    expect(engine.calls).toHaveLength(0);
+    void loop.requestEngineMove();
+    await settle();
+    expect(inits).toBe(2);
+    expect(engine.calls).toHaveLength(1);
+  });
+
+  it('a player move that lands after their clock ran out ends the game without asking the engine', async () => {
+    const timers = { whiteMs: 100, blackMs: 60000, incrementMs: 2000 };
+    const { store, engine, loop } = setup({ mode: 'bullet', playerColor: 'w', timers, timerActive: true, lastTickTime: Date.now() - 500 });
+    await loop.onPlayerMoved({ uci: 'e2e4', san: 'e4', from: 'e2', to: 'e4' });
+    expect(store.getState().gameOver).toBe('Black wins on time!');
+    expect(store.getState().timers!.whiteMs).toBe(0);
+    expect(engine.calls).toHaveLength(0);
+  });
+
   it('credits the bullet increment to the engine\'s own color when the engine plays White', async () => {
     const timers = { whiteMs: 60000, blackMs: 60000, incrementMs: 2000 };
     const { store, engine, loop } = setup({ mode: 'bullet', playerColor: 'b', timers, timerActive: true, lastTickTime: Date.now() });
